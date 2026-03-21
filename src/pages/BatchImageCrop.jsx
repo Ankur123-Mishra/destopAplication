@@ -67,6 +67,7 @@ const CROP_FRAMES = [
 
 export default function BatchImageCrop() {
   const navigate = useNavigate();
+  const isElectronAvailable = Boolean(window.electron);
   const [step, setStep] = useState(STEPS.SELECT_FOLDER);
   const [sourceFolder, setSourceFolder] = useState('');
   const [images, setImages] = useState([]);
@@ -116,7 +117,7 @@ export default function BatchImageCrop() {
           alert('No images found in selected folder. Please select a folder with images (jpg, jpeg, png, gif, bmp).');
         }
       } else {
-        alert('Electron API not available. Please ensure you are running in Electron environment.');
+        alert('This tool only works inside the desktop app window. Open it from Electron, not from the browser tab.');
       }
     } catch (err) {
       console.error('Error selecting folder:', err);
@@ -275,7 +276,7 @@ export default function BatchImageCrop() {
           alert(`Failed to create output folder: ${result.error || 'Unknown error'}`);
         }
       } else {
-        alert('Electron API not available.');
+        alert('This tool only works inside the desktop app window.');
       }
     } catch (err) {
       console.error('Error creating output folder:', err);
@@ -365,9 +366,30 @@ export default function BatchImageCrop() {
             <p className="text-muted" style={{ marginBottom: 32, fontSize: '1.1rem' }}>
               Select a folder containing images to crop them all at once with the same crop frame.
             </p>
+            {!isElectronAvailable && (
+              <div
+                style={{
+                  maxWidth: 640,
+                  margin: '0 auto 24px',
+                  padding: 16,
+                  borderRadius: 10,
+                  background: 'rgba(248, 113, 113, 0.12)',
+                  border: '1px solid rgba(248, 113, 113, 0.3)',
+                  color: '#fecaca',
+                  textAlign: 'left'
+                }}
+              >
+                <strong style={{ display: 'block', marginBottom: 8 }}>Desktop app required</strong>
+                <div style={{ fontSize: '0.95rem', lineHeight: 1.5 }}>
+                  Folder selection and output-folder creation use Electron APIs, so this page will not work in a normal
+                  browser tab at <code>localhost:5173</code>. Open the same screen from the Electron desktop app window.
+                </div>
+              </div>
+            )}
             <button 
               className="btn btn-primary" 
               onClick={handleSelectFolder}
+              disabled={!isElectronAvailable}
               style={{ fontSize: '1.1rem', padding: '12px 32px' }}
             >
               📁 Select Image Folder
