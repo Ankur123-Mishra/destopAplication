@@ -1,7 +1,8 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
-const isDev = process.env.NODE_ENV !== 'production' || process.argv.includes('--dev');
+/** Dev server only when explicitly requested — otherwise load `dist/` (Windows, macOS, Linux). */
+const isDev = process.argv.includes('--dev');
 
 function createWindow() {
   const win = new BrowserWindow({

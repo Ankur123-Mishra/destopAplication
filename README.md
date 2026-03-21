@@ -1,71 +1,60 @@
-# Photographer Desktop App – School ID Card Automation
+# Photographer desktop app (Electron + Vite + React)
 
-Electron + React (JS) desktop application for the **Photographer** role in the School ID Card Automation system.
+Same commands work on **Windows**, **macOS**, and **Linux**.
 
-## Features
+## Prerequisites
 
-- **Splash** → **Login** → **Dashboard**
-- **Assigned Schools** → **Classes** → **Student List**
-- **Photo capture** (webcam) or **upload from computer**
-- **Photo Preview** with Retake / Confirm
-- **Bulk Photo Mode** (one-by-one capture, auto next)
-- **Correction List** for re-capture / re-upload
-- **Delivery Panel** – mark school/class as delivered
-- **Notifications** and **Profile**
-- **Offline UI** – pending uploads and sync indicator (UI only; backend not included)
-- **Status badges**: Pending, Photo Uploaded, Correction Required, Approved, Printed, Delivered
+- Node.js 18+ and npm
 
-## Tech Stack
+## Parent collection flow (admin → web → desktop)
 
-- **Electron** – desktop shell
-- **React 18** + **React Router 6**
-- **Vite** – build and dev server
-- **JavaScript** (no TypeScript)
+1. **Admin (web)** uses **Photographer parent collection** on the dashboard — **app-wide** only. Photographers cannot toggle this. **Schools do not** disable standalone links; the school toggle is only for legacy **fixed-class** links.
+2. **Parents** open the shared URL on the **web** app: `/c/:token` (not inside Electron). The desktop app only **generates** that link.
+3. **Photographer (desktop)** uses **Parent forms** in the sidebar: standalone (default) or school-bound. Set `VITE_PUBLIC_PARENT_ORIGIN` to your deployed web origin so copied links work on phones.
 
-## Run locally
+See `docs/PARENT_COLLECTION_PERMISSIONS.md` in the repo root.
+
+## Development (hot reload + Electron)
+
+Starts Vite on port **5173**, then opens Electron pointed at that URL.
 
 ```bash
-# Install dependencies
 npm install
-
-# Development (Vite dev server + Electron)
-npm run electron:dev
-
-# Or run only web app in browser
 npm run dev
 ```
 
-## Build for production
+- **Windows:** DevTools: `Ctrl+Shift+I` or `F12`
+- **macOS:** DevTools: `Cmd+Option+I`
+
+## Run the built app (production UI from `dist/`)
+
+```bash
+npm run start:prod
+```
+
+Or step by step:
 
 ```bash
 npm run build
-npm run electron
-# Or packaged app:
-npm run electron:build
+npm start
 ```
 
-## Project structure
+## Create installers (optional)
 
-```
-├── electron/
-│   └── main.js           # Electron main process
-├── src/
-│   ├── components/       # Sidebar, Header, StudentTable, CameraView, UploadBox, StatusBadge, Layout, OfflineBanner
-│   ├── context/
-│   │   └── AppContext.jsx # Auth + mock data (schools, classes, students, notifications)
-│   ├── pages/            # Splash, Login, Dashboard, Schools, Classes, Students, Camera, Preview, BulkMode, CorrectionList, Delivery, Notifications, Profile
-│   ├── App.jsx
-│   ├── main.jsx
-│   └── index.css
-├── index.html
-├── package.json
-└── vite.config.js
-```
+Requires `npm run build` first (bundles the Vite `dist/` folder).
 
-## Mock data
+| Platform | Command | Notes |
+|----------|---------|--------|
+| Windows | `npm run pack:win` | Produces NSIS installer under `release/` |
+| macOS | `npm run pack:mac` | Produces `.dmg` under `release/` — run on a Mac (Apple code signing may apply) |
+| Current OS | `npm run pack` | Builds for the OS you run the command on |
 
-The app uses in-memory mock data (schools, classes, students, notifications). Replace `AppContext` usage with real API calls when connecting to your backend.
+## macOS vs Windows behavior
 
-## Login
+- **Dock / taskbar:** On macOS, closing all windows does not quit the app by default; use **Quit** from the menu or `Cmd+Q`. On Windows, closing the window exits the app.
+- **Re-open window:** On macOS, clicking the dock icon creates a new window again (`activate` handler). Same codebase path for both platforms.
+- **Packaging:** Run `npm run pack:win` on Windows for an NSIS installer. Run `npm run pack:mac` on a Mac for a `.dmg` (electron-builder cannot build macOS installers on Windows).
 
-Use any email/mobile and password to login; the app sets a mock user and redirects to Dashboard.
+## Troubleshooting
+
+- **`npm install` fails on Windows with `EBADPLATFORM` / `darwin`:** Do not list macOS-only packages (for example `dmg-license`, `iconv-corefoundation`) as direct `dependencies` in `package.json`. Let `electron-builder` install them on macOS only.

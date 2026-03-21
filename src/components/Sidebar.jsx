@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { getParentCollectionEnabled } from '../api/parentCollection';
 
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -19,12 +20,42 @@ const links = [
 export default function Sidebar() {
   const location = useLocation();
   const path = location.pathname;
+  const [parentFormsEnabled, setParentFormsEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFeatureFlag() {
+      try {
+        const res = await getParentCollectionEnabled();
+        if (!cancelled) setParentFormsEnabled(Boolean(res?.enabled));
+      } catch {
+        if (!cancelled) setParentFormsEnabled(false);
+      }
+    }
+
+    loadFeatureFlag();
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  const navLinks = useMemo(() => {
+    if (!parentFormsEnabled) return links;
+    const nextLinks = [...links];
+    nextLinks.splice(nextLinks.length - 1, 0, {
+      to: '/parent-collection',
+      label: 'Parent Forms',
+      icon: '🔗',
+    });
+    return nextLinks;
+  }, [parentFormsEnabled]);
 
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">ID Card App</div>
       <nav className="sidebar-nav">
-        {links.map(({ to, label, icon }) => {
+        {navLinks.map(({ to, label, icon }) => {
           const isActive = path === to || (to !== '/dashboard' && path.startsWith(to));
           return (
             <NavLink

@@ -27,6 +27,7 @@ import ClassWiseUploadedPhotos from './pages/ClassWiseUploadedPhotos';
 import ClassIdCardsWizard from './pages/ClassIdCardsWizard';
 import CreateSchool from './pages/CreateSchool';
 import TemplateEditor from './pages/TemplateEditor';
+import ParentCollection from './pages/ParentCollection';
 import Layout from './components/Layout';
 import OfflineBanner from './components/OfflineBanner';
 
@@ -288,6 +289,14 @@ function AppRoutes() {
           element={
             <PrivateRoute>
               <Layout><SavedIdCardPreviewStandalone /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/parent-collection"
+          element={
+            <PrivateRoute>
+              <Layout><ParentCollection /></Layout>
             </PrivateRoute>
           }
         />

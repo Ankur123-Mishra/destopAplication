@@ -75,7 +75,6 @@
     "detect-node": "^2.1.0",
     "dir-compare": "^3.3.0",
     "dmg-builder": "^24.13.3",
-    "dmg-license": "^1.0.11",
     "dotenv": "^9.0.2",
     "dotenv-expand": "^5.1.0",
     "dunder-proto": "^1.0.1",
@@ -134,7 +133,6 @@
     "http-proxy-agent": "^5.0.0",
     "http2-wrapper": "^1.0.3",
     "https-proxy-agent": "^5.0.1",
-    "iconv-corefoundation": "^1.1.7",
     "iconv-lite": "^0.6.3",
     "ieee754": "^1.2.1",
     "inflight": "^1.0.6",
@@ -242,9 +240,7 @@
     "stat-mode": "^1.0.0",
     "string_decoder": "^1.3.0",
     "string-width": "^4.2.3",
-    "string-width-cjs": "^4.2.3",
     "strip-ansi": "^6.0.1",
-    "strip-ansi-cjs": "^6.0.1",
     "sumchecker": "^3.0.1",
     "supports-color": "^8.1.1",
     "tar": "^6.2.1",
@@ -268,7 +264,6 @@
     "wait-on": "^7.2.0",
     "which": "^2.0.2",
     "wrap-ansi": "^7.0.0",
-    "wrap-ansi-cjs": "^7.0.0",
     "wrappy": "^1.0.2",
     "xlsx": "^0.18.5",
     "xmlbuilder": "^15.1.1",
@@ -280,10 +275,41 @@
     "zip-stream": "^4.1.1"
   },
   "scripts": {
-    "dev": "concurrently \"node --no-deprecation ./node_modules/vite/bin/vite.js\" \"wait-on http://localhost:5173 && electron . --dev\"",
+    "dev": "concurrently \"node --no-deprecation ./node_modules/vite/bin/vite.js\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
     "build": "vite build",
     "start": "electron .",
+    "start:prod": "npm run build && electron .",
+    "pack": "npm run build && electron-builder",
+    "pack:win": "npm run build && electron-builder --win",
+    "pack:mac": "npm run build && electron-builder --mac",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "build": {
+    "appId": "com.schoolid.photographerdesktop",
+    "productName": "Photographer Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.photography"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "author": "",
   "license": "ISC"
