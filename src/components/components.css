@@ -1,0 +1,372 @@
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 20px 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  padding: 0 20px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 16px;
+  color: var(--accent);
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  color: var(--text-muted);
+  transition: background 0.2s, color 0.2s;
+}
+
+.sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.sidebar-link.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+  border-right: 3px solid var(--accent);
+}
+
+.sidebar-icon {
+  font-size: 1.2rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin: -24px -24px 24px -24px;
+  padding: 16px 24px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-user {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+.table-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.camera-view {
+  max-width: 640px;
+}
+
+.camera-preview-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.camera-preview {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 8px;
+  background: #000;
+}
+
+.camera-preview.img-preview {
+  max-height: 400px;
+  object-fit: contain;
+}
+
+.btn-capture {
+  padding: 14px 28px;
+  font-size: 1rem;
+}
+
+.camera-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.upload-box {
+  max-width: 400px;
+}
+
+.upload-dropzone {
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.upload-dropzone:hover {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.05);
+}
+
+.upload-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.upload-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.upload-preview-img {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.upload-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-content {
+  max-width: 420px;
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.input-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* Student detail page */
+.student-detail-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  max-width: 960px;
+}
+
+@media (max-width: 768px) {
+  .student-detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.student-detail-card,
+.student-detail-info {
+  min-width: 0;
+}
+
+.student-detail-photo-wrap {
+  text-align: center;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.student-detail-photo {
+  max-width: 100%;
+  max-height: 400px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.student-detail-no-photo {
+  text-align: center;
+  padding: 48px 24px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  color: var(--text-muted);
+}
+
+.student-detail-no-photo .upload-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.detail-list {
+  display: grid;
+  gap: 12px 16px;
+  grid-template-columns: auto 1fr;
+  margin: 0;
+}
+
+.detail-list dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.detail-list dd {
+  margin: 0;
+}
+
+/* Saved ID cards list on StudentDetail */
+.saved-idcards-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.saved-idcard-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.saved-idcard-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--accent);
+}
+
+.saved-idcard-class-item {
+  padding: 16px 18px;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.saved-idcard-class-item .saved-idcard-name {
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.saved-idcard-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+
+.saved-idcard-meta {
+  font-size: 0.85rem;
+}
+
+/* Template Editor (Fabric.js) */
+.template-editor-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .template-editor-layout { grid-template-columns: 1fr; }
+}
+
+.template-editor-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.template-editor-toolrow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.template-editor-canvas-wrap {
+  overflow: auto;
+}
+
+.template-editor-canvas-inner {
+  display: inline-block;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.template-editor-canvas-inner canvas {
+  display: block;
+}
+
+/* Fabric ID Card Generator (fill/preview) */
+.fabric-idcard-generator {
+  display: inline-block;
+}
+
+.fabric-idcard-canvas-wrap {
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.fabric-idcard-canvas-wrap canvas {
+  display: block;
+}

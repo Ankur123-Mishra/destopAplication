@@ -1,0 +1,1670 @@
+/* Base ID card - standard size for fill/preview */
+.idcard {
+  background: #fff;
+  color: #1e293b;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 6px 20px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.idcard--small {
+  max-width: 200px;
+  font-size: 0.75rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.idcard--small .idcard-photo { max-height: 60px; }
+.idcard--small .idcard-name { font-size: 0.85rem; }
+
+.idcard--preview {
+  max-width: 420px;
+  width: 100%;
+  margin: 0 auto;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 12px 32px rgba(0, 0, 0, 0.1),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.idcard-inner {
+  padding: 18px;
+}
+
+.idcard-photo-wrap,
+.idcard-photo {
+  display: block;
+  object-fit: cover;
+  background: #f8fafc;
+}
+
+.idcard-photo {
+  width: 100%;
+  max-height: 140px;
+  border-radius: 6px;
+}
+
+.idcard-details { margin-top: 12px; }
+.idcard-name { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.01em; color: #0f172a; }
+.idcard-id, .idcard-class { font-size: 0.9rem; color: #475569; }
+.idcard-school { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
+
+/* Template: Classic - photo left, details right */
+.idcard-classic {
+  border-top: 3px solid #0ea5e9;
+}
+
+.idcard-classic-inner {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  min-height: 120px;
+}
+
+.idcard-classic-photo {
+  flex-shrink: 0;
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f1f5f9;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.idcard-classic-photo .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+.idcard-classic-details { flex: 1; margin-top: 0; }
+.idcard-title {
+  font-size: 0.65rem;
+  letter-spacing: 0.15em;
+  color: #0ea5e9;
+  margin-bottom: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.idcard-classic-details .idcard-name { font-size: 1.05rem; font-weight: 700; color: #0f172a; }
+.idcard-classic-details .idcard-id, .idcard-classic-details .idcard-class { font-size: 0.88rem; }
+.idcard-classic-details .idcard-school { font-size: 0.82rem; color: #64748b; }
+
+/* Template: Modern - photo top, details below */
+.idcard-modern {
+  border-top: 3px solid #6366f1;
+}
+
+.idcard-modern-inner {
+  text-align: center;
+  padding: 20px 18px;
+}
+
+.idcard-modern-photo-wrap {
+  width: 92px;
+  height: 92px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #f1f5f9;
+  border: 3px solid #e0e7ff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.idcard-modern-photo-wrap .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+.idcard-modern-details .idcard-name { font-size: 1.15rem; font-weight: 700; color: #1e1b4b; }
+.idcard-modern-details .idcard-id { margin-top: 6px; font-size: 0.9rem; color: #4f46e5; font-weight: 500; }
+.idcard-modern-details .idcard-class, .idcard-modern-details .idcard-school { font-size: 0.88rem; color: #64748b; }
+
+/* Template: Minimal */
+.idcard-minimal {
+  border-left: 4px solid #059669;
+}
+
+.idcard-minimal-inner { padding: 16px 18px; }
+.idcard-minimal-top {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.idcard-minimal-photo-wrap {
+  width: 58px;
+  height: 58px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f1f5f9;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+.idcard-minimal-photo-wrap .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+.idcard-minimal-main { flex: 1; }
+.idcard-name--large { font-size: 1.18rem; font-weight: 700; color: #0f172a; letter-spacing: 0.01em; }
+.idcard-minimal-school {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+.idcard-minimal .idcard-class { font-size: 0.88rem; color: #475569; }
+
+/* Template: Card style - rounded, large photo left */
+.idcard-cardstyle {
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+.idcard-cardstyle-inner {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  min-height: 114px;
+  padding: 18px;
+}
+
+.idcard-cardstyle-photo {
+  width: 90px;
+  height: 90px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8fafc;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.idcard-cardstyle-photo .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+.idcard-cardstyle-details { flex: 1; margin-top: 0; }
+.idcard-cardstyle-details .idcard-name { font-size: 1.06rem; font-weight: 700; color: #0f172a; }
+.idcard-cardstyle-details .idcard-id, .idcard-cardstyle-details .idcard-class { font-size: 0.88rem; color: #475569; }
+.idcard-cardstyle-details .idcard-school { font-size: 0.84rem; color: #64748b; }
+
+/* Template: Horizontal strip */
+.idcard-horizontal {
+  border-left: 4px solid #dc2626;
+}
+
+.idcard-horizontal-inner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px 16px;
+}
+
+.idcard-horizontal-photo {
+  width: 58px;
+  height: 58px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.idcard-horizontal-photo .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+.idcard-horizontal-details { flex: 1; margin-top: 0; }
+.idcard-horizontal-details .idcard-name { font-size: 1rem; font-weight: 700; color: #0f172a; }
+.idcard-horizontal-details .idcard-id { font-size: 0.82rem; margin-top: 4px; color: #475569; }
+.idcard-horizontal-details .idcard-school { font-size: 0.78rem; margin-top: 2px; color: #64748b; }
+
+/* Template: Navy design - real school ID card look */
+.idcard-navy-design {
+  --navy: #0f172a;
+  --navy-light: #1e3a5f;
+  --navy-muted: #334155;
+  --cream: #faf9f7;
+  --cream-border: #e5e2dd;
+  --ink: #1e293b;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--cream);
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1.72 / 1;
+  max-width: 380px;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.07),
+    0 1px 3px rgba(0, 0, 0, 0.05),
+    0 6px 20px rgba(15, 23, 42, 0.1);
+}
+
+/* Preview: full card visible, slightly smaller than edit */
+.idcard--preview.idcard-navy-design {
+  max-width: 420px;
+  min-height: 0;
+}
+
+.idcard-navy-design::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.6) 0%, transparent 50%, rgba(0,0,0,0.04) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.idcard-navy-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
+/* Header: STUDENT IDENTITY CARD + school name */
+.idcard-navy-header {
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #1e3a5f 0%, #0f172a 100%);
+  padding: 10px 14px 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+
+.idcard-navy-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.idcard-navy-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  line-height: 1.2;
+}
+
+.idcard-navy-school-name {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.idcard-navy-header-right {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.idcard-navy-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+/* Body: photo + details */
+.idcard-navy-body {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+  padding: 12px 14px 10px;
+  gap: 0;
+}
+
+.idcard-navy-photo-section {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.idcard-navy-photo-wrap {
+  width: 88px;
+  height: 100px;
+  background: var(--navy);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--navy-muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.idcard-navy-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.idcard-navy-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.idcard-navy-photo-placeholder-text {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.1em;
+}
+
+.idcard-navy-valid {
+  font-size: 0.5rem;
+  font-weight: 600;
+  color: var(--navy-muted);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.idcard-navy-details {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  border-left: 1px solid var(--cream-border);
+}
+
+.idcard-navy-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  margin-bottom: 2px;
+}
+
+.idcard-navy-id-row,
+.idcard-navy-class-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.idcard-navy-id-label,
+.idcard-navy-class-label {
+  font-weight: 700;
+  color: var(--navy-muted);
+  letter-spacing: 0.04em;
+  min-width: 42px;
+}
+
+.idcard-navy-id-value,
+.idcard-navy-class-value {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.idcard-navy-divider {
+  height: 1px;
+  background: linear-gradient(90deg, var(--cream-border) 0%, transparent 100%);
+  margin: 8px 0 6px;
+}
+
+.idcard-navy-school-text {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
+
+.idcard-navy-address-text {
+  font-size: 0.65rem;
+  color: #64748b;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+/* Footer: signature line – same color as header */
+.idcard-navy-footer {
+  flex-shrink: 0;
+  padding: 8px 14px 10px 16px;
+  border-top: 2px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #1e3a5f 0%, #0f172a 100%);
+}
+
+.idcard-navy-signature-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.idcard-navy-signature-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.idcard-navy-signature-label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.idcard-navy-signature-img {
+  height: 20px;
+  max-width: 80px;
+  object-fit: contain;
+  object-position: left;
+  display: block;
+}
+
+.idcard-navy-barcode {
+  font-family: 'Courier New', 'Consolas', monospace;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Small size (template selector thumbnails) */
+.idcard--small.idcard-navy-design { max-width: 200px; }
+.idcard--small.idcard-navy-design .idcard-navy-header { padding: 6px 8px 6px 10px; }
+.idcard--small.idcard-navy-design .idcard-navy-badge { font-size: 0.42rem; letter-spacing: 0.06em; }
+.idcard--small.idcard-navy-design .idcard-navy-school-name { font-size: 0.4rem; max-width: 100px; }
+.idcard--small.idcard-navy-design .idcard-navy-header-right { width: 14px; height: 14px; }
+.idcard--small.idcard-navy-design .idcard-navy-body { padding: 6px 8px 6px; }
+.idcard--small.idcard-navy-design .idcard-navy-photo-wrap { width: 44px; height: 50px; }
+.idcard--small.idcard-navy-design .idcard-navy-valid { font-size: 0.38rem; }
+.idcard--small.idcard-navy-design .idcard-navy-details { padding-left: 8px; gap: 2px; }
+.idcard--small.idcard-navy-design .idcard-navy-name { font-size: 0.52rem; }
+.idcard--small.idcard-navy-design .idcard-navy-id-row,
+.idcard--small.idcard-navy-design .idcard-navy-class-row { font-size: 0.42rem; }
+.idcard--small.idcard-navy-design .idcard-navy-id-label,
+.idcard--small.idcard-navy-design .idcard-navy-class-label { min-width: 28px; }
+.idcard--small.idcard-navy-design .idcard-navy-divider { margin: 4px 0 3px; }
+.idcard--small.idcard-navy-design .idcard-navy-school-text { font-size: 0.4rem; }
+.idcard--small.idcard-navy-design .idcard-navy-address-text { font-size: 0.36rem; }
+.idcard--small.idcard-navy-design .idcard-navy-footer { padding: 4px 8px 6px 10px; }
+.idcard--small.idcard-navy-design .idcard-navy-signature-label { font-size: 0.34rem; }
+.idcard--small.idcard-navy-design .idcard-navy-signature-img { height: 10px; max-width: 40px; }
+.idcard--small.idcard-navy-design .idcard-navy-barcode { font-size: 0.32rem; letter-spacing: 0.1em; }
+
+/* Template: Green design - same layout, green theme */
+.idcard-green-design {
+  --green: #0d2818;
+  --green-light: #1a4d32;
+  --green-muted: #2d5a3d;
+  --cream: #f6faf7;
+  --cream-border: #dce8e0;
+  --ink: #1a2f22;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--cream);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1.72 / 1;
+  max-width: 380px;
+  box-shadow: 0 0 0 1px rgba(26, 77, 50, 0.08), 0 1px 3px rgba(0,0,0,0.05), 0 6px 20px rgba(13, 40, 24, 0.1);
+}
+.idcard--preview.idcard-green-design { max-width: 420px; min-height: 0; }
+.idcard-green-design::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.65) 0%, transparent 50%, rgba(0,0,0,0.03) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.idcard-green-inner { position: relative; display: flex; flex-direction: column; min-height: 0; height: 100%; padding: 0; }
+.idcard-green-header {
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #1e5c3a 0%, #0d2818 100%);
+  padding: 10px 14px 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+.idcard-green-badge { font-size: 0.7rem; font-weight: 800; color: #fff; letter-spacing: 0.12em; text-transform: uppercase; text-shadow: 0 1px 1px rgba(0,0,0,0.3); line-height: 1.2; }
+.idcard-green-header-right { width: 24px; height: 24px; border: 2px solid rgba(255,255,255,0.35); border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: rgba(255,255,255,0.1); }
+.idcard-green-logo { width: 100%; height: 100%; object-fit: contain; padding: 2px; box-sizing: border-box; }
+.idcard-green-body { flex: 1; display: flex; align-items: stretch; min-height: 0; padding: 12px 14px 10px; gap: 0; }
+.idcard-green-body-swap { flex-direction: row; }
+.idcard-green-body-swap .idcard-green-details { order: 1; padding-left: 0; padding-right: 14px; border-left: none; border-right: 1px solid var(--cream-border); }
+.idcard-green-body-swap .idcard-green-photo-section { order: 2; }
+.idcard-green-photo-section { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.idcard-green-photo-wrap { width: 88px; height: 100px; background: var(--green); border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 2px solid var(--green-muted); box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+.idcard-green-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.idcard-green-photo-placeholder { width: 100%; height: 100%; background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; }
+.idcard-green-photo-placeholder-text { font-size: 0.55rem; font-weight: 700; color: rgba(255,255,255,0.4); letter-spacing: 0.1em; }
+.idcard-green-valid { font-size: 0.5rem; font-weight: 600; color: var(--green-muted); letter-spacing: 0.04em; text-align: center; }
+.idcard-green-details { flex: 1; min-width: 0; padding-left: 14px; display: flex; flex-direction: column; justify-content: center; gap: 4px; border-left: 1px solid var(--cream-border); }
+.idcard-green-school-text.idcard-green-school-top { font-size: 0.7rem; margin-bottom: 2px; }
+.idcard-green-name { font-size: 1rem; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; line-height: 1.25; margin-bottom: 2px; }
+.idcard-green-id-row, .idcard-green-class-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78rem; }
+.idcard-green-id-label, .idcard-green-class-label { font-weight: 700; color: var(--green-muted); letter-spacing: 0.04em; min-width: 42px; }
+.idcard-green-id-value, .idcard-green-class-value { font-weight: 600; color: var(--ink); }
+.idcard-green-divider { height: 1px; background: linear-gradient(90deg, var(--cream-border) 0%, transparent 100%); margin: 8px 0 6px; }
+.idcard-green-school-text { font-size: 0.72rem; font-weight: 700; color: var(--green); letter-spacing: 0.02em; line-height: 1.3; }
+.idcard-green-address-text { font-size: 0.65rem; color: #4a6b56; line-height: 1.35; font-weight: 500; }
+.idcard-green-footer {
+  flex-shrink: 0;
+  padding: 8px 14px 10px 16px;
+  border-top: 2px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, #1e5c3a 0%, #0d2818 100%);
+}
+.idcard-green-signature-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.idcard-green-signature-block { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.idcard-green-signature-label { font-size: 0.58rem; font-weight: 700; color: rgba(255, 255, 255, 0.9); letter-spacing: 0.08em; text-transform: uppercase; }
+.idcard-green-signature-img { height: 20px; max-width: 80px; object-fit: contain; object-position: left; display: block; }
+.idcard-green-barcode { font-family: 'Courier New', 'Consolas', monospace; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.2em; color: rgba(255, 255, 255, 0.75); }
+.idcard--small.idcard-green-design { max-width: 200px; }
+.idcard--small.idcard-green-design .idcard-green-header { padding: 6px 8px 6px 10px; }
+.idcard--small.idcard-green-design .idcard-green-badge { font-size: 0.42rem; letter-spacing: 0.06em; }
+.idcard--small.idcard-green-design .idcard-green-header-right { width: 14px; height: 14px; }
+.idcard--small.idcard-green-design .idcard-green-body { padding: 6px 8px 6px; }
+.idcard--small.idcard-green-design .idcard-green-body-swap .idcard-green-details { padding-right: 8px; }
+.idcard--small.idcard-green-design .idcard-green-photo-wrap { width: 44px; height: 50px; }
+.idcard--small.idcard-green-design .idcard-green-valid { font-size: 0.38rem; }
+.idcard--small.idcard-green-design .idcard-green-details { gap: 2px; }
+.idcard--small.idcard-green-design .idcard-green-name { font-size: 0.52rem; }
+.idcard--small.idcard-green-design .idcard-green-id-row, .idcard--small.idcard-green-design .idcard-green-class-row { font-size: 0.42rem; }
+.idcard--small.idcard-green-design .idcard-green-id-label, .idcard--small.idcard-green-design .idcard-green-class-label { min-width: 28px; }
+.idcard--small.idcard-green-design .idcard-green-divider { margin: 4px 0 3px; }
+.idcard--small.idcard-green-design .idcard-green-school-text { font-size: 0.4rem; }
+.idcard--small.idcard-green-design .idcard-green-address-text { font-size: 0.36rem; }
+.idcard--small.idcard-green-design .idcard-green-footer { padding: 4px 8px 6px 10px; }
+.idcard--small.idcard-green-design .idcard-green-signature-label { font-size: 0.34rem; }
+.idcard--small.idcard-green-design .idcard-green-signature-img { height: 10px; max-width: 40px; }
+.idcard--small.idcard-green-design .idcard-green-barcode { font-size: 0.32rem; letter-spacing: 0.1em; }
+
+/* Template: Maroon design - same layout as Navy (first card), only color changes */
+.idcard-maroon-design {
+  --maroon: #1a0a0e;
+  --maroon-light: #5c1a24;
+  --maroon-muted: #6b2d3a;
+  --cream: #fdf8f9;
+  --cream-border: #ecdce0;
+  --ink: #2d1519;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--cream);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E");
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1.72 / 1;
+  max-width: 380px;
+  box-shadow: 0 0 0 1px rgba(107, 45, 58, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05), 0 6px 20px rgba(26, 10, 14, 0.1);
+}
+.idcard--preview.idcard-maroon-design { max-width: 420px; min-height: 0; }
+.idcard-maroon-design::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.6) 0%, transparent 50%, rgba(0,0,0,0.04) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.idcard-maroon-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
+.idcard-maroon-header {
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #5c1a24 0%, #1a0a0e 100%);
+  padding: 10px 14px 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+.idcard-maroon-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.idcard-maroon-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  line-height: 1.2;
+}
+.idcard-maroon-school-name {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.idcard-maroon-header-right {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+.idcard-maroon-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.idcard-maroon-body {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+  padding: 12px 14px 10px;
+  gap: 0;
+}
+.idcard-maroon-photo-section {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.idcard-maroon-photo-wrap {
+  width: 88px;
+  height: 100px;
+  background: var(--maroon);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--maroon-muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.idcard-maroon-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.idcard-maroon-photo-placeholder {
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.idcard-maroon-photo-placeholder-text {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.1em;
+}
+.idcard-maroon-valid {
+  font-size: 0.5rem;
+  font-weight: 600;
+  color: var(--maroon-muted);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.idcard-maroon-details {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  border-left: 1px solid var(--cream-border);
+}
+.idcard-maroon-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  margin-bottom: 2px;
+}
+.idcard-maroon-id-row,
+.idcard-maroon-class-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+.idcard-maroon-id-label,
+.idcard-maroon-class-label {
+  font-weight: 700;
+  color: var(--maroon-muted);
+  letter-spacing: 0.04em;
+  min-width: 42px;
+}
+.idcard-maroon-id-value,
+.idcard-maroon-class-value {
+  font-weight: 600;
+  color: var(--ink);
+}
+.idcard-maroon-divider {
+  height: 1px;
+  background: linear-gradient(90deg, var(--cream-border) 0%, transparent 100%);
+  margin: 8px 0 6px;
+}
+.idcard-maroon-school-text {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--maroon);
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
+.idcard-maroon-address-text {
+  font-size: 0.65rem;
+  color: #5c3a40;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.idcard-maroon-footer {
+  flex-shrink: 0;
+  padding: 8px 14px 10px 16px;
+  border-top: 2px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #5c1a24 0%, #1a0a0e 100%);
+}
+.idcard-maroon-signature-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.idcard-maroon-signature-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+.idcard-maroon-signature-label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.idcard-maroon-signature-img {
+  height: 20px;
+  max-width: 80px;
+  object-fit: contain;
+  object-position: left;
+  display: block;
+}
+.idcard-maroon-barcode {
+  font-family: 'Courier New', 'Consolas', monospace;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.idcard--small.idcard-maroon-design { max-width: 200px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-header { padding: 6px 8px 6px 10px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-badge { font-size: 0.42rem; letter-spacing: 0.06em; }
+.idcard--small.idcard-maroon-design .idcard-maroon-school-name { font-size: 0.4rem; max-width: 100px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-header-right { width: 14px; height: 14px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-body { padding: 6px 8px 6px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-photo-wrap { width: 44px; height: 50px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-valid { font-size: 0.38rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-details { padding-left: 8px; gap: 2px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-name { font-size: 0.52rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-id-row,
+.idcard--small.idcard-maroon-design .idcard-maroon-class-row { font-size: 0.42rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-id-label,
+.idcard--small.idcard-maroon-design .idcard-maroon-class-label { min-width: 28px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-divider { margin: 4px 0 3px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-school-text { font-size: 0.4rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-address-text { font-size: 0.36rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-footer { padding: 4px 8px 6px 10px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-signature-label { font-size: 0.34rem; }
+.idcard--small.idcard-maroon-design .idcard-maroon-signature-img { height: 10px; max-width: 40px; }
+.idcard--small.idcard-maroon-design .idcard-maroon-barcode { font-size: 0.32rem; letter-spacing: 0.1em; }
+
+/* Template: Cambridge design - yellow bands, diagonal cuts, hexagon logo, icons, Principal */
+.idcard-cambridge-design {
+  --cambridge-yellow: #FACC15;
+  --cambridge-yellow-dark: #EAB308;
+  --cambridge-grey: #E5E7EB;
+  --cambridge-teal: #0F766E;
+  --cambridge-ink: #374151;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--cambridge-grey);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1.72 / 1;
+  max-width: 380px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.06), 0 6px 20px rgba(0,0,0,0.1);
+}
+
+.idcard-cambridge-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Top yellow band with diagonal bottom edge (slopes up left→right) */
+.idcard-cambridge-top-band {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #FDE047 0%, #FACC15 50%, #EAB308 100%);
+  padding: 10px 14px 14px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 85%);
+  -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 85%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.idcard-cambridge-hexagon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.9);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  -webkit-clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+.idcard-cambridge-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
+
+.idcard-cambridge-school-name {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--cambridge-teal);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex: 1;
+  text-align: center;
+  padding-right: 36px;
+}
+
+/* Middle grey body with icon strip + content */
+.idcard-cambridge-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  background: var(--cambridge-grey);
+}
+
+.idcard-cambridge-icons-strip {
+  width: 44px;
+  flex-shrink: 0;
+  background: #D1D5DB;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.idcard-cambridge-icon-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--cambridge-ink);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.idcard-cambridge-icon-circle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.idcard-cambridge-content {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.idcard-cambridge-photo-wrap {
+  width: 72px;
+  height: 88px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.idcard-cambridge-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.idcard-cambridge-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+}
+
+.idcard-cambridge-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--cambridge-ink);
+  line-height: 1.25;
+}
+
+.idcard-cambridge-id,
+.idcard-cambridge-class,
+.idcard-cambridge-dob,
+.idcard-cambridge-phone,
+.idcard-cambridge-address {
+  font-size: 0.72rem;
+  color: #4B5563;
+  line-height: 1.3;
+}
+
+/* Bottom yellow band with diagonal top edge (slopes down left→right) */
+.idcard-cambridge-bottom-band {
+  flex-shrink: 0;
+  background: linear-gradient(315deg, #EAB308 0%, #FACC15 50%, #FDE047 100%);
+  padding: 14px 14px 10px;
+  clip-path: polygon(0 15%, 100% 0, 100% 100%, 0 100%);
+  -webkit-clip-path: polygon(0 15%, 100% 0, 100% 100%, 0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.idcard-cambridge-principal {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--cambridge-ink);
+  letter-spacing: 0.02em;
+}
+
+/* Cambridge small size */
+.idcard--small.idcard-cambridge-design { max-width: 200px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-top-band { padding: 6px 8px 10px; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 88%); -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 88%); }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-hexagon { width: 22px; height: 22px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-school-name { font-size: 0.48rem; padding-right: 22px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-icons-strip { width: 28px; padding: 6px 0; gap: 6px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-icon-circle { width: 18px; height: 18px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-icon-circle svg { width: 10px; height: 10px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-content { padding: 6px 8px; gap: 8px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-photo-wrap { width: 44px; height: 54px; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-name { font-size: 0.56rem; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-id,
+.idcard--small.idcard-cambridge-design .idcard-cambridge-class,
+.idcard--small.idcard-cambridge-design .idcard-cambridge-dob,
+.idcard--small.idcard-cambridge-design .idcard-cambridge-phone,
+.idcard--small.idcard-cambridge-design .idcard-cambridge-address { font-size: 0.4rem; }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-bottom-band { padding: 10px 8px 6px; clip-path: polygon(0 12%, 100% 0, 100% 100%, 0 100%); -webkit-clip-path: polygon(0 12%, 100% 0, 100% 100%, 0 100%); }
+.idcard--small.idcard-cambridge-design .idcard-cambridge-principal { font-size: 0.44rem; }
+
+/* Template: Elegant Blue design - light blue header, clean body */
+.idcard-elegant-blue-design {
+  --elegant-blue: #0EA5E9;
+  --elegant-blue-light: #38BDF8;
+  --elegant-blue-bg: #F0F9FF;
+  --elegant-ink: #0C4A6E;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 1.72 / 1;
+  max-width: 380px;
+  box-shadow: 0 0 0 1px rgba(14,165,233,0.12), 0 6px 20px rgba(14,165,233,0.08);
+}
+
+.idcard-elegant-blue-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.idcard-elegant-blue-header {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 100%);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.idcard-elegant-blue-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.3);
+  padding: 2px;
+}
+
+.idcard-elegant-blue-school-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+.idcard-elegant-blue-body {
+  flex: 1;
+  display: flex;
+  gap: 14px;
+  padding: 12px 14px;
+  min-height: 0;
+  background: var(--elegant-blue-bg);
+}
+
+.idcard-elegant-blue-photo-section {
+  width: 80px;
+  height: 96px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  border: 2px solid var(--elegant-blue-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.idcard-elegant-blue-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.idcard-elegant-blue-photo-placeholder {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #94A3B8;
+  letter-spacing: 0.05em;
+}
+
+.idcard-elegant-blue-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.idcard-elegant-blue-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--elegant-ink);
+  line-height: 1.25;
+}
+
+.idcard-elegant-blue-id,
+.idcard-elegant-blue-class {
+  font-size: 0.78rem;
+  color: #0369A1;
+  font-weight: 500;
+}
+
+.idcard-elegant-blue-address {
+  font-size: 0.68rem;
+  color: #64748B;
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+.idcard-elegant-blue-footer {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #0EA5E9 0%, #0284C7 100%);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.idcard-elegant-blue-valid {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.95);
+  letter-spacing: 0.04em;
+}
+
+.idcard-elegant-blue-signature {
+  height: 18px;
+  max-width: 70px;
+  object-fit: contain;
+  object-position: right;
+}
+
+/* Elegant Blue small size */
+.idcard--small.idcard-elegant-blue-design { max-width: 200px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-header { padding: 6px 8px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-logo { width: 18px; height: 18px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-school-name { font-size: 0.48rem; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-body { padding: 6px 8px; gap: 8px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-photo-section { width: 44px; height: 52px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-name { font-size: 0.56rem; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-id,
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-class { font-size: 0.44rem; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-address { font-size: 0.38rem; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-footer { padding: 4px 8px; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-valid { font-size: 0.36rem; }
+.idcard--small.idcard-elegant-blue-design .idcard-elegant-blue-signature { height: 10px; max-width: 40px; }
+
+/* Template: Academy - red/black/white professional */
+.idcard-academy {
+  background: #fff;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.idcard-academy-bands {
+  height: 14px;
+  background: linear-gradient(180deg, #b91c1c 0%, #991b1b 40%, #7f1d1d 100%);
+  position: relative;
+}
+
+.idcard-academy-bands::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.idcard-academy-bands-bottom {
+  margin-top: 0;
+  background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 60%, #b91c1c 100%);
+}
+
+.idcard-academy-bands-bottom::after { display: none; }
+
+.idcard-academy-inner {
+  padding: 14px 18px;
+}
+
+.idcard-academy-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #fecaca;
+}
+
+.idcard-academy-logo {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(145deg, #1f2937 0%, #111827 100%);
+  border-radius: 6px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.idcard-academy-title {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #111827;
+  letter-spacing: 0.03em;
+}
+
+.idcard-academy-body {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.idcard-academy-photo-wrap {
+  flex-shrink: 0;
+  width: 102px;
+  height: 122px;
+  border: 3px solid #b91c1c;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f8fafc;
+  box-shadow: 0 2px 10px rgba(185, 28, 28, 0.2), inset 0 0 0 1px rgba(255,255,255,0.5);
+}
+
+.idcard-academy-photo-wrap .idcard-photo {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+  border-radius: 0;
+}
+
+.idcard-academy-fields {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: #374151;
+  line-height: 1.45;
+}
+
+.idcard-academy-row {
+  margin-bottom: 6px;
+}
+
+.idcard-academy-label {
+  font-weight: 700;
+  color: #111827;
+  margin-right: 6px;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.idcard-academy-footer {
+  margin-top: 14px;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: #6b7280;
+  border-top: 1px solid #fecaca;
+}
+
+.idcard-academy-signature {
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: 0.02em;
+}
+
+.idcard-academy-barcode {
+  font-family: 'Courier New', monospace;
+  letter-spacing: 3px;
+  color: #374151;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* Small size overrides for template selector thumbnails */
+.idcard--small.idcard-classic .idcard-classic-photo { width: 50px; height: 50px; }
+.idcard--small.idcard-modern .idcard-modern-photo-wrap { width: 44px; height: 44px; }
+.idcard--small.idcard-minimal .idcard-minimal-photo-wrap { width: 36px; height: 36px; }
+.idcard--small.idcard-cardstyle .idcard-cardstyle-photo { width: 44px; height: 44px; }
+.idcard--small.idcard-horizontal .idcard-horizontal-photo { width: 36px; height: 36px; }
+.idcard--small.idcard-academy .idcard-academy-photo-wrap { width: 50px; height: 60px; }
+.idcard--small.idcard-academy .idcard-academy-fields { font-size: 0.65rem; }
+.idcard--small .idcard-inner { padding: 8px; }
+
+/* Template selection grid (used in IdCardSelectTemplate) */
+.idcard-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 24px;
+  width: 100%;
+}
+
+.idcard-template-card {
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.idcard-template-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  border-color: var(--accent);
+}
+
+.idcard-template-preview {
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 140px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.idcard-template-preview .idcard {
+  flex-shrink: 0;
+}
+
+.idcard-template-preview-img {
+  max-width: 100%;
+  max-height: 120px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+/* Image-based template (PNG background + overlay) */
+.idcard-image-template {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  position: relative;
+  min-height: 180px;
+  aspect-ratio: 1.586 / 1;
+}
+
+/* Canvas layout (saved from Canva-style editor) – elements positioned by % */
+.idcard-image-template-canvas .idcard-canvas-el {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.idcard-image-template-canvas .idcard-canvas-photo {
+  overflow: hidden;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.idcard-image-template-canvas .idcard-canvas-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.idcard-image-template-canvas .idcard-canvas-text {
+  color: #111;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.idcard-image-template-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  padding: 10% 8%;
+  gap: 6%;
+}
+
+.idcard-image-template-photo {
+  flex: 0 0 32%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.idcard-image-template-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.idcard-image-template-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  color: #111;
+  text-shadow: 0 1px 2px rgba(255,255,255,0.8);
+}
+
+.idcard-image-template-name {
+  font-weight: 700;
+  font-size: clamp(0.75rem, 2.2vw, 1rem);
+  margin-bottom: 4px;
+}
+
+.idcard-image-template-id,
+.idcard-image-template-class,
+.idcard-image-template-school {
+  font-size: clamp(0.6rem, 1.8vw, 0.85rem);
+  color: #333;
+}
+
+.idcard--small.idcard-image-template {
+  min-height: 90px;
+  aspect-ratio: 1.586 / 1;
+}
+
+.idcard--small.idcard-image-template .idcard-image-template-name { font-size: 0.65rem; }
+.idcard--small.idcard-image-template .idcard-image-template-id,
+.idcard--small.idcard-image-template .idcard-image-template-class,
+.idcard--small.idcard-image-template .idcard-image-template-school { font-size: 0.55rem; }
+
+.idcard-template-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text);
+}
+
+.idcard-template-info strong { font-size: 1.1rem; display: block; color: var(--text); }
+.idcard-template-info .text-muted { font-size: 0.85rem; color: var(--text-muted); }
+
+/* Fill page layout */
+.idcard-fill-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 24px;
+  max-width: 900px;
+}
+
+@media (max-width: 768px) {
+  .idcard-fill-layout { grid-template-columns: 1fr; }
+}
+
+.idcard-fill-preview-card { min-width: 0; }
+.idcard-fill-actions { min-width: 0; }
+
+/* Preview page */
+.idcard-preview-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0;
+}
+
+/* ID card back preview (shared: ClassIdCardsWizard, SavedIdCardsList) */
+.idcard-back-preview .idcard-back-inner {
+  padding: 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.idcard-back-preview .idcard-back-school { font-size: 0.7rem; font-weight: 700; }
+.idcard-back-preview .idcard-back-address { font-size: 0.6rem; line-height: 1.3; opacity: 0.9; }
+.idcard-back-preview .idcard-back-valid { font-size: 0.6rem; }
+.idcard-back-preview .idcard-back-rules { font-size: 0.55rem; line-height: 1.3; max-width: 95%; }
+.idcard-back-preview .idcard-back-barcode { font-size: 0.6rem; letter-spacing: 0.15em; margin-top: 4px; }
+.idcard-back-preview.idcard--preview .idcard-back-inner { padding: 18px; gap: 8px; }
+.idcard-back-preview.idcard--preview .idcard-back-school { font-size: 0.9rem; }
+.idcard-back-preview.idcard--preview .idcard-back-address { font-size: 0.78rem; }
+.idcard-back-preview.idcard--preview .idcard-back-valid { font-size: 0.72rem; }
+.idcard-back-preview.idcard--preview .idcard-back-rules { font-size: 0.65rem; }
+.idcard-back-preview.idcard--preview .idcard-back-barcode { font-size: 0.7rem; }
+/* Default / Fabric */
+.idcard-back-preview--default,
+.idcard-back-preview--fabric {
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  color: rgba(255,255,255,0.9);
+}
+.idcard-back-preview--default .idcard-back-school,
+.idcard-back-preview--fabric .idcard-back-school { opacity: 0.95; }
+.idcard-back-preview--default .idcard-back-address,
+.idcard-back-preview--fabric .idcard-back-address { opacity: 0.85; }
+.idcard-back-preview--default .idcard-back-valid,
+.idcard-back-preview--fabric .idcard-back-valid { opacity: 0.8; }
+.idcard-back-preview--default .idcard-back-rules,
+.idcard-back-preview--fabric .idcard-back-rules { opacity: 0.75; }
+.idcard-back-preview--default .idcard-back-barcode,
+.idcard-back-preview--fabric .idcard-back-barcode { opacity: 0.9; }
+/* Navy */
+.idcard-back-preview--navy-design {
+  background: linear-gradient(180deg, #1e3a5f 0%, #0f172a 100%);
+  color: rgba(255,255,255,0.95);
+}
+.idcard-back-preview--navy-design .idcard-back-school { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.3); }
+.idcard-back-preview--navy-design .idcard-back-address { color: rgba(255,255,255,0.88); }
+.idcard-back-preview--navy-design .idcard-back-valid { color: rgba(255,255,255,0.85); }
+.idcard-back-preview--navy-design .idcard-back-rules { color: rgba(255,255,255,0.8); }
+.idcard-back-preview--navy-design .idcard-back-barcode { color: rgba(255,255,255,0.75); }
+/* Green */
+.idcard-back-preview--green-design {
+  background: linear-gradient(180deg, #1e5c3a 0%, #0d2818 100%);
+  color: rgba(255,255,255,0.95);
+}
+.idcard-back-preview--green-design .idcard-back-school { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.3); }
+.idcard-back-preview--green-design .idcard-back-address { color: rgba(255,255,255,0.9); }
+.idcard-back-preview--green-design .idcard-back-valid { color: rgba(255,255,255,0.85); }
+.idcard-back-preview--green-design .idcard-back-rules { color: rgba(255,255,255,0.8); }
+.idcard-back-preview--green-design .idcard-back-barcode { color: rgba(255,255,255,0.75); }
+/* Maroon */
+.idcard-back-preview--maroon-design {
+  background: linear-gradient(180deg, #5c1a24 0%, #1a0a0e 100%);
+  color: rgba(255,255,255,0.95);
+}
+.idcard-back-preview--maroon-design .idcard-back-school { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.3); }
+.idcard-back-preview--maroon-design .idcard-back-address { color: rgba(255,255,255,0.88); }
+.idcard-back-preview--maroon-design .idcard-back-valid { color: rgba(255,255,255,0.85); }
+.idcard-back-preview--maroon-design .idcard-back-rules { color: rgba(255,255,255,0.8); }
+.idcard-back-preview--maroon-design .idcard-back-barcode { color: rgba(255,255,255,0.75); }
+/* Cambridge */
+.idcard-back-preview--cambridge-design {
+  background: linear-gradient(180deg, #FDE047 0%, #FACC15 28%, #E5E7EB 28%, #E5E7EB 100%);
+  color: #374151;
+}
+.idcard-back-preview--cambridge-design .idcard-back-school { color: #0F766E; font-weight: 700; font-size: 0.65rem; }
+.idcard-back-preview--cambridge-design .idcard-back-address { color: #4B5563; font-size: 0.55rem; }
+.idcard-back-preview--cambridge-design .idcard-back-valid,
+.idcard-back-preview--cambridge-design .idcard-back-rules { color: #4B5563; font-size: 0.52rem; }
+.idcard-back-preview--cambridge-design .idcard-back-barcode { color: #374151; }
+.idcard-back-preview--cambridge-design.idcard--preview .idcard-back-school { font-size: 0.82rem; }
+.idcard-back-preview--cambridge-design.idcard--preview .idcard-back-address { font-size: 0.7rem; }
+/* Elegant Blue */
+.idcard-back-preview--elegant-blue-design {
+  background: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 50%, #0284C7 100%);
+  color: #fff;
+}
+.idcard-back-preview--elegant-blue-design .idcard-back-school { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+.idcard-back-preview--elegant-blue-design .idcard-back-address { color: rgba(255,255,255,0.95); }
+.idcard-back-preview--elegant-blue-design .idcard-back-valid { color: rgba(255,255,255,0.9); }
+.idcard-back-preview--elegant-blue-design .idcard-back-rules { color: rgba(255,255,255,0.85); }
+.idcard-back-preview--elegant-blue-design .idcard-back-barcode { color: rgba(255,255,255,0.9); }
+/* Custom uploaded back image (no overlay) */
+.idcard-back-preview--custom {
+  background-color: transparent;
+}
+.idcard-back-preview--custom .idcard-back-inner--image-only {
+  min-height: 100%;
+  background: transparent;
+}

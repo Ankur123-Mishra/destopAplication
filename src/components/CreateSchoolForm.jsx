@@ -1,0 +1,248 @@
+import React, { useState, useRef } from 'react';
+import { createSchool, bulkUploadStudentsXls } from '../api/dashboard';
+
+export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, onExcelUploadDone, rightOfExcel, showCancel = true, labelAsProject = false, externalExcelFile = null, projectFolderField = null }) {
+  const nameLabel = labelAsProject ? 'Project Name' : 'School Name';
+  const codeLabel = labelAsProject ? 'Project Code' : 'School Code';
+  const btnLabel = labelAsProject ? 'Create Project' : 'Create School';
+  const desc = labelAsProject
+    ? 'Enter project details and upload an Excel (XLS/XLSX) file with student data. Project will be created first, then student data will be uploaded.'
+    : 'Enter school details and upload an Excel (XLS/XLSX) file with student data. School will be created first, then student data will be uploaded.';
+  const nameRequiredMsg = labelAsProject ? 'Project name is required.' : 'School name is required.';
+  const creatingMsg = labelAsProject ? 'Creating project…' : 'Creating school…';
+  const [schoolName, setSchoolName] = useState('');
+  const [schoolCode, setSchoolCode] = useState('');
+  const [address, setAddress] = useState('');
+  const [dimensionHeight, setDimensionHeight] = useState('5.5');
+  const [dimensionWidth, setDimensionWidth] = useState('9');
+  const [dimensionUnit, setDimensionUnit] = useState('mm');
+  const [allowedMobilesStr, setAllowedMobilesStr] = useState('');
+  const [logoFile, setLogoFile] = useState(null);
+  const [xlsFile, setXlsFile] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState('');
+  const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
+  const xlsInputRef = useRef(null);
+
+  const allowedMobiles = allowedMobilesStr
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    const name = schoolName.trim();
+    if (!name) {
+      setError(nameRequiredMsg);
+      return;
+    }
+    const excelToUse = externalExcelFile || xlsFile;
+    if (!excelToUse) {
+      setError(labelAsProject ? 'Please select a project folder that contains an Excel file.' : 'Please select an Excel (XLS/XLSX) file with student data.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      setStep('school');
+      const res = await createSchool({
+        schoolName: name,
+        schoolCode: schoolCode.trim(),
+        address: address.trim(),
+        dimensionHeight: dimensionHeight.trim() || undefined,
+        dimensionWidth: dimensionWidth.trim() || undefined,
+        dimensionUnit: dimensionUnit,
+        allowedMobiles,
+        logo: logoFile || null,
+      });
+      const schoolId = res.schoolId;
+      console.log("school responce", res);
+      if (!schoolId) throw new Error('Server did not return school id.');
+
+      setStep('upload');
+      await bulkUploadStudentsXls(schoolId, excelToUse);
+      if (onExcelUploadDone) {
+        setStep('photos');
+        try {
+          await Promise.resolve(onExcelUploadDone(schoolId));
+        } finally {
+          setStep('');
+        }
+        onSuccess?.();
+      } else if (onExcelSuccess) {
+        setTimeout(() => onExcelSuccess(schoolId), 0);
+      } else {
+        onSuccess?.();
+      }
+    } catch (err) {
+      setError(err?.message || 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+      setStep('');
+    }
+  };
+
+  return (
+    <>
+      <p className="text-muted" style={{ marginBottom: 24 }}>
+        {desc}
+      </p>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: 16 }}>
+          <label className="input-label">{nameLabel} *</label>
+          <input
+            type="text"
+            className="input-field"
+            value={schoolName}
+            onChange={(e) => setSchoolName(e.target.value)}
+            placeholder={labelAsProject ? 'e.g. My Project' : 'e.g. Green Valley School'}
+            required
+          />
+        </div>
+        {/* Project Code & Address hidden for Create Project modal */}
+        {!labelAsProject && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <label className="input-label">{codeLabel}</label>
+              <input
+                type="text"
+                className="input-field"
+                value={schoolCode}
+                onChange={(e) => setSchoolCode(e.target.value)}
+                placeholder="e.g. GVS001"
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label className="input-label">Address</label>
+              <textarea
+                className="input-field"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="e.g. Sector 14, Gurgaon"
+                rows={2}
+              />
+            </div>
+          </>
+        )}
+        {/* Dimension (Height & Width) - shown for Create Project */}
+        {labelAsProject && (
+          <div className="create-form-dimension-row" style={{ marginBottom: 16 }}>
+            <label className="input-label" style={{ display: 'block', marginBottom: 8 }}>Dimension (optional)</label>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div>
+                <label className="text-muted" style={{ fontSize: '0.85rem', marginRight: 6 }}>Height</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={dimensionHeight}
+                  onChange={(e) => setDimensionHeight(e.target.value)}
+                  placeholder="5.5"
+                  style={{ width: 100 }}
+                />
+              </div>
+              <div>
+                <label className="text-muted" style={{ fontSize: '0.85rem', marginRight: 6 }}>Width</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={dimensionWidth}
+                  onChange={(e) => setDimensionWidth(e.target.value)}
+                  placeholder="9"
+                  style={{ width: 100 }}
+                />
+              </div>
+              <div>
+                <label className="text-muted" style={{ fontSize: '0.85rem', marginRight: 6 }}>Unit</label>
+                <select
+                  className="input-field"
+                  value={dimensionUnit}
+                  onChange={(e) => setDimensionUnit(e.target.value)}
+                  style={{ width: 80 }}
+                >
+                  <option value="mm">mm</option>
+                  <option value="cm">cm</option>
+                  <option value="inch">inch</option>
+                  <option value="px">px</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* <div style={{ marginBottom: 16 }}>
+          <label className="input-label">Allowed mobiles (optional)</label>
+          <input
+            type="text"
+            className="input-field"
+            value={allowedMobilesStr}
+            onChange={(e) => setAllowedMobilesStr(e.target.value)}
+            placeholder="Comma or space separated, e.g. 9876543210, 9876543211"
+          />
+        </div> */}
+        {/* Logo section hidden for Create Project modal */}
+        {!labelAsProject && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="input-label">Logo (optional)</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+              style={{ display: 'block', marginTop: 4 }}
+            />
+          </div>
+        )}
+        <div className="create-form-excel-row" style={{ marginBottom: 16 }}>
+          <div className="create-form-excel-left">
+            {projectFolderField ? (
+              <>
+                <label className="input-label">Project folder *</label>
+                <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
+                  Select one folder that contains: (1) one Excel file (XLS/XLSX) with student data, (2) one subfolder with student photos named by Student ID (e.g. 101.jpg, 102.png).
+                </p>
+                {projectFolderField}
+              </>
+            ) : (
+              <>
+                <label className="input-label">Student data (Excel file) *</label>
+                <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
+                  XLS/XLSX with columns: SrNo, Photo, StudentName, Gender, BirthDate, STD, Division, RegNo, BloodGroup, Address, Mobile
+                </p>
+                <input
+                  ref={xlsInputRef}
+                  type="file"
+                  accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={(e) => setXlsFile(e.target.files?.[0] || null)}
+                  style={{ display: 'block', marginTop: 4 }}
+                />
+                {xlsFile && <p className="text-muted" style={{ marginTop: 6, fontSize: '0.9rem' }}>Selected: {xlsFile.name}</p>}
+              </>
+            )}
+          </div>
+          {rightOfExcel && !projectFolderField && <div className="create-form-excel-right">{rightOfExcel}</div>}
+        </div>
+        {error && <p className="text-danger" style={{ marginBottom: 16 }}>{error}</p>}
+        {submitting && step && (
+          <p className="text-muted" style={{ marginBottom: 16 }}>
+            {step === 'school' ? creatingMsg : step === 'photos' ? 'Uploading photos…' : 'Uploading student data…'}
+          </p>
+        )}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button type="submit" className="btn btn-primary" disabled={submitting}>
+            {submitting ? 'Please wait…' : btnLabel}
+          </button>
+          {showCancel && (
+            <button type="button" className="btn btn-secondary" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </form>
+      <style>{`
+        .create-form-excel-row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+        .create-form-excel-left { flex: 1; min-width: 200px; }
+        .create-form-excel-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; min-height: 80px; }
+      `}</style>
+    </>
+  );
+}
