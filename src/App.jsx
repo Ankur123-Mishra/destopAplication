@@ -27,6 +27,7 @@ import ClassWiseUploadedPhotos from './pages/ClassWiseUploadedPhotos';
 import ClassIdCardsWizard from './pages/ClassIdCardsWizard';
 import CreateSchool from './pages/CreateSchool';
 import TemplateEditor from './pages/TemplateEditor';
+import BatchImageCrop from './pages/BatchImageCrop';
 import ParentCollection from './pages/ParentCollection';
 import Layout from './components/Layout';
 import OfflineBanner from './components/OfflineBanner';
@@ -305,6 +306,14 @@ function AppRoutes() {
           element={
             <PrivateRoute>
               <Layout><TemplateEditor /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/batch-image-crop"
+          element={
+            <PrivateRoute>
+              <Layout><BatchImageCrop /></Layout>
             </PrivateRoute>
           }
         />
