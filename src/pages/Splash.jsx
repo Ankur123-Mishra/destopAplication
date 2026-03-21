@@ -1,13 +1,16 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useApp } from '../context/AppContext';
 
 export default function Splash() {
   const navigate = useNavigate();
+  const { user, authReady } = useApp();
 
   useEffect(() => {
-    const t = setTimeout(() => navigate('/login'), 2500);
+    if (!authReady) return undefined;
+    const t = setTimeout(() => navigate(user ? '/dashboard' : '/login', { replace: true }), 1200);
     return () => clearTimeout(t);
-  }, [navigate]);
+  }, [authReady, navigate, user]);
 
   return (
     <div className="splash">

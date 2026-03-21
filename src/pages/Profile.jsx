@@ -5,11 +5,11 @@ import Header from '../components/Header';
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { user, setUser } = useApp();
+  const { user, logout } = useApp();
 
   const handleLogout = () => {
-    setUser(null);
-    navigate('/login');
+    logout();
+    navigate('/login', { replace: true });
   };
 
   return (

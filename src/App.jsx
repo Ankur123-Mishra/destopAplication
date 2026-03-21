@@ -33,7 +33,16 @@ import Layout from './components/Layout';
 import OfflineBanner from './components/OfflineBanner';
 
 function PrivateRoute({ children }) {
-  const { user } = useApp();
+  const { user, authReady } = useApp();
+  if (!authReady) {
+    return (
+      <div className="splash">
+        <div className="splash-content">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" replace />;
   return children;
 }

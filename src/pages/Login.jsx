@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { generateOtp, verifyOtp } from '../api/auth';
-import { setToken, setStoredUser } from '../api/authStorage';
+import { getToken, setToken, setStoredUser } from '../api/authStorage';
 
 const OTP_LENGTH = 4;
 const RESEND_COOLDOWN_SEC = 60;
@@ -16,7 +16,7 @@ function normalizeMobile(value) {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { setUser } = useApp();
+  const { user, authReady, setUser } = useApp();
   const [mobile, setMobile] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
@@ -29,6 +29,13 @@ export default function Login() {
     const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [resendCooldown]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (user && getToken()) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [authReady, navigate, user]);
 
   const handleMobileChange = (e) => {
     setError('');
@@ -77,7 +84,7 @@ export default function Login() {
       };
       setStoredUser(user);
       setUser(user);
-      navigate('/dashboard');
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err?.message || 'Invalid OTP. Please try again.');
     } finally {

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
-import { getToken, getStoredUser } from '../api/authStorage';
+import { clearAuth, getToken, getStoredUser } from '../api/authStorage';
 
 const AppContext = createContext(null);
 
@@ -45,13 +45,17 @@ const MOCK_NOTIFICATIONS = [
 
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [schools] = useState(MOCK_SCHOOLS);
 
   // App load par stored token + user se session restore (Electron restart ke baad bhi login rahe)
   useEffect(() => {
     const token = getToken();
     const storedUser = getStoredUser();
-    if (token && storedUser) setUser(storedUser);
+    if (token && storedUser) {
+      setUser(storedUser);
+    }
+    setAuthReady(true);
   }, []);
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
   const [studentsByClass, setStudentsByClass] = useState(MOCK_STUDENTS_BY_CLASS);
@@ -139,10 +143,15 @@ export function AppProvider({ children }) {
   const addPendingUpload = (item) => setPendingUploads((p) => [...p, item]);
   const removePendingUpload = (id) => setPendingUploads((p) => p.filter((x) => x.id !== id));
   const clearPendingUploads = () => setPendingUploads([]);
+  const logout = () => {
+    clearAuth();
+    setUser(null);
+  };
 
   const value = {
     user,
     setUser,
+    authReady,
     schools,
     classes: getClasses(),
     getClasses,
@@ -157,6 +166,7 @@ export function AppProvider({ children }) {
     clearPendingUploads,
     offlineMode,
     setOfflineMode,
+    logout,
     savedIdCards,
     getIdCardsForStudent,
     addSavedIdCard,

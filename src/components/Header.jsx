@@ -4,10 +4,14 @@ import { useApp } from '../context/AppContext';
 
 export default function Header({ title, showBack, backTo, onBackClick }) {
   const navigate = useNavigate();
-  const { user } = useApp();
+  const { user, logout } = useApp();
   const handleBack = () => {
     if (onBackClick) onBackClick();
     else navigate(backTo || -1);
+  };
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
   };
 
   return (
@@ -23,6 +27,9 @@ export default function Header({ title, showBack, backTo, onBackClick }) {
       {user && (
         <div className="header-right">
           <span className="header-user">{user.name || user.mobile || user.email}</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleLogout}>
+            Logout
+          </button>
         </div>
       )}
     </header>
