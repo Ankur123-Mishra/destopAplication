@@ -128,8 +128,8 @@ export default function Dashboard() {
     { label: 'Total Students', value: stats.totalStudents, icon: '👥' },
     { label: 'Photo Pending', value: stats.photoPending, icon: '🟡' },
     { label: 'Photo Uploaded', value: stats.photoUploaded, icon: '🔵' },
-    { label: 'Correction From School', value: stats.correctionRequired, icon: '⚠️' },
-    { label: 'Delivery Pending', value: stats.deliveryPending, icon: '📦' },
+    // { label: 'Correction From School', value: stats.correctionRequired, icon: '⚠️' },
+    // { label: 'Delivery Pending', value: stats.deliveryPending, icon: '📦' },
   ];
 
   console.log("stats", stats);
@@ -165,7 +165,7 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <div className="card" style={{ marginTop: 24 }}>
+          <div className="card dashboard-assigned-schools">
             <h3 style={{ marginBottom: 16 }}>Assigned Schools</h3>
             <div className="school-list">
               {schools.length === 0 ? (
@@ -248,6 +248,7 @@ export default function Dashboard() {
         .create-project-btn { flex-shrink: 0; }
         .dashboard-error { color: var(--danger, #e74c3c); margin-bottom: 16px; }
         .dashboard-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+        .dashboard-assigned-schools { margin-top: 24px; max-width: 800px; width: 100%; box-sizing: border-box; }
         .create-project-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 24px; box-sizing: border-box; }
         .create-project-modal { background: var(--card-bg, #1e1e2e); border-radius: 12px; max-width: 600px; width: 100%; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
         .create-project-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; }
