@@ -23,6 +23,8 @@ function mapApiStudent(s) {
     email: s.email || '',
     address: s?.address || '',
     status: s.status,
+    dimension: s?.schoolId?.dimension,
+    dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: s.photoUrl,
   };
 }

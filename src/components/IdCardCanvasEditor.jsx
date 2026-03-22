@@ -54,11 +54,37 @@ function normalizeValue(v) {
   return String(v);
 }
 
+/** Backend unit → valid CSS length unit for width/height */
+function normalizeCssDimensionUnit(unit) {
+  if (!unit || typeof unit !== 'string') return 'mm';
+  const u = unit.trim().toLowerCase();
+  if (u === 'inch' || u === 'inches') return 'in';
+  if (['mm', 'cm', 'in', 'px', 'pt'].includes(u)) return u;
+  return 'mm';
+}
+
+/** When set, the stage renders at real card size (e.g. 88mm × 56mm). */
+function getPhysicalStageSizeStyle(dimension, dimensionUnit) {
+  if (!dimension || typeof dimension.width !== 'number' || typeof dimension.height !== 'number') return null;
+  if (dimension.width <= 0 || dimension.height <= 0) return null;
+  const unit = normalizeCssDimensionUnit(dimensionUnit);
+  return {
+    width: `${dimension.width}${unit}`,
+    height: `${dimension.height}${unit}`,
+    maxWidth: 'none',
+    minHeight: 0,
+    aspectRatio: 'auto',
+  };
+}
+
 export default function IdCardCanvasEditor({
   templateImage,
   studentImage,
   initialElements,
   initialData = {},
+  /** Physical card size from API (e.g. school dimension) — stage matches this size in the given unit */
+  dimension,
+  dimensionUnit,
   onSave,
   onCancel,
   saveLabel = 'Save ID Card',
@@ -66,7 +92,6 @@ export default function IdCardCanvasEditor({
 }) {
   const canvasRef = useRef(null);
   const [elements, setElements] = useState(() => initialElements || DEFAULT_ELEMENTS());
-  console.log("elements", elements);
   const [selectedId, setSelectedId] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [resizeState, setResizeState] = useState(null);
@@ -250,6 +275,7 @@ export default function IdCardCanvasEditor({
 
   const selectedEl = elements.find((e) => e.id === selectedId);
   const isPhoto = selectedEl?.type === 'photo';
+  const physicalStageStyle = getPhysicalStageSizeStyle(dimension, dimensionUnit);
 
   const handleSaveClick = () => {
     onSave({
@@ -277,14 +303,17 @@ export default function IdCardCanvasEditor({
       </div>
 
       <div className="idcard-canvas-layout">
-        <div
-          ref={canvasRef}
-          className="idcard-canvas-stage"
-          style={{ backgroundImage: templateImage ? `url(${templateImage})` : undefined }}
-          onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
-        >
+        <div className="idcard-canvas-stage-outer">
+          <div
+            ref={canvasRef}
+            className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
+            style={{
+              backgroundImage: templateImage ? `url(${templateImage})` : undefined,
+              ...physicalStageStyle,
+            }}
+            onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
+          >
           {elements.map((el) => {
-            console.log("el", el);
             if (el.type === 'photo') {
               return (
                 <div
@@ -330,8 +359,8 @@ export default function IdCardCanvasEditor({
               </div>
             );
           })}
+          </div>
         </div>
-        
 
         <div className="idcard-canvas-sidebar card">
 

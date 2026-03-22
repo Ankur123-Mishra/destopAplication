@@ -36,6 +36,15 @@
   }
 }
 
+.idcard-canvas-stage-outer {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+
 .idcard-canvas-stage {
   position: relative;
   overflow: hidden;
@@ -48,6 +57,13 @@
   aspect-ratio: 1.586 / 1;
   max-width: 520px;
   min-height: 280px;
+}
+
+/* Explicit width/height from API (mm/cm/in/px) — overrides aspect-ratio and max-width */
+.idcard-canvas-stage.idcard-canvas-stage--physical {
+  aspect-ratio: auto;
+  max-width: none;
+  min-height: unset;
 }
 
 .idcard-canvas-el {

@@ -236,6 +236,8 @@ export default function IdCardFill() {
           templateImage={template.image}
           studentImage={student?.photoUrl || null}
           initialElements={undefined}
+          dimension={student?.dimension}
+          dimensionUnit={student?.dimensionUnit}
           initialData={{
             name: student?.name || '',
             studentId: student?.studentId || '',

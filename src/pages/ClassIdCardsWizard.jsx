@@ -51,6 +51,7 @@ function mapApiStudent(s) {
     address: s?.address || '',
     status: s.status,
     dimension: s?.schoolId?.dimension,
+    dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
   };
 }
@@ -539,7 +540,7 @@ export default function ClassIdCardsWizard() {
           </div>
           <div className="class-idcards-students-grid">
             {students.map((student) => {
-              // console.log('student data in students images step', student);
+              console.log('student data in students images step', student);
               const img = getImageForStudent(student);
               const isSelected = selectedStudentIds.includes(student.id);
               return (
@@ -678,6 +679,8 @@ export default function ClassIdCardsWizard() {
           studentImage={getImageForStudent(previewStudent)}
           initialElements={uploadedTemplate.elements}
           initialData={initialData}
+          dimension={previewStudent?.dimension}
+          dimensionUnit={previewStudent?.dimensionUnit}
           onSave={handleUseUploadedTemplate}
           onCancel={handleCancelUploadedTemplate}
           saveLabel="Use this template"
