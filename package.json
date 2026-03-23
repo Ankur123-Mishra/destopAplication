@@ -262,7 +262,7 @@
     "utf8-byte-length": "^1.0.5",
     "util-deprecate": "^1.0.2",
     "verror": "^1.10.1",
-    "vite": "^5.4.21",
+    "vite": "^5.4.20",
     "wait-on": "^7.2.0",
     "which": "^2.0.2",
     "wrap-ansi": "^7.0.0",

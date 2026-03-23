@@ -66,7 +66,7 @@ function formatDateTime(value) {
 }
 
 function formatLinkScope(link) {
-  if (!link?.schoolId) return 'Standalone (parents enter class and section)';
+  if (!link?.schoolId) return link?.collectionSchoolLabel ? `Standalone - ${link.collectionSchoolLabel}` : 'Standalone (parents enter class and section)';
   const school = typeof link.schoolId === 'object' ? link.schoolId : null;
   const classInfo = typeof link.classId === 'object' ? link.classId : null;
   const schoolName = school?.schoolName || 'School';
@@ -98,6 +98,7 @@ export default function ParentCollection() {
   const [linkMode, setLinkMode] = useState('standalone');
   const [schoolId, setSchoolId] = useState('');
   const [classSectionId, setClassSectionId] = useState('');
+  const [collectionSchoolLabel, setCollectionSchoolLabel] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('180');
   const [fieldEnabled, setFieldEnabled] = useState(makeInitialFieldEnabled);
   const [lastCreatedLink, setLastCreatedLink] = useState('');
@@ -106,6 +107,8 @@ export default function ParentCollection() {
   const [exporting, setExporting] = useState(false);
   const [filterClassName, setFilterClassName] = useState('');
   const [filterSection, setFilterSection] = useState('');
+  const [expandedSchool, setExpandedSchool] = useState(null);
+  const [exportingSchool, setExportingSchool] = useState(null);
 
   const publicOriginConfigured = isPublicParentOriginConfigured();
 
@@ -136,13 +139,26 @@ export default function ParentCollection() {
     [filterClassName, filterSection]
   );
 
+  const groupedSubmissions = useMemo(() => {
+    return submissions.reduce((acc, curr) => {
+      const schoolName = curr.schoolName || curr.collectionSchoolLabel || 'Unknown School';
+      if (!acc[schoolName]) acc[schoolName] = [];
+      acc[schoolName].push(curr);
+      return acc;
+    }, {});
+  }, [submissions]);
+
   const schoolFormReady =
     linkMode === 'school' &&
     Boolean(schoolId) &&
     Boolean(classSectionId) &&
     Boolean(selectedSchool?.studentCollectionFormEnabled);
 
-  const formDisabled = linkMode === 'school' ? !schoolFormReady : false;
+  const standaloneReady =
+    linkMode === 'standalone' &&
+    Boolean(collectionSchoolLabel.trim());
+
+  const formDisabled = linkMode === 'school' ? !schoolFormReady : !standaloneReady;
 
   async function loadLinks() {
     setLinksLoading(true);
@@ -255,6 +271,8 @@ export default function ParentCollection() {
       if (linkMode === 'school') {
         payload.schoolId = schoolId;
         payload.classId = classSectionId;
+      } else if (linkMode === 'standalone') {
+        payload.collectionSchoolLabel = collectionSchoolLabel.trim();
       }
 
       const result = await createCollectionLink(payload);
@@ -325,6 +343,33 @@ export default function ParentCollection() {
       setFeedback({ type: 'error', message: err?.message || 'Failed to export submissions' });
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleExportSchool(schoolName, items) {
+    setFeedback(null);
+    setExportingSchool(schoolName);
+    try {
+      const sample = items[0];
+      const filters = { ...submissionFilters };
+      if (sample.schoolId) {
+         // use the object form if populated, otherwise the string
+         filters.schoolId = typeof sample.schoolId === 'object' ? sample.schoolId._id : sample.schoolId;
+      } else {
+         filters.collectionSchoolLabel = schoolName;
+      }
+      const blob = await exportCollectionSubmissions(filters);
+      const safeName = schoolName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const filename = `parent_form_${safeName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      downloadBlob(blob, filename);
+      setFeedback({
+        type: 'success',
+        message: `Excel export downloaded for ${schoolName}.`,
+      });
+    } catch (err) {
+      setFeedback({ type: 'error', message: err?.message || 'Failed to export submissions' });
+    } finally {
+      setExportingSchool(null);
     }
   }
 
@@ -402,12 +447,25 @@ export default function ParentCollection() {
                 onChange={(e) => {
                   setLinkMode(e.target.value);
                   setLastCreatedLink('');
+                  setCollectionSchoolLabel('');
                 }}
               >
                 <option value="standalone">Standalone (parents enter class and section)</option>
                 <option value="school">School-bound class</option>
               </select>
             </label>
+            {linkMode === 'standalone' && (
+              <label className="parent-collection-field">
+                <span className="input-label">School Name</span>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="Enter School Name"
+                  value={collectionSchoolLabel}
+                  onChange={(e) => setCollectionSchoolLabel(e.target.value)}
+                />
+              </label>
+            )}
           </div>
         </div>
 
@@ -660,48 +718,80 @@ export default function ParentCollection() {
               {submissionsLoading ? 'Refreshing...' : 'Apply filters'}
             </button>
             <button type="button" className="btn btn-primary" onClick={handleExport} disabled={exporting}>
-              {exporting ? 'Exporting...' : 'Export Excel'}
+              {exporting ? 'Exporting...' : 'Export All Excel'}
             </button>
           </div>
 
           {submissionsLoading ? (
-            <p className="text-muted" style={{ marginTop: 16 }}>Loading submissions...</p>
-          ) : submissions.length === 0 ? (
-            <p className="text-muted" style={{ marginTop: 16 }}>No submitted parent data yet.</p>
-          ) : (
-            <div className="table-container" style={{ marginTop: 16 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>School</th>
-                    <th>Class</th>
-                    <th>Section</th>
-                    <th>Student</th>
-                    <th>Roll</th>
-                    <th>Admission</th>
-                    <th>Mobile</th>
-                    <th>Submitted</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {submissions.map((item) => (
-                    <tr key={item._id}>
-                      <td>{item.schoolName || '—'}</td>
-                      <td>{item.className || '—'}</td>
-                      <td>{item.section || '—'}</td>
-                      <td>{item.studentName || '—'}</td>
-                      <td>{item.rollNo || '—'}</td>
-                      <td>{item.admissionNo || '—'}</td>
-                      <td>{item.mobile || '—'}</td>
-                      <td>{formatDateTime(item.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+             <p className="text-muted" style={{ marginTop: 16 }}>Loading submissions...</p>
+           ) : Object.keys(groupedSubmissions).length === 0 ? (
+             <p className="text-muted" style={{ marginTop: 16 }}>No submitted parent data yet.</p>
+           ) : (
+             <div className="school-list" style={{ marginTop: 16 }}>
+               {Object.keys(groupedSubmissions).map((schoolGroup) => (
+                 <div key={schoolGroup} className="school-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                   <div
+                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                     onClick={() => setExpandedSchool(expandedSchool === schoolGroup ? null : schoolGroup)}
+                   >
+                     <div>
+                       <strong>{schoolGroup}</strong>
+                       <p className="text-muted" style={{ fontSize: '0.9rem', marginTop: 4 }}>
+                         {groupedSubmissions[schoolGroup].length} submission(s)
+                       </p>
+                     </div>
+                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                       <button
+                         type="button"
+                         className="btn btn-primary btn-sm"
+                         onClick={(e) => { e.stopPropagation(); handleExportSchool(schoolGroup, groupedSubmissions[schoolGroup]); }}
+                         disabled={exportingSchool === schoolGroup}
+                       >
+                         {exportingSchool === schoolGroup ? 'Exporting...' : 'Export Excel'}
+                       </button>
+                       <span style={{ color: 'var(--text-muted)' }}>
+                         {expandedSchool === schoolGroup ? '▲' : '▼'}
+                       </span>
+                     </div>
+                   </div>
+                   {expandedSchool === schoolGroup && (
+                     <div className="table-container" style={{ marginTop: 16 }}>
+                       <table>
+                         <thead>
+                           <tr>
+                             <th>School</th>
+                             <th>Class</th>
+                             <th>Section</th>
+                             <th>Student</th>
+                             <th>Roll</th>
+                             <th>Admission</th>
+                             <th>Mobile</th>
+                             <th>Submitted</th>
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {groupedSubmissions[schoolGroup].map((item) => (
+                             <tr key={item._id}>
+                               <td>{item.schoolName || '—'}</td>
+                               <td>{item.className || '—'}</td>
+                               <td>{item.section || '—'}</td>
+                               <td>{item.studentName || '—'}</td>
+                               <td>{item.rollNo || '—'}</td>
+                               <td>{item.admissionNo || '—'}</td>
+                               <td>{item.mobile || '—'}</td>
+                               <td>{formatDateTime(item.createdAt)}</td>
+                             </tr>
+                           ))}
+                         </tbody>
+                       </table>
+                     </div>
+                   )}
+                 </div>
+               ))}
+             </div>
+           )}
+         </div>
+       </div>
 
       <style>{`
         .parent-collection-page {
