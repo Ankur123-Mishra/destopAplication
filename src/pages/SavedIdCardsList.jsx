@@ -1,17 +1,25 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
-import Header from '../components/Header';
-import IdCardRenderer from '../components/IdCardRenderer';
-import IdCardBackPreview from '../components/IdCardBackPreview';
-import FabricIdCardGenerator from '../components/FabricIdCardGenerator';
-import { getTemplateById, getInternalTemplateId } from '../data/idCardTemplates';
-import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
-import { getUploadedTemplateById } from '../data/uploadedTemplatesStorage';
-import { getAssignedSchools, getClassesBySchool, getTemplatesStatus } from '../api/dashboard';
-import { API_BASE_URL } from '../api/config';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import React, { useState, useRef, useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useApp } from "../context/AppContext";
+import Header from "../components/Header";
+import IdCardRenderer from "../components/IdCardRenderer";
+import IdCardBackPreview from "../components/IdCardBackPreview";
+import FabricIdCardGenerator from "../components/FabricIdCardGenerator";
+import {
+  getTemplateById,
+  getInternalTemplateId,
+} from "../data/idCardTemplates";
+import { getFabricTemplateById } from "../data/fabricTemplatesStorage";
+import { getUploadedTemplateById } from "../data/uploadedTemplatesStorage";
+import {
+  deductTemplateDownloadPoints,
+  getAssignedSchools,
+  getClassesBySchool,
+  getTemplatesStatus,
+} from "../api/dashboard";
+import { API_BASE_URL } from "../api/config";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 const A4_WIDTH_MM = 210;
@@ -22,28 +30,28 @@ const DEFAULT_CARD_WIDTH_MM = 90;
 const DEFAULT_CARD_HEIGHT_MM = 57;
 
 function fullPhotoUrl(url) {
-  if (!url || typeof url !== 'string') return url;
-  if (url.startsWith('http')) return url;
-  const base = API_BASE_URL.replace(/\/$/, '');
-  return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
+  if (!url || typeof url !== "string") return url;
+  if (url.startsWith("http")) return url;
+  const base = API_BASE_URL.replace(/\/$/, "");
+  return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
 }
 
 function formatDateDMY(input) {
-  if (!input) return '';
+  if (!input) return "";
   if (input instanceof Date && !Number.isNaN(input.getTime())) {
-    const dd = String(input.getDate()).padStart(2, '0');
-    const mm = String(input.getMonth() + 1).padStart(2, '0');
+    const dd = String(input.getDate()).padStart(2, "0");
+    const mm = String(input.getMonth() + 1).padStart(2, "0");
     const yy = String(input.getFullYear());
     return `${dd}/${mm}/${yy}`;
   }
   const s = String(input).trim();
-  if (!s) return '';
+  if (!s) return "";
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   const m2 = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (m2) {
-    const dd = String(m2[1]).padStart(2, '0');
-    const mm = String(m2[2]).padStart(2, '0');
+    const dd = String(m2[1]).padStart(2, "0");
+    const mm = String(m2[2]).padStart(2, "0");
     return `${dd}/${mm}/${m2[3]}`;
   }
   return s;
@@ -52,15 +60,15 @@ function formatDateDMY(input) {
 function convertToMm(value, unit) {
   const numValue = parseFloat(value);
   if (isNaN(numValue)) return value;
-  
+
   switch (unit) {
-    case 'cm':
+    case "cm":
       return numValue * 10;
-    case 'inch':
+    case "inch":
       return numValue * 25.4;
-    case 'px':
+    case "px":
       return numValue * 0.264583;
-    case 'mm':
+    case "mm":
     default:
       return numValue;
   }
@@ -70,7 +78,11 @@ const MIN_PAGE_CM = 5;
 const MAX_PAGE_CM = 120;
 
 function parseCmInput(value) {
-  const n = Number.parseFloat(String(value ?? '').replace(',', '.').trim());
+  const n = Number.parseFloat(
+    String(value ?? "")
+      .replace(",", ".")
+      .trim(),
+  );
   return Number.isFinite(n) ? n : NaN;
 }
 
@@ -86,32 +98,46 @@ function delay(ms) {
 }
 
 /** Captures preview page DOM nodes to JPG/PNG (one file per page) or a single multi-page PDF. */
-async function exportPreviewPagesAsFiles(pageElements, format, pageWidthMm, pageHeightMm, fileBaseName) {
+async function exportPreviewPagesAsFiles(
+  pageElements,
+  format,
+  pageWidthMm,
+  pageHeightMm,
+  fileBaseName,
+) {
   if (!pageElements?.length) return;
   const scale = 2;
-  const opts = { scale, useCORS: true, logging: false, backgroundColor: '#ffffff' };
+  const opts = {
+    scale,
+    useCORS: true,
+    logging: false,
+    backgroundColor: "#ffffff",
+  };
 
-  if (format === 'pdf') {
+  if (format === "pdf") {
     const pdf = new jsPDF({
-      unit: 'mm',
+      unit: "mm",
       format: [pageWidthMm, pageHeightMm],
-      orientation: pageHeightMm >= pageWidthMm ? 'portrait' : 'landscape',
+      orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
     });
     for (let i = 0; i < pageElements.length; i++) {
       const canvas = await html2canvas(pageElements[i], opts);
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
-      if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], 'p');
-      pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthMm, pageHeightMm);
+      const imgData = canvas.toDataURL("image/jpeg", 0.92);
+      if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], "p");
+      pdf.addImage(imgData, "JPEG", 0, 0, pageWidthMm, pageHeightMm);
     }
     pdf.save(`${fileBaseName}.pdf`);
     return;
   }
 
-  const ext = format === 'png' ? 'png' : 'jpg';
+  const ext = format === "png" ? "png" : "jpg";
   for (let i = 0; i < pageElements.length; i++) {
     const canvas = await html2canvas(pageElements[i], opts);
-    const url = format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.92);
-    const a = document.createElement('a');
+    const url =
+      format === "png"
+        ? canvas.toDataURL("image/png")
+        : canvas.toDataURL("image/jpeg", 0.92);
+    const a = document.createElement("a");
     a.href = url;
     a.download = `${fileBaseName}-page-${i + 1}.${ext}`;
     a.click();
@@ -120,15 +146,15 @@ async function exportPreviewPagesAsFiles(pageElements, format, pageWidthMm, page
 }
 
 export default function SavedIdCardsList({
-  title = 'Saved ID Cards',
-  basePath = '/saved-id-cards',
-  previewBasePath = '/saved-id-cards/preview',
-  backTo = '/dashboard',
+  title = "Saved ID Cards",
+  basePath = "/saved-id-cards",
+  previewBasePath = "/saved-id-cards/preview",
+  backTo = "/dashboard",
 } = {}) {
   const navigate = useNavigate();
   const { schoolId, classId } = useParams();
   useApp(); // auth/context available if needed
-  const isViewTemplateFlow = basePath === '/view-template';
+  const isViewTemplateFlow = basePath === "/view-template";
   const [showPrintView, setShowPrintView] = useState(false);
   const [showPreviewView, setShowPreviewView] = useState(false);
   const [singleCardPreview, setSingleCardPreview] = useState(null); // card object when viewing one student's card
@@ -139,35 +165,42 @@ export default function SavedIdCardsList({
   const [showDownloadMenuPreview, setShowDownloadMenuPreview] = useState(false);
   const [pendingExportFormat, setPendingExportFormat] = useState(null); // 'jpg' | 'png' | 'pdf'
   const [exporting, setExporting] = useState(false);
+  const [chargingDownloadPoints, setChargingDownloadPoints] = useState(false);
 
-  const [pageSizeMode, setPageSizeMode] = useState('a4'); // 'a4' | 'custom'
-  const [customPageWidthCm, setCustomPageWidthCm] = useState('21');
-  const [customPageHeightCm, setCustomPageHeightCm] = useState('29.7');
+  const [pageSizeMode, setPageSizeMode] = useState("a4"); // 'a4' | 'custom'
+  const [customPageWidthCm, setCustomPageWidthCm] = useState("21");
+  const [customPageHeightCm, setCustomPageHeightCm] = useState("29.7");
 
   const pageWidthMm = React.useMemo(
-    () => (pageSizeMode === 'a4' ? A4_WIDTH_MM : clampPageCm(customPageWidthCm, 21) * 10),
+    () =>
+      pageSizeMode === "a4"
+        ? A4_WIDTH_MM
+        : clampPageCm(customPageWidthCm, 21) * 10,
     [pageSizeMode, customPageWidthCm],
   );
   const pageHeightMm = React.useMemo(
-    () => (pageSizeMode === 'a4' ? A4_HEIGHT_MM : clampPageCm(customPageHeightCm, 29.7) * 10),
+    () =>
+      pageSizeMode === "a4"
+        ? A4_HEIGHT_MM
+        : clampPageCm(customPageHeightCm, 29.7) * 10,
     [pageSizeMode, customPageHeightCm],
   );
 
   // Level 1: Schools
   const [schools, setSchools] = useState([]);
   const [loadingSchools, setLoadingSchools] = useState(false);
-  const [errorSchools, setErrorSchools] = useState('');
+  const [errorSchools, setErrorSchools] = useState("");
 
   // Level 2: Classes
   const [classes, setClasses] = useState([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
-  const [errorClasses, setErrorClasses] = useState('');
+  const [errorClasses, setErrorClasses] = useState("");
   const [selectedSchool, setSelectedSchool] = useState(null);
 
   // Level 3: Students (with saved ID cards)
   const [templateStatus, setTemplateStatus] = useState(null);
   const [loadingStudents, setLoadingStudents] = useState(false);
-  const [errorStudents, setErrorStudents] = useState('');
+  const [errorStudents, setErrorStudents] = useState("");
   const [selectedClass, setSelectedClass] = useState(null);
 
   // Fetch schools when on root saved-id-cards
@@ -175,22 +208,24 @@ export default function SavedIdCardsList({
     if (schoolId != null) return;
     let cancelled = false;
     setLoadingSchools(true);
-    setErrorSchools('');
+    setErrorSchools("");
     getAssignedSchools()
       .then((res) => {
         if (!cancelled) {
-          console.log('res schools', res.schools);
+          console.log("res schools", res.schools);
           setSchools(res.schools ?? []);
           setLoadingSchools(false);
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          setErrorSchools(err?.message || 'Failed to load schools');
+          setErrorSchools(err?.message || "Failed to load schools");
           setLoadingSchools(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [schoolId]);
 
   // Fetch classes when schoolId is in URL
@@ -198,12 +233,13 @@ export default function SavedIdCardsList({
     if (!schoolId) return;
     let cancelled = false;
     setLoadingClasses(true);
-    setErrorClasses('');
+    setErrorClasses("");
     setTemplateStatus(null);
     getAssignedSchools()
       .then((res) => {
         const school = (res.schools ?? []).find((s) => s._id === schoolId);
-        if (!cancelled) setSelectedSchool(school || { _id: schoolId, schoolName: schoolId });
+        if (!cancelled)
+          setSelectedSchool(school || { _id: schoolId, schoolName: schoolId });
       })
       .catch(() => {});
     getClassesBySchool(schoolId)
@@ -215,11 +251,13 @@ export default function SavedIdCardsList({
       })
       .catch((err) => {
         if (!cancelled) {
-          setErrorClasses(err?.message || 'Failed to load classes');
+          setErrorClasses(err?.message || "Failed to load classes");
           setLoadingClasses(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [schoolId]);
 
   // Fetch students (template status) when both schoolId and classId are in URL
@@ -227,11 +265,14 @@ export default function SavedIdCardsList({
     if (!schoolId || !classId) return;
     let cancelled = false;
     setLoadingStudents(true);
-    setErrorStudents('');
+    setErrorStudents("");
     getClassesBySchool(schoolId)
       .then((res) => {
         const cls = (res.classes ?? []).find((c) => c._id === classId);
-        if (!cancelled) setSelectedClass(cls || { _id: classId, className: classId, section: '' });
+        if (!cancelled)
+          setSelectedClass(
+            cls || { _id: classId, className: classId, section: "" },
+          );
       })
       .catch(() => {});
     getTemplatesStatus(schoolId, classId)
@@ -243,25 +284,37 @@ export default function SavedIdCardsList({
       })
       .catch((err) => {
         if (!cancelled) {
-          setErrorStudents(err?.message || 'Failed to load students');
+          setErrorStudents(err?.message || "Failed to load students");
           setLoadingStudents(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [schoolId, classId]);
 
-  const studentsWithTemplates = templateStatus?.students?.filter((s) => s.hasTemplate) ?? templateStatus?.summary?.withTemplates ?? [];
+  const studentsWithTemplates =
+    templateStatus?.students?.filter((s) => s.hasTemplate) ??
+    templateStatus?.summary?.withTemplates ??
+    [];
 
   console.log("studentsWithTemplates", studentsWithTemplates);
 
   const getTemplateName = (templateId, card = null) => {
-    if (templateId === 'uploaded-custom' && card?.uploadedTemplate?.name) return card.uploadedTemplate.name;
-    if (templateId === 'uploaded-custom') return 'Uploaded Template';
-    if (templateId && String(templateId).startsWith('uploaded-')) {
-      return getUploadedTemplateById(templateId)?.name || card?.uploadedTemplate?.name || 'Uploaded Template';
+    if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
+      return card.uploadedTemplate.name;
+    if (templateId === "uploaded-custom") return "Uploaded Template";
+    if (templateId && String(templateId).startsWith("uploaded-")) {
+      return (
+        getUploadedTemplateById(templateId)?.name ||
+        card?.uploadedTemplate?.name ||
+        "Uploaded Template"
+      );
     }
     const internalId = templateId ? getInternalTemplateId(templateId) : null;
-    const t = getTemplateById(internalId || templateId) || getFabricTemplateById(templateId);
+    const t =
+      getTemplateById(internalId || templateId) ||
+      getFabricTemplateById(templateId);
     return t?.name || templateId;
   };
 
@@ -269,89 +322,125 @@ export default function SavedIdCardsList({
   // Include address, name, photoUrl, studentId, dimension (from school) so ID card preview shows full data and size
   const studentToCard = (student) => {
     const apiTemplate = student?.template ?? null;
-    const isApiTemplateRenderable = Boolean(apiTemplate?.frontImage && Array.isArray(apiTemplate?.elements));
+    const isApiTemplateRenderable = Boolean(
+      apiTemplate?.frontImage && Array.isArray(apiTemplate?.elements),
+    );
 
     // In "View Template" flow, render the template coming from API (frontImage/backImage/elements).
     // We pass it as uploadedTemplate override so existing IdCardRenderer + back preview can render it.
-    const templateId = isViewTemplateFlow && isApiTemplateRenderable ? 'uploaded-custom' : apiTemplate?.templateId;
+    const templateId =
+      isViewTemplateFlow && isApiTemplateRenderable
+        ? "uploaded-custom"
+        : apiTemplate?.templateId;
 
     return {
       _id: student._id,
       id: apiTemplate?.templateId || student._id,
-      studentId: student.admissionNo ?? student.rollNo ?? student.uniqueCode ?? '',
-      name: student.studentName ?? '',
+      studentId:
+        student.admissionNo ?? student.rollNo ?? student.uniqueCode ?? "",
+      name: student.studentName ?? "",
       templateId,
-      uploadedTemplate: isViewTemplateFlow && isApiTemplateRenderable
-        ? {
-          name: apiTemplate?.name || 'Uploaded Template',
-          frontImage: fullPhotoUrl(apiTemplate.frontImage),
-          backImage: fullPhotoUrl(apiTemplate.backImage),
-          elements: apiTemplate.elements,
-        }
-        : null,
+      uploadedTemplate:
+        isViewTemplateFlow && isApiTemplateRenderable
+          ? {
+              name: apiTemplate?.name || "Uploaded Template",
+              frontImage: fullPhotoUrl(apiTemplate.frontImage),
+              backImage: fullPhotoUrl(apiTemplate.backImage),
+              elements: apiTemplate.elements,
+            }
+          : null,
       studentImage: fullPhotoUrl(student.photoUrl),
-      className: student.class ? `${student.class.className}${student.class.section ? ` - ${student.class.section}` : ''}` : '',
-      schoolName: student.school?.schoolName || '',
-      address: student.address ?? '',
-      dateOfBirth: student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
+      className: student.class
+        ? `${student.class.className}${student.class.section ? ` - ${student.class.section}` : ""}`
+        : "",
+      schoolName: student.school?.schoolName || "",
+      address: student.address ?? "",
+      dateOfBirth:
+        student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
       phone: student.mobile ?? student.phone ?? undefined,
       email: student.email ?? undefined,
       dimension: student.school?.dimension ?? null,
-      dimensionUnit: student.school?.dimensionUnit?? 'mm',
+      dimensionUnit: student.school?.dimensionUnit ?? "mm",
     };
   };
 
   const getPreviewUrl = (student) => {
     const templateId = student.template?.templateId || student._id;
     let base = `${previewBasePath}/${student._id}/${templateId}`;
-    if (schoolId && classId) base += `?schoolId=${encodeURIComponent(schoolId)}&classId=${encodeURIComponent(classId)}`;
+    if (schoolId && classId)
+      base += `?schoolId=${encodeURIComponent(schoolId)}&classId=${encodeURIComponent(classId)}`;
     return base;
   };
 
   const cardsToPrint = studentsWithTemplates.map(studentToCard);
-  const hasFabricCards = cardsToPrint.some((c) => c.templateId?.startsWith('fabric-'));
+  const hasFabricCards = cardsToPrint.some((c) =>
+    c.templateId?.startsWith("fabric-"),
+  );
 
   // How many cards fit per page from current page size (A4 or custom) and card dimensions
   const printLayout = React.useMemo(() => {
     const first = cardsToPrint[0];
     let cardWidthMm = DEFAULT_CARD_WIDTH_MM;
     let cardHeightMm = DEFAULT_CARD_HEIGHT_MM;
-    if (first?.dimension && typeof first.dimension.width === 'number' && typeof first.dimension.height === 'number') {
-      const unit = first.dimensionUnit || 'mm';
+    if (
+      first?.dimension &&
+      typeof first.dimension.width === "number" &&
+      typeof first.dimension.height === "number"
+    ) {
+      const unit = first.dimensionUnit || "mm";
       cardWidthMm = convertToMm(first.dimension.width, unit);
       cardHeightMm = convertToMm(first.dimension.height, unit);
     }
     const usableW = pageWidthMm - 2 * PRINT_PAGE_MARGIN_MM;
     const usableH = pageHeightMm - 2 * PRINT_PAGE_MARGIN_MM;
-    const cols = Math.max(1, Math.floor((usableW + PRINT_GAP_MM) / (cardWidthMm + PRINT_GAP_MM)));
-    const rows = Math.max(1, Math.floor((usableH + PRINT_GAP_MM) / (cardHeightMm + PRINT_GAP_MM)));
+    const cols = Math.max(
+      1,
+      Math.floor((usableW + PRINT_GAP_MM) / (cardWidthMm + PRINT_GAP_MM)),
+    );
+    const rows = Math.max(
+      1,
+      Math.floor((usableH + PRINT_GAP_MM) / (cardHeightMm + PRINT_GAP_MM)),
+    );
     const cardsPerPage = cols * rows;
-    const totalPages = cardsToPrint.length ? Math.ceil(cardsToPrint.length / cardsPerPage) : 0;
+    const totalPages = cardsToPrint.length
+      ? Math.ceil(cardsToPrint.length / cardsPerPage)
+      : 0;
     return { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages };
   }, [cardsToPrint, pageWidthMm, pageHeightMm]);
 
-  const { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages } = printLayout;
+  const { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages } =
+    printLayout;
 
   // One A4 page = fronts only, next A4 page = backs for the same students (same grid positions)
   const spreadPagesCount = totalPages > 0 ? totalPages * 2 : 0;
 
   const pageSizeSummary =
-    pageSizeMode === 'a4'
+    pageSizeMode === "a4"
       ? `A4 (${A4_WIDTH_MM}×${A4_HEIGHT_MM} mm)`
       : `Custom (${(pageWidthMm / 10).toFixed(1)}×${(pageHeightMm / 10).toFixed(1)} cm)`;
 
   const pageSizeControlStyle = {
-    background: '#2a2a2a',
-    border: '1px solid rgba(255,255,255,0.2)',
-    color: '#fff',
+    background: "#2a2a2a",
+    border: "1px solid rgba(255,255,255,0.2)",
+    color: "#fff",
     borderRadius: 6,
-    padding: '6px 10px',
+    padding: "6px 10px",
     fontSize: 13,
   };
 
-  const renderPageSizeControls = (idPrefix = 'page') => (
-    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-      <label htmlFor={`${idPrefix}-size-mode`} style={{ color: 'rgba(255,255,255,0.85)', whiteSpace: 'nowrap' }}>
+  const renderPageSizeControls = (idPrefix = "page") => (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <label
+        htmlFor={`${idPrefix}-size-mode`}
+        style={{ color: "rgba(255,255,255,0.85)", whiteSpace: "nowrap" }}
+      >
         Page size
       </label>
       <select
@@ -363,9 +452,17 @@ export default function SavedIdCardsList({
         <option value="a4">A4 (21×29.7 cm)</option>
         <option value="custom">Custom (cm)</option>
       </select>
-      {pageSizeMode === 'custom' && (
+      {pageSizeMode === "custom" && (
         <>
-          <label htmlFor={`${idPrefix}-w-cm`} style={{ color: 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label
+            htmlFor={`${idPrefix}-w-cm`}
+            style={{
+              color: "rgba(255,255,255,0.85)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
             Width (cm)
             <input
               id={`${idPrefix}-w-cm`}
@@ -378,7 +475,15 @@ export default function SavedIdCardsList({
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
-          <label htmlFor={`${idPrefix}-h-cm`} style={{ color: 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label
+            htmlFor={`${idPrefix}-h-cm`}
+            style={{
+              color: "rgba(255,255,255,0.85)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
             Height (cm)
             <input
               id={`${idPrefix}-h-cm`}
@@ -404,20 +509,20 @@ export default function SavedIdCardsList({
 
   useEffect(() => {
     const onAfterPrint = () => setShowPrintView(false);
-    window.addEventListener('afterprint', onAfterPrint);
-    return () => window.removeEventListener('afterprint', onAfterPrint);
+    window.addEventListener("afterprint", onAfterPrint);
+    return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
 
   useEffect(() => {
     if (!showDownloadMenuList && !showDownloadMenuPreview) return;
     const close = (e) => {
-      if (!e.target.closest('.download-dropdown-wrap')) {
+      if (!e.target.closest(".download-dropdown-wrap")) {
         setShowDownloadMenuList(false);
         setShowDownloadMenuPreview(false);
       }
     };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
   }, [showDownloadMenuList, showDownloadMenuPreview]);
 
   useEffect(() => {
@@ -426,7 +531,7 @@ export default function SavedIdCardsList({
     let cancelled = false;
     const run = async () => {
       setExporting(true);
-      const fileBaseName = `id-cards-${classId || schoolId || 'export'}-${Date.now()}`;
+      const fileBaseName = `id-cards-${classId || schoolId || "export"}-${Date.now()}`;
       let captured = false;
       try {
         for (let attempt = 0; attempt < 80; attempt++) {
@@ -434,8 +539,12 @@ export default function SavedIdCardsList({
           if (cancelled) return;
           const wrap = previewPagesWrapRef.current;
           if (!wrap) continue;
-          const nodes = wrap.querySelectorAll('.print-page.preview-page');
-          if (nodes.length > 0 && spreadPagesCount > 0 && nodes.length === spreadPagesCount) {
+          const nodes = wrap.querySelectorAll(".print-page.preview-page");
+          if (
+            nodes.length > 0 &&
+            spreadPagesCount > 0 &&
+            nodes.length === spreadPagesCount
+          ) {
             await exportPreviewPagesAsFiles(
               Array.from(nodes),
               format,
@@ -448,11 +557,15 @@ export default function SavedIdCardsList({
           }
         }
         if (!captured && !cancelled) {
-          window.alert('Could not capture the preview. Open Preview, wait for cards to load, then try Download again.');
+          window.alert(
+            "Could not capture the preview. Open Preview, wait for cards to load, then try Download again.",
+          );
         }
       } catch (err) {
         console.error(err);
-        window.alert('Download failed. Wait for the preview to finish loading, then try again.');
+        window.alert(
+          "Download failed. Wait for the preview to finish loading, then try again.",
+        );
       } finally {
         if (!cancelled) {
           setExporting(false);
@@ -464,12 +577,55 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [pendingExportFormat, showPreviewView, spreadPagesCount, pageWidthMm, pageHeightMm, classId, schoolId]);
+  }, [
+    pendingExportFormat,
+    showPreviewView,
+    spreadPagesCount,
+    pageWidthMm,
+    pageHeightMm,
+    classId,
+    schoolId,
+  ]);
 
-  const triggerExport = (fmt) => {
-    if (exporting) return;
+  const triggerExport = async (fmt) => {
+    if (exporting || chargingDownloadPoints) return;
     setShowDownloadMenuList(false);
     setShowDownloadMenuPreview(false);
+
+    if (isViewTemplateFlow) {
+      const studentIds = studentsWithTemplates
+        .map((student) => student?._id)
+        .filter((id) => typeof id === "string" && id.trim() !== "");
+
+      if (studentIds.length === 0) {
+        window.alert("No students found for template download.");
+        return;
+      }
+
+      try {
+        setChargingDownloadPoints(true);
+        const chargeResult = await deductTemplateDownloadPoints(studentIds);
+        if (typeof chargeResult?.balanceAfter === "number") {
+          window.dispatchEvent(
+            new CustomEvent("photographer-points-updated", {
+              detail: {
+                pointsBalance: chargeResult.balanceAfter,
+                perStudentTemplateCost: chargeResult.rateApplied,
+              },
+            }),
+          );
+        }
+      } catch (err) {
+        console.error(err);
+        window.alert(
+          err?.message || "Unable to deduct points. Please try again.",
+        );
+        return;
+      } finally {
+        setChargingDownloadPoints(false);
+      }
+    }
+
     if (!showPreviewView) {
       setShowPreviewView(true);
     }
@@ -478,16 +634,27 @@ export default function SavedIdCardsList({
 
   const cardCellStyle = (card) => {
     const dim = card.dimension;
-    const unit = card.dimensionUnit || 'mm';
-    if (dim && typeof dim.width === 'number' && typeof dim.height === 'number') {
-      return { width: `${dim.width}${unit}`, height: `${dim.height}${unit}`, minWidth: `${dim.width}${unit}`, minHeight: `${dim.height}${unit}` };
+    const unit = card.dimensionUnit || "mm";
+    if (
+      dim &&
+      typeof dim.width === "number" &&
+      typeof dim.height === "number"
+    ) {
+      return {
+        width: `${dim.width}${unit}`,
+        height: `${dim.height}${unit}`,
+        minWidth: `${dim.width}${unit}`,
+        minHeight: `${dim.height}${unit}`,
+      };
     }
     return undefined;
   };
 
   const renderCardForPrint = (card, useGridSize = false) => {
-    const isFabric = card.templateId?.startsWith('fabric-');
-    const fabricTemplate = isFabric ? getFabricTemplateById(card.templateId) : null;
+    const isFabric = card.templateId?.startsWith("fabric-");
+    const fabricTemplate = isFabric
+      ? getFabricTemplateById(card.templateId)
+      : null;
     const cellStyle = useGridSize ? undefined : cardCellStyle(card);
     if (isFabric && fabricTemplate?.json) {
       const studentData = {
@@ -496,10 +663,15 @@ export default function SavedIdCardsList({
         className: card.className,
         schoolName: card.schoolName,
         studentImage: card.studentImage,
-        ...(card.address != null && card.address !== '' && { address: card.address }),
+        ...(card.address != null &&
+          card.address !== "" && { address: card.address }),
       };
       return (
-        <div key={`${card._id}-${card.id}`} className="print-card-cell fabric-card" style={cellStyle}>
+        <div
+          key={`${card._id}-${card.id}`}
+          className="print-card-cell fabric-card"
+          style={cellStyle}
+        >
           <FabricIdCardGenerator
             templateJson={fabricTemplate.json}
             backgroundDataUrl={fabricTemplate.backgroundDataUrl}
@@ -514,28 +686,51 @@ export default function SavedIdCardsList({
       studentId: card.studentId,
       className: card.className,
       schoolName: card.schoolName,
-      ...(card.address != null && card.address !== '' && { address: card.address }),
+      ...(card.address != null &&
+        card.address !== "" && { address: card.address }),
       ...(card.dateOfBirth && { dateOfBirth: formatDateDMY(card.dateOfBirth) }),
       ...(card.phone && { phone: card.phone }),
       ...(card.email && { email: card.email }),
       ...(card.schoolLogo && { schoolLogo: card.schoolLogo }),
       ...(card.signature && { signature: card.signature }),
     };
-    const uploadedT = card.uploadedTemplate || (card.templateId?.startsWith('uploaded-') ? getUploadedTemplateById(card.templateId) : null);
-    const templateOverride = uploadedT ? { image: uploadedT.frontImage, elements: uploadedT.elements } : null;
+    const uploadedT =
+      card.uploadedTemplate ||
+      (card.templateId?.startsWith("uploaded-")
+        ? getUploadedTemplateById(card.templateId)
+        : null);
+    const templateOverride = uploadedT
+      ? { image: uploadedT.frontImage, elements: uploadedT.elements }
+      : null;
     return (
-      <div key={`${card._id}-${card.id}`} className="print-card-cell idcard-card" style={cellStyle}>
-        <IdCardRenderer templateId={card.templateId} data={data} size="preview" template={templateOverride} />
+      <div
+        key={`${card._id}-${card.id}`}
+        className="print-card-cell idcard-card"
+        style={cellStyle}
+      >
+        <IdCardRenderer
+          templateId={card.templateId}
+          data={data}
+          size="preview"
+          template={templateOverride}
+        />
       </div>
     );
   };
 
   const renderBackOnlyForPrint = (card, useGridSize = false) => {
     const cellStyle = useGridSize ? undefined : cardCellStyle(card);
-    const uploadedBack = card.uploadedTemplate?.backImage
-      ?? (card.templateId?.startsWith('uploaded-') ? getUploadedTemplateById(card.templateId)?.backImage : undefined);
+    const uploadedBack =
+      card.uploadedTemplate?.backImage ??
+      (card.templateId?.startsWith("uploaded-")
+        ? getUploadedTemplateById(card.templateId)?.backImage
+        : undefined);
     return (
-      <div key={`back-${card._id}-${card.id}`} className="print-card-cell idcard-card" style={cellStyle}>
+      <div
+        key={`back-${card._id}-${card.id}`}
+        className="print-card-cell idcard-card"
+        style={cellStyle}
+      >
         <IdCardBackPreview
           schoolName={card.schoolName}
           address={card.address}
@@ -551,18 +746,30 @@ export default function SavedIdCardsList({
   const renderCardWithBackForPreview = (card, useGridSize = false) => {
     const cellStyle = useGridSize ? undefined : cardCellStyle(card);
     return (
-      <div key={`${card._id}-${card.id}`} className="preview-card-stack preview-card-with-back" style={cellStyle}>
+      <div
+        key={`${card._id}-${card.id}`}
+        className="preview-card-stack preview-card-with-back"
+        style={cellStyle}
+      >
         <div className="preview-card-half preview-card-front">
           {renderCardForPrint(card, true)}
         </div>
         <div className="preview-card-half preview-card-back">
-          <div className="print-card-cell idcard-card" style={{ width: '100%', height: '100%' }}>
+          <div
+            className="print-card-cell idcard-card"
+            style={{ width: "100%", height: "100%" }}
+          >
             <IdCardBackPreview
               schoolName={card.schoolName}
               address={card.address}
               templateId={card.templateId}
               size="preview"
-              backImage={card.uploadedTemplate?.backImage ?? (card.templateId?.startsWith('uploaded-') ? getUploadedTemplateById(card.templateId)?.backImage : undefined)}
+              backImage={
+                card.uploadedTemplate?.backImage ??
+                (card.templateId?.startsWith("uploaded-")
+                  ? getUploadedTemplateById(card.templateId)?.backImage
+                  : undefined)
+              }
             />
           </div>
         </div>
@@ -574,10 +781,13 @@ export default function SavedIdCardsList({
   const renderSchoolsList = () => (
     <>
       <h3 style={{ marginBottom: 8 }}>Select school</h3>
-      <p className="text-muted" style={{ marginBottom: 20, fontSize: '0.9rem' }}>
+      <p
+        className="text-muted"
+        style={{ marginBottom: 20, fontSize: "0.9rem" }}
+      >
         {isViewTemplateFlow
-          ? 'Click on a school to see its classes.'
-          : 'Click on a school to see its classes with saved ID cards.'}
+          ? "Click on a school to see its classes."
+          : "Click on a school to see its classes with saved ID cards."}
       </p>
       {loadingSchools && <p className="text-muted">Loading schools…</p>}
       {errorSchools && <p className="text-danger">{errorSchools}</p>}
@@ -593,8 +803,12 @@ export default function SavedIdCardsList({
                 className="saved-idcard-item saved-idcard-class-item"
                 onClick={() => navigate(`${basePath}/school/${school._id}`)}
               >
-                <span className="saved-idcard-name">{school.schoolName || school.schoolCode || school._id}</span>
-                <span className="text-muted saved-idcard-meta">{school.schoolCode || ''}</span>
+                <span className="saved-idcard-name">
+                  {school.schoolName || school.schoolCode || school._id}
+                </span>
+                <span className="text-muted saved-idcard-meta">
+                  {school.schoolCode || ""}
+                </span>
               </button>
             </li>
           ))}
@@ -606,23 +820,34 @@ export default function SavedIdCardsList({
   // —— View: Classes list (schoolId, no classId)
   const renderClassesList = () => (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
         <button
           type="button"
           className="btn btn-ghost"
           onClick={() => navigate(basePath)}
-          style={{ padding: '6px 12px' }}
+          style={{ padding: "6px 12px" }}
         >
           ← Back to schools
         </button>
         <h3 style={{ margin: 0 }}>
-          {selectedSchool?.schoolName || selectedSchool?.schoolCode || schoolId} – Select class
+          {selectedSchool?.schoolName || selectedSchool?.schoolCode || schoolId}{" "}
+          – Select class
         </h3>
       </div>
-      <p className="text-muted" style={{ marginBottom: 20, fontSize: '0.9rem' }}>
+      <p
+        className="text-muted"
+        style={{ marginBottom: 20, fontSize: "0.9rem" }}
+      >
         {isViewTemplateFlow
-          ? 'Click on a class to see its students.'
-          : 'Click on a class to see students who have saved ID cards.'}
+          ? "Click on a class to see its students."
+          : "Click on a class to see students who have saved ID cards."}
       </p>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
@@ -636,10 +861,13 @@ export default function SavedIdCardsList({
               <button
                 type="button"
                 className="saved-idcard-item saved-idcard-class-item"
-                onClick={() => navigate(`${basePath}/school/${schoolId}/class/${cls._id}`)}
+                onClick={() =>
+                  navigate(`${basePath}/school/${schoolId}/class/${cls._id}`)
+                }
               >
                 <span className="saved-idcard-name">
-                  {cls.className}{cls.section ? ` - ${cls.section}` : ''}
+                  {cls.className}
+                  {cls.section ? ` - ${cls.section}` : ""}
                 </span>
               </button>
             </li>
@@ -652,128 +880,171 @@ export default function SavedIdCardsList({
   // —— View: Students list (schoolId + classId)
   const renderStudentsList = () => (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
         <button
           type="button"
           className="btn btn-ghost"
           onClick={() => navigate(`${basePath}/school/${schoolId}`)}
-          style={{ padding: '6px 12px' }}
+          style={{ padding: "6px 12px" }}
         >
           ← Back to classes
         </button>
         <h3 style={{ margin: 0 }}>
-          {selectedClass ? `${selectedClass.className}${selectedClass.section ? ` - ${selectedClass.section}` : ''}` : classId}
-          {isViewTemplateFlow ? ' – Templates' : ' – Saved ID cards'}
+          {selectedClass
+            ? `${selectedClass.className}${selectedClass.section ? ` - ${selectedClass.section}` : ""}`
+            : classId}
+          {isViewTemplateFlow ? " – Templates" : " – Saved ID cards"}
         </h3>
       </div>
-      <p className="text-muted" style={{ marginBottom: 20, fontSize: '0.9rem' }}>
+      <p
+        className="text-muted"
+        style={{ marginBottom: 20, fontSize: "0.9rem" }}
+      >
         {isViewTemplateFlow
-          ? 'Students with templates. Click to open preview.'
-          : 'Students with saved ID cards. Click to open preview.'}
+          ? "Students with templates. Click to open preview."
+          : "Students with saved ID cards. Click to open preview."}
       </p>
       {loadingStudents && <p className="text-muted">Loading students…</p>}
       {errorStudents && <p className="text-danger">{errorStudents}</p>}
-      {!loadingStudents && !errorStudents && studentsWithTemplates.length === 0 && (
-        <p className="text-muted">{isViewTemplateFlow ? 'No templates in this class.' : 'No saved ID cards in this class.'}</p>
-      )}
-      {!loadingStudents && !errorStudents && studentsWithTemplates.length > 0 && (
-        <>
-          <div style={{ marginBottom: 20, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setShowPreviewView(true)}
+      {!loadingStudents &&
+        !errorStudents &&
+        studentsWithTemplates.length === 0 && (
+          <p className="text-muted">
+            {isViewTemplateFlow
+              ? "No templates in this class."
+              : "No saved ID cards in this class."}
+          </p>
+        )}
+      {!loadingStudents &&
+        !errorStudents &&
+        studentsWithTemplates.length > 0 && (
+          <>
+            <div
+              style={{
+                marginBottom: 20,
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
             >
-              👁️ Preview ID Cards
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setShowPrintView(true)}
-            >
-              🖨️ Print Cards
-            </button>
-            <div className="download-dropdown-wrap" style={{ position: 'relative', display: 'inline-block' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={exporting}
-                onClick={() => setShowDownloadMenuList((v) => !v)}
+                onClick={() => setShowPreviewView(true)}
               >
-                {exporting ? 'Downloading…' : '⬇ Download'} ▾
+                👁️ Preview ID Cards
               </button>
-              {showDownloadMenuList && (
-                <div
-                  role="menu"
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    marginTop: 6,
-                    zIndex: 20,
-                    minWidth: 160,
-                    background: '#fff',
-                    border: '1px solid #ddd',
-                    borderRadius: 8,
-                    boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
-                    overflow: 'hidden',
-                  }}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowPrintView(true)}
+              >
+                🖨️ Print Cards
+              </button>
+              <div
+                className="download-dropdown-wrap"
+                style={{ position: "relative", display: "inline-block" }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={exporting || chargingDownloadPoints}
+                  onClick={() => setShowDownloadMenuList((v) => !v)}
                 >
-                  {['jpg', 'png', 'pdf'].map((fmt) => (
-                    <button
-                      key={fmt}
-                      type="button"
-                      role="menuitem"
-                      disabled={exporting}
-                      onClick={() => triggerExport(fmt)}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '10px 14px',
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: exporting ? 'not-allowed' : 'pointer',
-                        fontSize: '0.95rem',
-                        textTransform: 'uppercase',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!exporting) e.currentTarget.style.background = '#f3f4f6';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'transparent';
-                      }}
-                    >
-                      {fmt}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-          <ul className="saved-idcards-list">
-            {studentsWithTemplates.map((student) => {
-              // console.log('student', student);
-              const card = studentToCard(student);
-              return (
-                <li key={student._id}>
-                  <button
-                    type="button"
-                    className="saved-idcard-item"
-                    onClick={() => setSingleCardPreview(card)}
+                  {chargingDownloadPoints
+                    ? "Checking balance…"
+                    : exporting
+                      ? "Downloading…"
+                      : "⬇ Download"}{" "}
+                  ▾
+                </button>
+                {showDownloadMenuList && (
+                  <div
+                    role="menu"
+                    style={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      marginTop: 6,
+                      zIndex: 20,
+                      minWidth: 160,
+                      background: "#fff",
+                      border: "1px solid #ddd",
+                      borderRadius: 8,
+                      boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+                      overflow: "hidden",
+                    }}
                   >
-                    <span className="saved-idcard-name">{student.studentName}</span>
-                    <span className="text-muted saved-idcard-meta">
-                      {getTemplateName(card.templateId, card)} · {student.admissionNo || student.rollNo || ''} ·{' '}
-                      {student.template?.status || ''}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+                    {["jpg", "png", "pdf"].map((fmt) => (
+                      <button
+                        key={fmt}
+                        type="button"
+                        role="menuitem"
+                        disabled={exporting || chargingDownloadPoints}
+                        onClick={() => triggerExport(fmt)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 14px",
+                          border: "none",
+                          background: "transparent",
+                          cursor:
+                            exporting || chargingDownloadPoints
+                              ? "not-allowed"
+                              : "pointer",
+                          fontSize: "0.95rem",
+                          textTransform: "uppercase",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!exporting && !chargingDownloadPoints)
+                            e.currentTarget.style.background = "#f3f4f6";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "transparent";
+                        }}
+                      >
+                        {fmt}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <ul className="saved-idcards-list">
+              {studentsWithTemplates.map((student) => {
+                // console.log('student', student);
+                const card = studentToCard(student);
+                return (
+                  <li key={student._id}>
+                    <button
+                      type="button"
+                      className="saved-idcard-item"
+                      onClick={() => setSingleCardPreview(card)}
+                    >
+                      <span className="saved-idcard-name">
+                        {student.studentName}
+                      </span>
+                      <span className="text-muted saved-idcard-meta">
+                        {getTemplateName(card.templateId, card)} ·{" "}
+                        {student.admissionNo || student.rollNo || ""} ·{" "}
+                        {student.template?.status || ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
     </>
   );
 
@@ -795,14 +1066,14 @@ export default function SavedIdCardsList({
           <div
             className="print-overlay-toolbar"
             style={{
-              position: 'fixed',
+              position: "fixed",
               top: 16,
               left: 16,
               zIndex: 10001,
-              maxWidth: 'min(720px, calc(100vw - 120px))',
+              maxWidth: "min(720px, calc(100vw - 120px))",
             }}
           >
-            {renderPageSizeControls('print')}
+            {renderPageSizeControls("print")}
           </div>
           <div ref={printContentRef} className="print-pages-wrap">
             {Array.from({ length: spreadPagesCount }, (_, pageIndex) => {
@@ -817,10 +1088,10 @@ export default function SavedIdCardsList({
                   style={{
                     width: `${pageWidthMm}mm`,
                     height: `${pageHeightMm}mm`,
-                    ['--card-w-mm']: cardWidthMm,
-                    ['--card-h-mm']: cardHeightMm,
-                    ['--cols']: cols,
-                    ['--rows']: rows,
+                    ["--card-w-mm"]: cardWidthMm,
+                    ["--card-h-mm"]: cardHeightMm,
+                    ["--cols"]: cols,
+                    ["--rows"]: rows,
                   }}
                 >
                   <div
@@ -830,7 +1101,11 @@ export default function SavedIdCardsList({
                       gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
                     }}
                   >
-                    {pageCards.map((card) => (isBackPage ? renderBackOnlyForPrint(card, true) : renderCardForPrint(card, true)))}
+                    {pageCards.map((card) =>
+                      isBackPage
+                        ? renderBackOnlyForPrint(card, true)
+                        : renderCardForPrint(card, true),
+                    )}
                   </div>
                 </div>
               );
@@ -848,64 +1123,91 @@ export default function SavedIdCardsList({
 
       {showPreviewView && cardsToPrint.length > 0 && spreadPagesCount > 0 && (
         <div className="preview-overlay" aria-hidden="true">
-          <div className="preview-overlay-header" style={{ alignItems: 'flex-start', gap: 16 }}>
+          <div
+            className="preview-overlay-header"
+            style={{ alignItems: "flex-start", gap: 16 }}
+          >
             <div style={{ flex: 1, minWidth: 0 }}>
               <h3 style={{ margin: 0 }}>
-                ID Cards Preview – {pageSizeSummary} ({spreadPagesCount} page{spreadPagesCount !== 1 ? 's' : ''}; each batch: fronts, then backs)
+                ID Cards Preview – {pageSizeSummary} ({spreadPagesCount} page
+                {spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then
+                backs)
               </h3>
-              <div style={{ marginTop: 12 }}>{renderPageSizeControls('preview')}</div>
+              <div style={{ marginTop: 12 }}>
+                {renderPageSizeControls("preview")}
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexShrink: 0 }}>
-              <div className="download-dropdown-wrap" style={{ position: 'relative' }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                flexShrink: 0,
+              }}
+            >
+              <div
+                className="download-dropdown-wrap"
+                style={{ position: "relative" }}
+              >
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={exporting}
+                  disabled={exporting || chargingDownloadPoints}
                   onClick={() => setShowDownloadMenuPreview((v) => !v)}
                 >
-                  {exporting ? 'Downloading…' : '⬇ Download'} ▾
+                  {chargingDownloadPoints
+                    ? "Checking balance…"
+                    : exporting
+                      ? "Downloading…"
+                      : "⬇ Download"}{" "}
+                  ▾
                 </button>
                 {showDownloadMenuPreview && (
                   <div
                     role="menu"
                     style={{
-                      position: 'absolute',
-                      top: '100%',
+                      position: "absolute",
+                      top: "100%",
                       right: 0,
                       marginTop: 6,
                       zIndex: 20,
                       minWidth: 160,
-                      background: '#2a2a2a',
-                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: "#2a2a2a",
+                      border: "1px solid rgba(255,255,255,0.2)",
                       borderRadius: 8,
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-                      overflow: 'hidden',
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+                      overflow: "hidden",
                     }}
                   >
-                    {['jpg', 'png', 'pdf'].map((fmt) => (
+                    {["jpg", "png", "pdf"].map((fmt) => (
                       <button
                         key={fmt}
                         type="button"
                         role="menuitem"
-                        disabled={exporting}
+                        disabled={exporting || chargingDownloadPoints}
                         onClick={() => triggerExport(fmt)}
                         style={{
-                          display: 'block',
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '10px 14px',
-                          border: 'none',
-                          background: 'transparent',
-                          color: '#fff',
-                          cursor: exporting ? 'not-allowed' : 'pointer',
-                          fontSize: '0.95rem',
-                          textTransform: 'uppercase',
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 14px",
+                          border: "none",
+                          background: "transparent",
+                          color: "#fff",
+                          cursor:
+                            exporting || chargingDownloadPoints
+                              ? "not-allowed"
+                              : "pointer",
+                          fontSize: "0.95rem",
+                          textTransform: "uppercase",
                         }}
                         onMouseEnter={(e) => {
-                          if (!exporting) e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                          if (!exporting && !chargingDownloadPoints)
+                            e.currentTarget.style.background =
+                              "rgba(255,255,255,0.08)";
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.background = "transparent";
                         }}
                       >
                         {fmt}
@@ -930,7 +1232,10 @@ export default function SavedIdCardsList({
                 const batchIndex = Math.floor(pageIndex / 2);
                 const isBackPage = pageIndex % 2 === 1;
                 const start = batchIndex * cardsPerPage;
-                const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
+                const pageCards = cardsToPrint.slice(
+                  start,
+                  start + cardsPerPage,
+                );
                 return (
                   <div
                     key={pageIndex}
@@ -938,10 +1243,10 @@ export default function SavedIdCardsList({
                     style={{
                       width: `${pageWidthMm}mm`,
                       height: `${pageHeightMm}mm`,
-                      ['--card-w-mm']: cardWidthMm,
-                      ['--card-h-mm']: cardHeightMm,
-                      ['--cols']: cols,
-                      ['--rows']: rows,
+                      ["--card-w-mm"]: cardWidthMm,
+                      ["--card-h-mm"]: cardHeightMm,
+                      ["--cols"]: cols,
+                      ["--rows"]: rows,
                     }}
                   >
                     <div
@@ -951,7 +1256,11 @@ export default function SavedIdCardsList({
                         gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
                       }}
                     >
-                      {pageCards.map((card) => (isBackPage ? renderBackOnlyForPrint(card, true) : renderCardForPrint(card, true)))}
+                      {pageCards.map((card) =>
+                        isBackPage
+                          ? renderBackOnlyForPrint(card, true)
+                          : renderCardForPrint(card, true),
+                      )}
                     </div>
                   </div>
                 );
@@ -962,10 +1271,19 @@ export default function SavedIdCardsList({
       )}
 
       {singleCardPreview && (
-        <div className="single-card-preview-overlay" aria-hidden="true" onClick={() => setSingleCardPreview(null)}>
-          <div className="single-card-preview-content" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="single-card-preview-overlay"
+          aria-hidden="true"
+          onClick={() => setSingleCardPreview(null)}
+        >
+          <div
+            className="single-card-preview-content"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="single-card-preview-header">
-              <h3 style={{ margin: 0 }}>{singleCardPreview.name} – ID Card Preview</h3>
+              <h3 style={{ margin: 0 }}>
+                {singleCardPreview.name} – ID Card Preview
+              </h3>
               <button
                 type="button"
                 className="btn btn-secondary"

@@ -1,27 +1,27 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
-import { generateOtp, verifyOtp } from '../api/auth';
-import { getToken, setToken, setStoredUser } from '../api/authStorage';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useApp } from "../context/AppContext";
+import { generateOtp, verifyOtp } from "../api/auth";
+import { getToken, setToken, setStoredUser } from "../api/authStorage";
 
 const OTP_LENGTH = 4;
 const RESEND_COOLDOWN_SEC = 60;
 
 function normalizeMobile(value) {
-  const digits = value.replace(/\D/g, '');
+  const digits = value.replace(/\D/g, "");
   if (digits.length <= 10) return digits;
-  if (digits.startsWith('91') && digits.length === 12) return digits.slice(2);
+  if (digits.startsWith("91") && digits.length === 12) return digits.slice(2);
   return digits.slice(-10);
 }
 
 export default function Login() {
   const navigate = useNavigate();
   const { user, authReady, setUser } = useApp();
-  const [mobile, setMobile] = useState('');
+  const [mobile, setMobile] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
 
   useEffect(() => {
@@ -33,30 +33,30 @@ export default function Login() {
   useEffect(() => {
     if (!authReady) return;
     if (user && getToken()) {
-      navigate('/dashboard', { replace: true });
+      navigate("/dashboard", { replace: true });
     }
   }, [authReady, navigate, user]);
 
   const handleMobileChange = (e) => {
-    setError('');
+    setError("");
     setMobile(normalizeMobile(e.target.value));
   };
 
   const sendOtp = async () => {
-    const digits = mobile.replace(/\D/g, '');
+    const digits = mobile.replace(/\D/g, "");
     if (digits.length !== 10) {
-      setError('Please enter a valid 10-digit mobile number.');
+      setError("Please enter a valid 10-digit mobile number.");
       return;
     }
-    setError('');
+    setError("");
     setLoading(true);
     try {
       await generateOtp(digits);
       setOtpSent(true);
-      setOtp('');
+      setOtp("");
       setResendCooldown(RESEND_COOLDOWN_SEC);
     } catch (err) {
-      setError(err?.message || 'Failed to send OTP. Try again.');
+      setError(err?.message || "Failed to send OTP. Try again.");
     } finally {
       setLoading(false);
     }
@@ -65,28 +65,44 @@ export default function Login() {
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     if (otp.length !== OTP_LENGTH) {
-      setError('Please enter the 4-digit OTP.');
+      setError("Please enter the 4-digit OTP.");
       return;
     }
-    setError('');
+    setError("");
     setLoading(true);
     try {
-      const digits = mobile.replace(/\D/g, '');
+      const digits = mobile.replace(/\D/g, "");
       const data = await verifyOtp(digits, otp);
-      const token = data?.token ?? data?.accessToken ?? data?.data?.token ?? data?.data?.accessToken;
+      const token =
+        data?.token ??
+        data?.accessToken ??
+        data?.data?.token ??
+        data?.data?.accessToken;
       if (token) setToken(token);
       const userPayload = data?.user ?? data?.data?.user ?? data?.data;
       const user = {
-        id: userPayload?.id ?? '1',
-        name: userPayload?.name ?? 'Photographer User',
+        id: userPayload?.id ?? userPayload?._id ?? "1",
+        name: userPayload?.name ?? "Photographer User",
         email: userPayload?.email ?? null,
-        mobile: `+91${digits}`,
+        mobile: userPayload?.mobile
+          ? `+91${String(userPayload.mobile).replace(/\D/g, "").slice(-10)}`
+          : `+91${digits}`,
+        pointsBalance:
+          typeof userPayload?.pointsBalance === "number" &&
+          Number.isFinite(userPayload.pointsBalance)
+            ? userPayload.pointsBalance
+            : null,
+        perStudentTemplateCost:
+          typeof userPayload?.perStudentTemplateCost === "number" &&
+          Number.isFinite(userPayload.perStudentTemplateCost)
+            ? userPayload.perStudentTemplateCost
+            : null,
       };
       setStoredUser(user);
       setUser(user);
-      navigate('/dashboard', { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError(err?.message || 'Invalid OTP. Please try again.');
+      setError(err?.message || "Invalid OTP. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -94,8 +110,8 @@ export default function Login() {
 
   const goBackToMobile = () => {
     setOtpSent(false);
-    setOtp('');
-    setError('');
+    setOtp("");
+    setError("");
   };
 
   return (
@@ -123,11 +139,11 @@ export default function Login() {
             <button
               type="button"
               className="btn btn-primary"
-              style={{ width: '100%', padding: 14, marginTop: 8 }}
-              disabled={loading || mobile.replace(/\D/g, '').length !== 10}
+              style={{ width: "100%", padding: 14, marginTop: 8 }}
+              disabled={loading || mobile.replace(/\D/g, "").length !== 10}
               onClick={sendOtp}
             >
-              {loading ? 'Sending OTP...' : 'Send OTP'}
+              {loading ? "Sending OTP..." : "Send OTP"}
             </button>
           </div>
         ) : (
@@ -151,8 +167,10 @@ export default function Login() {
               placeholder="4-digit OTP"
               value={otp}
               onChange={(e) => {
-                setError('');
-                const v = e.target.value.replace(/\D/g, '').slice(0, OTP_LENGTH);
+                setError("");
+                const v = e.target.value
+                  .replace(/\D/g, "")
+                  .slice(0, OTP_LENGTH);
                 setOtp(v);
               }}
               maxLength={OTP_LENGTH}
@@ -162,10 +180,10 @@ export default function Login() {
             <button
               type="submit"
               className="btn btn-primary"
-              style={{ width: '100%', padding: 14, marginTop: 8 }}
+              style={{ width: "100%", padding: 14, marginTop: 8 }}
               disabled={loading || otp.length !== OTP_LENGTH}
             >
-              {loading ? 'Verifying...' : 'Verify & Login'}
+              {loading ? "Verifying..." : "Verify & Login"}
             </button>
             <button
               type="button"
@@ -173,14 +191,14 @@ export default function Login() {
               disabled={resendCooldown > 0 || loading}
               onClick={async () => {
                 if (resendCooldown > 0) return;
-                setError('');
+                setError("");
                 setLoading(true);
                 try {
-                  await generateOtp(mobile.replace(/\D/g, ''));
-                  setOtp('');
+                  await generateOtp(mobile.replace(/\D/g, ""));
+                  setOtp("");
                   setResendCooldown(RESEND_COOLDOWN_SEC);
                 } catch (err) {
-                  setError(err?.message || 'Failed to resend OTP.');
+                  setError(err?.message || "Failed to resend OTP.");
                 } finally {
                   setLoading(false);
                 }
@@ -188,7 +206,7 @@ export default function Login() {
             >
               {resendCooldown > 0
                 ? `Resend OTP in ${resendCooldown}s`
-                : 'Resend OTP'}
+                : "Resend OTP"}
             </button>
           </form>
         )}

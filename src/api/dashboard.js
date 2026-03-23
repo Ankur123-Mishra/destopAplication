@@ -1,20 +1,20 @@
 /**
  * Photographer dashboard APIs - token se authenticated calls
  */
-import { API_BASE_URL } from './config';
-import { getToken } from './authStorage';
+import { API_BASE_URL } from "./config";
+import { getToken } from "./authStorage";
 
 function authHeaders() {
   const token = getToken();
   return {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
   };
 }
 
 function authHeadersForm() {
   const token = getToken();
-  console.log('authHeadersForm', token);
+  console.log("authHeadersForm", token);
   return {
     ...(token && { Authorization: `Bearer ${token}` }),
   };
@@ -26,12 +26,16 @@ function authHeadersForm() {
  */
 export async function getDashboard() {
   const res = await fetch(`${API_BASE_URL}/api/photographer/dashboard`, {
-    method: 'GET',
+    method: "GET",
     headers: authHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load dashboard';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load dashboard";
     throw new Error(msg);
   }
   return data;
@@ -43,12 +47,16 @@ export async function getDashboard() {
  */
 export async function getAssignedSchools() {
   const res = await fetch(`${API_BASE_URL}/api/photographer/schools/assigned`, {
-    method: 'GET',
+    method: "GET",
     headers: authHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load schools';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load schools";
     throw new Error(msg);
   }
   return data;
@@ -59,13 +67,20 @@ export async function getAssignedSchools() {
  * Response: { classes: [{ _id, className, section }] }
  */
 export async function getClassesBySchool(schoolId) {
-  const res = await fetch(`${API_BASE_URL}/api/photographer/classes/${schoolId}`, {
-    method: 'GET',
-    headers: authHeaders(),
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/classes/${schoolId}`,
+    {
+      method: "GET",
+      headers: authHeaders(),
+    },
+  );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load classes';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load classes";
     throw new Error(msg);
   }
   return data;
@@ -78,14 +93,21 @@ export async function getClassesBySchool(schoolId) {
  */
 export async function getTemplatesStatus(schoolId, classId) {
   const params = new URLSearchParams({ schoolId, classId });
-  const res = await fetch(`${API_BASE_URL}/api/photographer/templates/status?${params}`, {
-    method: 'GET',
-    headers: authHeaders(),
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/templates/status?${params}`,
+    {
+      method: "GET",
+      headers: authHeaders(),
+    },
+  );
   const data = await res.json().catch(() => ({}));
   console.log("getTemplatesStatus", data);
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load template status';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load template status";
     throw new Error(msg);
   }
   return data;
@@ -98,14 +120,21 @@ export async function getTemplatesStatus(schoolId, classId) {
 export async function getStudentsBySchoolAndClass(schoolId, classId) {
   const params = new URLSearchParams({ schoolId, classId });
   console.log("getStudentsBySchoolAndClass", params);
-  const res = await fetch(`${API_BASE_URL}/api/photographer/students?${params}`, {
-    method: 'GET',
-    headers: authHeaders(),
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/students?${params}`,
+    {
+      method: "GET",
+      headers: authHeaders(),
+    },
+  );
   const data = await res.json().catch(() => ({}));
   console.log("getStudentsBySchoolAndClass", data);
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load students';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load students";
     throw new Error(msg);
   }
   return data;
@@ -117,28 +146,121 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
  * Response: API response (e.g. { message?, ... })
  */
 export async function bulkSaveTemplates(templateId, studentIds) {
-  const res = await fetch(`${API_BASE_URL}/api/photographer/templates/bulk-save`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ templateId, studentIds }),
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/templates/bulk-save`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ templateId, studentIds }),
+    },
+  );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Bulk save failed';
+    const msg =
+      data?.message || data?.error || res.statusText || "Bulk save failed";
     throw new Error(msg);
   }
   return data;
 }
 
 /**
+ * POST /api/photographer/templates/deduct-download-points
+ * Body: { studentIds: string[] }
+ * Response: { message, pointsDebited, rateApplied, balanceAfter }
+ */
+export async function deductTemplateDownloadPoints(studentIds) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/templates/deduct-download-points`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ studentIds }),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Points deduction failed";
+    const err = new Error(msg);
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Reads points info for header display. Uses dashboard payload so backend can return
+ * either top-level points fields or nested photographer fields.
+ */
+export async function getPhotographerPointsBalance() {
+  const pickNumber = (...values) => {
+    for (const value of values) {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+    }
+    return null;
+  };
+
+  const extractPoints = (data) => ({
+    pointsBalance: pickNumber(
+      data?.pointsBalance,
+      data?.photographer?.pointsBalance,
+      data?.data?.pointsBalance,
+      data?.data?.photographer?.pointsBalance,
+      data?.user?.pointsBalance,
+      data?.data?.user?.pointsBalance,
+    ),
+    perStudentTemplateCost: pickNumber(
+      data?.perStudentTemplateCost,
+      data?.photographer?.perStudentTemplateCost,
+      data?.data?.perStudentTemplateCost,
+      data?.data?.photographer?.perStudentTemplateCost,
+      data?.user?.perStudentTemplateCost,
+      data?.data?.user?.perStudentTemplateCost,
+    ),
+  });
+
+  const dashboardData = await getDashboard();
+  const dashboardPoints = extractPoints(dashboardData);
+  if (dashboardPoints.pointsBalance != null) return dashboardPoints;
+
+  const fallbackEndpoints = [
+    `${API_BASE_URL}/api/photographer/profile`,
+    `${API_BASE_URL}/api/photographer/me`,
+  ];
+
+  for (const url of fallbackEndpoints) {
+    try {
+      const res = await fetch(url, { method: "GET", headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) continue;
+      const extracted = extractPoints(data);
+      if (extracted.pointsBalance != null) {
+        return extracted;
+      }
+    } catch {
+      // Silently continue to next fallback endpoint.
+    }
+  }
+
+  return {
+    pointsBalance: null,
+    perStudentTemplateCost: null,
+  };
+}
+
+/**
  * Convert data URL (e.g. from canvas/FileReader) to Blob for FormData upload.
  */
 function dataURLtoBlob(dataURL) {
-  if (!dataURL || typeof dataURL !== 'string') return null;
-  const arr = dataURL.split(',');
+  if (!dataURL || typeof dataURL !== "string") return null;
+  const arr = dataURL.split(",");
   const mimeMatch = arr[0].match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-  const bstr = atob(arr[1] || '');
+  const mime = mimeMatch ? mimeMatch[1] : "image/png";
+  const bstr = atob(arr[1] || "");
   const n = bstr.length;
   const u8arr = new Uint8Array(n);
   for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
@@ -150,27 +272,43 @@ function dataURLtoBlob(dataURL) {
  * Body: name (string), schoolId (string), classId (string), frontImage (file), backImage (file), elements (JSON string)
  * Response: API response (e.g. { message?, templateId?, ... })
  */
-export async function uploadTemplate({ name, schoolId, classId, frontImage, backImage, elements }) {
+export async function uploadTemplate({
+  name,
+  schoolId,
+  classId,
+  frontImage,
+  backImage,
+  elements,
+}) {
   const form = new FormData();
-  form.append('name', String(name || 'Uploaded Template').trim());
-  if (schoolId != null && String(schoolId).trim() !== '') form.append('schoolId', String(schoolId).trim());
-  if (classId != null && String(classId).trim() !== '') form.append('classId', String(classId).trim());
+  form.append("name", String(name || "Uploaded Template").trim());
+  if (schoolId != null && String(schoolId).trim() !== "")
+    form.append("schoolId", String(schoolId).trim());
+  if (classId != null && String(classId).trim() !== "")
+    form.append("classId", String(classId).trim());
   const frontBlob = dataURLtoBlob(frontImage);
   const backBlob = dataURLtoBlob(backImage);
-  if (frontBlob) form.append('frontImage', frontBlob, 'front.png');
-  if (backBlob) form.append('backImage', backBlob, 'back.png');
-  form.append('elements', JSON.stringify(Array.isArray(elements) ? elements : []));
-  console.log('form', form);
+  if (frontBlob) form.append("frontImage", frontBlob, "front.png");
+  if (backBlob) form.append("backImage", backBlob, "back.png");
+  form.append(
+    "elements",
+    JSON.stringify(Array.isArray(elements) ? elements : []),
+  );
+  console.log("form", form);
 
   const res = await fetch(`${API_BASE_URL}/api/photographer/templates/upload`, {
-    method: 'POST',
+    method: "POST",
     headers: authHeadersForm(),
     body: form,
   });
   const data = await res.json().catch(() => ({}));
   console.log("uploadTemplate", data);
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Template upload failed';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Template upload failed";
     throw new Error(msg);
   }
   return data;
@@ -182,25 +320,25 @@ export async function uploadTemplate({ name, schoolId, classId, frontImage, back
  * Response: { message?, photoUrl? }
  * In Electron, File may not serialize correctly in FormData — we read to Blob and append with filename.
  */
-export async function uploadStudentPhoto(studentId, file, deviceInfo = 'Web') {
-
+export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {
   console.log("Student Photo Uploading Single File");
   const form = new FormData();
   // Read file to ArrayBuffer then append as Blob so multipart body has actual bytes (works in Electron)
   const arrayBuffer = await file.arrayBuffer();
-  const blob = new Blob([arrayBuffer], { type: file.type || 'image/png' });
-  form.append('photo', blob, file.name || 'photo.png');
-  form.append('studentId', String(studentId));
-  form.append('deviceInfo', String(deviceInfo));
+  const blob = new Blob([arrayBuffer], { type: file.type || "image/png" });
+  form.append("photo", blob, file.name || "photo.png");
+  form.append("studentId", String(studentId));
+  form.append("deviceInfo", String(deviceInfo));
 
   const res = await fetch(`${API_BASE_URL}/api/photographer/photos/upload`, {
-    method: 'POST',
+    method: "POST",
     headers: authHeadersForm(),
     body: form,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Upload failed';
+    const msg =
+      data?.message || data?.error || res.statusText || "Upload failed";
     throw new Error(msg);
   }
   return data;
@@ -215,23 +353,27 @@ export async function uploadStudentPhoto(studentId, file, deviceInfo = 'Web') {
 export async function bulkUploadPhotos(classId, files) {
   console.log("Student Photo Uploading Bulk Files");
   const form = new FormData();
-  form.append('classId', String(classId));
+  form.append("classId", String(classId));
   for (let i = 0; i < files.length; i++) {
     console.log("Student Photo Uploading", files[i].name);
     const file = files[i];
     const arrayBuffer = await file.arrayBuffer();
-    const blob = new Blob([arrayBuffer], { type: file.type || 'image/png' });
-    form.append('photos', blob, file.name || `photo-${i}.png`);
+    const blob = new Blob([arrayBuffer], { type: file.type || "image/png" });
+    form.append("photos", blob, file.name || `photo-${i}.png`);
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/photographer/photos/bulk-upload`, {
-    method: 'POST',
-    headers: authHeadersForm(),
-    body: form,
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/photos/bulk-upload`,
+    {
+      method: "POST",
+      headers: authHeadersForm(),
+      body: form,
+    },
+  );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Bulk upload failed';
+    const msg =
+      data?.message || data?.error || res.statusText || "Bulk upload failed";
     throw new Error(msg);
   }
   return data;
@@ -243,14 +385,21 @@ export async function bulkUploadPhotos(classId, files) {
  * Response: { message: string }
  */
 export async function updateDelivery(schoolId, classId) {
-  const res = await fetch(`${API_BASE_URL}/api/photographer/deliveries/update`, {
-    method: 'PUT',
-    headers: authHeaders(),
-    body: JSON.stringify({ schoolId, classId }),
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/deliveries/update`,
+    {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({ schoolId, classId }),
+    },
+  );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Delivery update failed';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Delivery update failed";
     throw new Error(msg);
   }
   return data;
@@ -261,38 +410,61 @@ export async function updateDelivery(schoolId, classId) {
  * Body: schoolName, schoolCode, address, dimension (optional, JSON: {"height":500,"width":400}), allowedMobiles[] (optional), logo (file, optional)
  * Response: { school?: { _id }, _id?, data?: { _id } } — use returned id for bulk-upload
  */
-export async function createSchool({ schoolName, schoolCode, address, dimensionHeight, dimensionWidth, allowedMobiles = [], logo = null }) {
+export async function createSchool({
+  schoolName,
+  schoolCode,
+  address,
+  dimensionHeight,
+  dimensionWidth,
+  allowedMobiles = [],
+  logo = null,
+}) {
   const form = new FormData();
-  form.append('schoolName', String(schoolName || '').trim());
-  form.append('schoolCode', String(schoolCode || '').trim());
-  form.append('address', String(address || '').trim());
-  const h = dimensionHeight != null && String(dimensionHeight).trim() !== '' ? Number(String(dimensionHeight).trim()) : null;
-  const w = dimensionWidth != null && String(dimensionWidth).trim() !== '' ? Number(String(dimensionWidth).trim()) : null;
-  if (h != null && !Number.isNaN(h) || w != null && !Number.isNaN(w)) {
-    form.append('dimension', JSON.stringify({ height: h != null && !Number.isNaN(h) ? h : 0, width: w != null && !Number.isNaN(w) ? w : 0 }));
+  form.append("schoolName", String(schoolName || "").trim());
+  form.append("schoolCode", String(schoolCode || "").trim());
+  form.append("address", String(address || "").trim());
+  const h =
+    dimensionHeight != null && String(dimensionHeight).trim() !== ""
+      ? Number(String(dimensionHeight).trim())
+      : null;
+  const w =
+    dimensionWidth != null && String(dimensionWidth).trim() !== ""
+      ? Number(String(dimensionWidth).trim())
+      : null;
+  if ((h != null && !Number.isNaN(h)) || (w != null && !Number.isNaN(w))) {
+    form.append(
+      "dimension",
+      JSON.stringify({
+        height: h != null && !Number.isNaN(h) ? h : 0,
+        width: w != null && !Number.isNaN(w) ? w : 0,
+      }),
+    );
   }
   if (Array.isArray(allowedMobiles)) {
-    allowedMobiles.forEach((m) => form.append('allowedMobiles[]', String(m).trim()));
+    allowedMobiles.forEach((m) =>
+      form.append("allowedMobiles[]", String(m).trim()),
+    );
   }
   if (logo && logo instanceof File) {
     const arrayBuffer = await logo.arrayBuffer();
-    const blob = new Blob([arrayBuffer], { type: logo.type || 'image/png' });
-    form.append('logo', blob, logo.name || 'logo.png');
+    const blob = new Blob([arrayBuffer], { type: logo.type || "image/png" });
+    form.append("logo", blob, logo.name || "logo.png");
   }
 
   const res = await fetch(`${API_BASE_URL}/api/photographer/schools`, {
-    method: 'POST',
+    method: "POST",
     headers: authHeadersForm(),
     body: form,
   });
   const data = await res.json().catch(() => ({}));
   console.log("createSchool", data);
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'School create failed';
+    const msg =
+      data?.message || data?.error || res.statusText || "School create failed";
     throw new Error(msg);
   }
   const schoolId = data?.school?._id ?? data?.data?._id ?? data?._id ?? null;
-  if (!schoolId) throw new Error('Server did not return school id');
+  if (!schoolId) throw new Error("Server did not return school id");
   return { ...data, schoolId };
 }
 
@@ -303,20 +475,28 @@ export async function createSchool({ schoolName, schoolCode, address, dimensionH
  */
 export async function bulkUploadStudentsXls(schoolId, file) {
   const form = new FormData();
-  form.append('schoolId', String(schoolId));
+  form.append("schoolId", String(schoolId));
   const arrayBuffer = await file.arrayBuffer();
-  const blob = new Blob([arrayBuffer], { type: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  form.append('file', blob, file.name || 'students.xlsx');
-
-  const res = await fetch(`${API_BASE_URL}/api/photographer/students/bulk-upload`, {
-    method: 'POST',
-    headers: authHeadersForm(),
-    body: form,
+  const blob = new Blob([arrayBuffer], {
+    type:
+      file.type ||
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+  form.append("file", blob, file.name || "students.xlsx");
+
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/students/bulk-upload`,
+    {
+      method: "POST",
+      headers: authHeadersForm(),
+      body: form,
+    },
+  );
   const data = await res.json().catch(() => ({}));
   console.log("bulkUploadStudentsXls", data);
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Bulk upload failed';
+    const msg =
+      data?.message || data?.error || res.statusText || "Bulk upload failed";
     throw new Error(msg);
   }
   return data;
@@ -328,12 +508,16 @@ export async function bulkUploadStudentsXls(schoolId, file) {
  */
 export async function getCorrections() {
   const res = await fetch(`${API_BASE_URL}/api/photographer/corrections`, {
-    method: 'GET',
+    method: "GET",
     headers: authHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.message || data?.error || res.statusText || 'Failed to load corrections';
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load corrections";
     throw new Error(msg);
   }
   return data;

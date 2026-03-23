@@ -29,7 +29,9 @@
   gap: 10px;
   padding: 12px 20px;
   color: var(--text-muted);
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 
 .sidebar-link:hover {
@@ -73,11 +75,41 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .header-user {
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.header-points {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.14);
+  color: #d8f4ff;
+}
+
+.header-points-label {
+  font-size: 0.8rem;
+  color: rgba(216, 244, 255, 0.88);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.header-points-value {
+  font-size: 0.95rem;
+  color: #ffffff;
+}
+
+.header-points-rate {
+  font-size: 0.78rem;
+  color: rgba(216, 244, 255, 0.82);
 }
 
 .btn-sm {
@@ -136,7 +168,9 @@
   padding: 48px 24px;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
 }
 
 .upload-dropzone:hover {
@@ -288,7 +322,9 @@
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
 }
 
 .saved-idcard-item:hover {
@@ -325,7 +361,9 @@
 }
 
 @media (max-width: 900px) {
-  .template-editor-layout { grid-template-columns: 1fr; }
+  .template-editor-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .template-editor-toolbar {
@@ -346,7 +384,7 @@
 
 .template-editor-canvas-inner {
   display: inline-block;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -361,7 +399,7 @@
 }
 
 .fabric-idcard-canvas-wrap {
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
   display: inline-block;
