@@ -13,8 +13,8 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
   const [schoolName, setSchoolName] = useState('');
   const [schoolCode, setSchoolCode] = useState('');
   const [address, setAddress] = useState('');
-  const [dimensionHeight, setDimensionHeight] = useState('5.5');
-  const [dimensionWidth, setDimensionWidth] = useState('9');
+  const [dimensionHeight, setDimensionHeight] = useState('56');
+  const [dimensionWidth, setDimensionWidth] = useState('88');
   const [dimensionUnit, setDimensionUnit] = useState('mm');
   const [allowedMobilesStr, setAllowedMobilesStr] = useState('');
   const [logoFile, setLogoFile] = useState(null);
@@ -169,7 +169,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
             </div>
           </div>
         )}
-        {/* <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 16 }}>
           <label className="input-label">Allowed mobiles (optional)</label>
           <input
             type="text"
@@ -178,7 +178,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
             onChange={(e) => setAllowedMobilesStr(e.target.value)}
             placeholder="Comma or space separated, e.g. 9876543210, 9876543211"
           />
-        </div> */}
+        </div>
         {/* Logo section hidden for Create Project modal */}
         {!labelAsProject && (
           <div style={{ marginBottom: 16 }}>
