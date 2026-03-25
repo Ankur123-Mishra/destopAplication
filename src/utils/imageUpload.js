@@ -48,3 +48,28 @@ export function compressImageForUpload(file) {
     img.src = url;
   });
 }
+
+/**
+ * API student object → string used to match folder filenames (photoNo, else admissionNo / rollNo / uniqueCode).
+ */
+export function studentPhotoMatchKey(s) {
+  if (s == null) return '—';
+  const p = s.photoNo;
+  if (p != null && String(p).trim() !== '') return String(p).trim();
+  return String(s.admissionNo || s.rollNo || s.uniqueCode || '—').trim();
+}
+
+/**
+ * Register an image file under basename keys so e.g. 240_cropped.png matches student photoNo "240".
+ */
+export function addPhotoFileToMap(fileMap, file) {
+  if (!file?.type?.startsWith('image/')) return;
+  const baseName = (file.name || '').split(/[/\\]/).pop() || file.name || '';
+  const nameWithoutExt = baseName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+  if (!nameWithoutExt) return;
+  fileMap[nameWithoutExt] = file;
+  const withoutCropped = nameWithoutExt.replace(/_cropped$/i, '');
+  if (withoutCropped && withoutCropped !== nameWithoutExt) {
+    fileMap[withoutCropped] = file;
+  }
+}

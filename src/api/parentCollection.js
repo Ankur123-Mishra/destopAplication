@@ -120,7 +120,7 @@ export function getPublicParentOrigin() {
   if (PUBLIC_PARENT_ORIGIN) return PUBLIC_PARENT_ORIGIN;
 
   try {
-    const apiUrl = new URL(API_BASE_URL);
+    const apiUrl = new URL("http://72.61.240.84:8080");
     const localHosts = new Set(['localhost', '127.0.0.1']);
 
     // Local development: suite frontend runs on Vite port 8080.
@@ -146,5 +146,6 @@ export function isPublicParentOriginConfigured() {
 
 export function buildParentCollectionLink(token) {
   const base = getPublicParentOrigin();
+  console.log('base', base);
   return `${base}/c/${token}`;
 }

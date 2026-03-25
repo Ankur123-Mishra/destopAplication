@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import Header from '../components/Header';
 import CreateSchoolForm from '../components/CreateSchoolForm';
+import { addPhotoFileToMap, studentPhotoMatchKey } from '../utils/imageUpload';
 import {
   getDashboard,
   getAssignedSchools,
@@ -89,7 +90,11 @@ export default function Dashboard() {
     e.target.value = '';
   };
 
+  // Excel ke baad images: GET /api/photographer/classes/:schoolId (getClassesBySchool),
+  // har class par GET /api/photographer/students?schoolId&classId (getStudentsBySchoolAndClass),
+  // har match par POST /api/photographer/photos/upload (uploadStudentPhoto).
   const uploadPhotosAfterExcel = async (schoolId) => {
+
     const files = pendingPhotoFilesRef.current;
     if (!files?.length) return;
     const classesRes = await getClassesBySchool(schoolId);
@@ -103,16 +108,13 @@ export default function Dashboard() {
       (sr.students ?? []).forEach((s) => {
         combined.push({
           id: s._id,
-          studentId: s.admissionNo || s.rollNo || s.uniqueCode || '—',
+          studentId: studentPhotoMatchKey(s),
         });
       });
     });
     const fileMap = {};
     files.forEach((file) => {
-      if (!file.type.startsWith('image/')) return;
-      const baseName = (file.name || '').split(/[/\\]/).pop() || file.name || '';
-      const nameWithoutExt = baseName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
-      if (nameWithoutExt) fileMap[nameWithoutExt] = file;
+      addPhotoFileToMap(fileMap, file);
     });
     for (const student of combined) {
       const idKey = String(student.studentId ?? '').trim().toLowerCase();

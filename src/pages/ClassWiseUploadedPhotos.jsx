@@ -8,13 +8,14 @@ import {
   uploadStudentPhoto,
 } from '../api/dashboard';
 import { API_BASE_URL } from '../api/config';
-import { compressImageForUpload } from '../utils/imageUpload';
+import { compressImageForUpload, addPhotoFileToMap, studentPhotoMatchKey } from '../utils/imageUpload';
 
 function mapApiStudent(s) {
+// console.log("s Data", s);
   return {
     id: s._id,
     name: s.studentName,
-    studentId: s.admissionNo || s.rollNo || s.uniqueCode || '—',
+    studentId: studentPhotoMatchKey(s),
     admissionNo: s.admissionNo || '',
     rollNo: s.rollNo != null ? String(s.rollNo).trim() : '',
     uniqueCode: s.uniqueCode || '',
@@ -52,8 +53,7 @@ export default function ClassWiseUploadedPhotos() {
   const [bulkUploading, setBulkUploading] = useState(false);
   const [uploadingStudentId, setUploadingStudentId] = useState(null); // loading state for single upload
   const fileInputRefs = useRef({});
-  const bulkUploadInputRef = useRef(null);
-
+  const bulkUploadInputRef = useRef(null)
   // Load schools on mount
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +73,6 @@ export default function ClassWiseUploadedPhotos() {
     load();
     return () => { cancelled = true; };
   }, []);
-
   // Load classes when school selected
   useEffect(() => {
     if (!selectedSchool) return;
@@ -96,7 +95,6 @@ export default function ClassWiseUploadedPhotos() {
       });
     return () => { cancelled = true; };
   }, [selectedSchool]);
-
   // Load students when class selected
   useEffect(() => {
     if (!selectedSchool || !selectedClass) return;
@@ -184,14 +182,10 @@ export default function ClassWiseUploadedPhotos() {
       e.target.value = '';
       return;
     }
-    // Folder images named by Student ID (e.g. 100012.jpeg) — match by studentId. Upload one-by-one to avoid 413 Payload Too Large.
+    // Folder images named by photoNo / student ID (e.g. 240.png or 240_cropped.png). Upload one-by-one to avoid 413.
     const fileMap = {};
     for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file.type.startsWith('image/')) continue;
-      const baseName = (file.name || '').split(/[/\\]/).pop() || file.name || '';
-      const nameWithoutExt = baseName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
-      if (nameWithoutExt) fileMap[nameWithoutExt] = file;
+      addPhotoFileToMap(fileMap, files[i]);
     }
     const pairs = []; // { student, file }
     const noMatch = [];

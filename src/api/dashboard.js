@@ -405,24 +405,53 @@ export async function updateDelivery(schoolId, classId) {
   return data;
 }
 
+/** Backend validation errors → readable string (express-validator style, etc.) */
+function formatSchoolCreateErrors(data) {
+  const base = data?.message || data?.error || "School create failed";
+  const arr = data?.errors;
+  if (!Array.isArray(arr) || arr.length === 0) return base;
+  const parts = arr.map((e) => {
+    if (typeof e === "string") return e;
+    if (e && typeof e === "object") {
+      const loc = e.path ?? e.field ?? e.param;
+      const m = e.msg ?? e.message;
+      if (loc && m) return `${loc}: ${m}`;
+      return m || loc || JSON.stringify(e);
+    }
+    return String(e);
+  });
+  return `${base} — ${parts.join("; ")}`;
+}
+
 /**
  * POST /api/photographer/schools (multipart/form-data)
- * Body: schoolName, schoolCode, address, dimension (optional, JSON: {"height":500,"width":400}), allowedMobiles[] (optional), logo (file, optional)
+ * Body: schoolName, address, dimension (optional), allowedMobiles[] (optional), logo (file, optional)
+ * schoolCode is not appended — API expects [A-Z0-9_-]+ only; server can assign if omitted.
  * Response: { school?: { _id }, _id?, data?: { _id } } — use returned id for bulk-upload
+ *
+ * Empty address gets a placeholder so Create Project (hidden address) still passes required checks.
  */
 export async function createSchool({
   schoolName,
-  schoolCode,
   address,
   dimensionHeight,
   dimensionWidth,
+  dimensionUnit,
   allowedMobiles = [],
   logo = null,
 }) {
   const form = new FormData();
-  form.append("schoolName", String(schoolName || "").trim());
-  form.append("schoolCode", String(schoolCode || "").trim());
-  form.append("address", String(address || "").trim());
+  const nameTrim = String(schoolName || "").trim();
+  form.append("schoolName", nameTrim);
+
+  // schoolCode not sent (backend: uppercase letters, numbers, hyphens, underscores only — client skipped)
+
+  let addrTrim = String(address || "").trim();
+  if (!addrTrim) {
+    addrTrim = "Not specified";
+  }
+  form.append("address", addrTrim);
+
   const h =
     dimensionHeight != null && String(dimensionHeight).trim() !== ""
       ? Number(String(dimensionHeight).trim())
@@ -431,14 +460,17 @@ export async function createSchool({
     dimensionWidth != null && String(dimensionWidth).trim() !== ""
       ? Number(String(dimensionWidth).trim())
       : null;
+  const unit =
+    dimensionUnit != null && String(dimensionUnit).trim() !== ""
+      ? String(dimensionUnit).trim()
+      : null;
   if ((h != null && !Number.isNaN(h)) || (w != null && !Number.isNaN(w))) {
-    form.append(
-      "dimension",
-      JSON.stringify({
-        height: h != null && !Number.isNaN(h) ? h : 0,
-        width: w != null && !Number.isNaN(w) ? w : 0,
-      }),
-    );
+    const dim = {
+      height: h != null && !Number.isNaN(h) ? h : 0,
+      width: w != null && !Number.isNaN(w) ? w : 0,
+    };
+    if (unit) dim.unit = unit;
+    form.append("dimension", JSON.stringify(dim));
   }
   if (Array.isArray(allowedMobiles)) {
     allowedMobiles.forEach((m) =>
@@ -459,9 +491,7 @@ export async function createSchool({
   const data = await res.json().catch(() => ({}));
   console.log("createSchool", data);
   if (!res.ok) {
-    const msg =
-      data?.message || data?.error || res.statusText || "School create failed";
-    throw new Error(msg);
+    throw new Error(formatSchoolCreateErrors(data));
   }
   const schoolId = data?.school?._id ?? data?.data?._id ?? data?._id ?? null;
   if (!schoolId) throw new Error("Server did not return school id");
@@ -494,6 +524,8 @@ export async function bulkUploadStudentsXls(schoolId, file) {
   );
   const data = await res.json().catch(() => ({}));
   console.log("bulkUploadStudentsXls", data);
+
+  // console.log('res', res);
   if (!res.ok) {
     const msg =
       data?.message || data?.error || res.statusText || "Bulk upload failed";

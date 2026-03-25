@@ -277,6 +277,7 @@ export default function ParentCollection() {
 
       const result = await createCollectionLink(payload);
       const publicLink = buildParentCollectionLink(result?.token);
+      console.log('publicLink', publicLink);
       setLastCreatedLink(publicLink);
       setFeedback({
         type: 'success',
