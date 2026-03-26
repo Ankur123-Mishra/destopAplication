@@ -89,6 +89,30 @@ export async function updatePhotographerSchool(schoolId, body) {
 }
 
 /**
+ * DELETE /api/photographer/schools/:schoolId
+ * Response: { message?: string }
+ */
+export async function deletePhotographerSchool(schoolId) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/schools/${encodeURIComponent(schoolId)}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to delete school";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/**
  * GET /api/photographer/classes/:schoolId
  * Response: { classes: [{ _id, className, section }] }
  */

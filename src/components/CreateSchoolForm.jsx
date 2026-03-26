@@ -1,6 +1,33 @@
 import React, { useState, useRef } from 'react';
 import { createSchool, bulkUploadStudentsXls } from '../api/dashboard';
 
+const MM_PER_UNIT = {
+  mm: 1,
+  cm: 10,
+  inch: 25.4,
+  px: 0.264583,
+};
+
+function convertDimensionValue(value, fromUnit, toUnit) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const numeric = Number.parseFloat(raw.replace(',', '.'));
+  if (!Number.isFinite(numeric)) return value;
+
+  const fromFactor = MM_PER_UNIT[fromUnit] || 1;
+  const toFactor = MM_PER_UNIT[toUnit] || 1;
+  const valueInMm = numeric * fromFactor;
+  const converted = valueInMm / toFactor;
+  // Keep UI value stable on round-trips (mm -> inch -> mm etc.)
+  if (toUnit === 'mm') {
+    const roundedMm = Math.round(converted);
+    if (Math.abs(converted - roundedMm) < 0.02) {
+      return String(roundedMm);
+    }
+  }
+  return String(Number(converted.toFixed(3)));
+}
+
 export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, onExcelUploadDone, rightOfExcel, showCancel = true, labelAsProject = false, externalExcelFile = null, projectFolderField = null }) {
   const nameLabel = labelAsProject ? 'Project Name' : 'School Name';
   const btnLabel = labelAsProject ? 'Create Project' : 'Create School';
@@ -27,6 +54,13 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const handleDimensionUnitChange = (nextUnit) => {
+    if (nextUnit === dimensionUnit) return;
+    setDimensionHeight((prev) => convertDimensionValue(prev, dimensionUnit, nextUnit));
+    setDimensionWidth((prev) => convertDimensionValue(prev, dimensionUnit, nextUnit));
+    setDimensionUnit(nextUnit);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -144,7 +178,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
                 <select
                   className="input-field"
                   value={dimensionUnit}
-                  onChange={(e) => setDimensionUnit(e.target.value)}
+                  onChange={(e) => handleDimensionUnitChange(e.target.value)}
                   style={{ width: 80 }}
                 >
                   <option value="mm">mm</option>

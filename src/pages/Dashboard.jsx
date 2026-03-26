@@ -10,6 +10,7 @@ import {
   getClassesBySchool,
   getStudentsBySchoolAndClass,
   uploadStudentPhoto,
+  deletePhotographerSchool,
 } from '../api/dashboard';
 
 const defaultStats = {
@@ -29,6 +30,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [deletingSchoolId, setDeletingSchoolId] = useState(null);
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState([]);
   const [projectFolderExcel, setProjectFolderExcel] = useState(null);
   const projectFolderInputRef = useRef(null);
@@ -67,10 +69,14 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  const finishCreateProject = () => {
+  const closeCreateProjectModal = () => {
     setCreateModalOpen(false);
     setPendingPhotoFiles([]);
     setProjectFolderExcel(null);
+  };
+
+  const finishCreateProject = () => {
+    closeCreateProjectModal();
     navigate('/class-id-cards', { replace: true });
   };
 
@@ -129,6 +135,26 @@ export default function Dashboard() {
       if (file) {
         await uploadStudentPhoto(student.id, file, 'Create Project bulk upload');
       }
+    }
+  };
+
+  const handleDeleteSchool = async (school) => {
+    const schoolName = school?.schoolName || school?.schoolCode || 'this school';
+    const ok = window.confirm(`Delete ${schoolName} from assigned schools?`);
+    if (!ok) return;
+    setError('');
+    setDeletingSchoolId(school._id);
+    try {
+      await deletePhotographerSchool(school._id);
+      setSchools((prev) => prev.filter((s) => s._id !== school._id));
+      setStats((prev) => ({
+        ...prev,
+        assignedSchools: Math.max(0, (prev.assignedSchools || 0) - 1),
+      }));
+    } catch (err) {
+      setError(err?.message || 'Failed to delete school');
+    } finally {
+      setDeletingSchoolId(null);
     }
   };
 
@@ -196,6 +222,17 @@ export default function Dashboard() {
                         {school.schoolCode && ` · ${school.schoolCode}`}
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary school-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSchool(school);
+                      }}
+                      disabled={deletingSchoolId === school._id}
+                    >
+                      {deletingSchoolId === school._id ? 'Deleting...' : 'Delete'}
+                    </button>
                   </div>
                 ))
               )}
@@ -204,11 +241,11 @@ export default function Dashboard() {
         </>
       )}
       {createModalOpen && (
-        <div className="create-project-modal-overlay" onClick={() => setCreateModalOpen(false)} role="presentation">
+        <div className="create-project-modal-overlay" onClick={closeCreateProjectModal} role="presentation">
           <div className="create-project-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="create-project-modal-title">
             <div className="create-project-modal-header">
               <h3 id="create-project-modal-title">Create Project</h3>
-              <button type="button" className="create-project-modal-close" onClick={finishCreateProject} aria-label="Close">&times;</button>
+              <button type="button" className="create-project-modal-close" onClick={closeCreateProjectModal} aria-label="Close">&times;</button>
             </div>
             <div className="create-project-modal-body">
               <div className="card" style={{ maxWidth: '100%' }}>
@@ -244,7 +281,7 @@ export default function Dashboard() {
                   }
                   onExcelUploadDone={uploadPhotosAfterExcel}
                   onSuccess={finishCreateProject}
-                  onCancel={() => setCreateModalOpen(false)}
+                  onCancel={closeCreateProjectModal}
                   showCancel
                 />
               </div>
@@ -273,6 +310,17 @@ export default function Dashboard() {
         .school-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: pointer; transition: background 0.2s; }
         .school-item:hover { background: rgba(255,255,255,0.04); }
         .school-item:last-child { border-bottom: none; }
+        .school-delete-btn {
+          margin-left: 12px;
+          color: #ffb3b3;
+          border-color: rgba(231, 76, 60, 0.55);
+          background: rgba(231, 76, 60, 0.14);
+        }
+        .school-delete-btn:hover:not(:disabled) {
+          color: #fff;
+          background: rgba(231, 76, 60, 0.25);
+          border-color: rgba(231, 76, 60, 0.8);
+        }
         .create-project-photos-step { max-width: 100%; }
         .bulk-upload-result {
           padding: 12px 16px;

@@ -3,6 +3,52 @@ const path = require('path');
 const fs = require('fs').promises;
 const { createCanvas, loadImage } = require('canvas');
 
+function getImageOutputMeta(shape, inputExt) {
+  const lowerExt = String(inputExt || '').toLowerCase();
+  if (shape !== 'rectangle') {
+    return { ext: '.png', mime: 'image/png' };
+  }
+  if (lowerExt === '.png') return { ext: '.png', mime: 'image/png' };
+  if (lowerExt === '.webp') return { ext: '.jpg', mime: 'image/jpeg' };
+  return { ext: lowerExt || '.jpg', mime: 'image/jpeg' };
+}
+
+function canvasBufferWithBudget(canvas, mime, sourceSizeBytes) {
+  // Keep cropped files lightweight (mostly KB range) while preserving readability.
+  const sourceBudget = Number.isFinite(sourceSizeBytes) ? Math.max(45 * 1024, Math.floor(sourceSizeBytes * 0.9)) : 220 * 1024;
+  const targetBudget = Math.min(300 * 1024, sourceBudget);
+
+  if (mime === 'image/png') {
+    // PNG with transparency can get very large; if needed, progressively downscale.
+    let workCanvas = canvas;
+    let buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
+    while (
+      buffer.length > targetBudget &&
+      workCanvas.width > 420 &&
+      workCanvas.height > 420
+    ) {
+      const nextWidth = Math.max(420, Math.floor(workCanvas.width * 0.85));
+      const nextHeight = Math.max(420, Math.floor(workCanvas.height * 0.85));
+      const scaledCanvas = createCanvas(nextWidth, nextHeight);
+      const scaledCtx = scaledCanvas.getContext('2d');
+      scaledCtx.imageSmoothingEnabled = true;
+      scaledCtx.imageSmoothingQuality = 'high';
+      scaledCtx.drawImage(workCanvas, 0, 0, workCanvas.width, workCanvas.height, 0, 0, nextWidth, nextHeight);
+      workCanvas = scaledCanvas;
+      buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
+    }
+    return buffer;
+  }
+
+  let quality = 0.78;
+  let buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
+  while (buffer.length > targetBudget && quality > 0.42) {
+    quality -= 0.08;
+    buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
+  }
+  return buffer;
+}
+
 /** Dev server only when explicitly requested — otherwise load `dist/` (Windows, macOS, Linux). */
 const isDev = process.argv.includes('--dev');
 
@@ -129,8 +175,10 @@ ipcMain.handle('crop-images', async (event, data) => {
     
     for (let i = 0; i < images.length; i++) {
       const imagePath = images[i];
-      const fileName = path.basename(imagePath, path.extname(imagePath));
-      const outputExt = shape !== 'rectangle' ? '.png' : path.extname(imagePath);
+      const inputExt = path.extname(imagePath);
+      const fileName = path.basename(imagePath, inputExt);
+      const sourceStat = await fs.stat(imagePath).catch(() => null);
+      const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
       
       const image = await loadImage(imagePath);
@@ -143,7 +191,7 @@ ipcMain.handle('crop-images', async (event, data) => {
       const canvas = createCanvas(cropWidth, cropHeight);
       const ctx = canvas.getContext('2d');
       
-      if (shape !== 'rectangle' && svgPath) {
+      if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, cropWidth, cropHeight);
       }
       
@@ -153,7 +201,7 @@ ipcMain.handle('crop-images', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvas.toBuffer(shape !== 'rectangle' ? 'image/png' : 'image/jpeg');
+      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -191,8 +239,10 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       const imagePath = imageData.imagePath;
       const crop = imageData.crop;
       
-      const fileName = path.basename(imagePath, path.extname(imagePath));
-      const outputExt = shape !== 'rectangle' ? '.png' : path.extname(imagePath);
+      const inputExt = path.extname(imagePath);
+      const fileName = path.basename(imagePath, inputExt);
+      const sourceStat = await fs.stat(imagePath).catch(() => null);
+      const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
       
       const image = await loadImage(imagePath);
@@ -205,7 +255,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       const canvas = createCanvas(cropWidth, cropHeight);
       const ctx = canvas.getContext('2d');
       
-      if (shape !== 'rectangle' && svgPath) {
+      if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, cropWidth, cropHeight);
       }
       
@@ -215,7 +265,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvas.toBuffer(shape !== 'rectangle' ? 'image/png' : 'image/jpeg');
+      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -276,6 +326,11 @@ function applyShapeClipping(ctx, shape, width, height) {
       
     case 'heart':
       drawHeart(ctx, centerX, centerY, Math.min(width, height) / 2);
+      break;
+
+    case 'rounded-rectangle':
+      // Keep corners clearly visible even on smaller crops.
+      drawRoundedRect(ctx, 0, 0, width, height, Math.min(width, height) * 0.2);
       break;
       
     default:
@@ -351,4 +406,17 @@ function drawHeart(ctx, cx, cy, size) {
     cx, cy,
     cx, cy + size * 0.3
   );
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
 }

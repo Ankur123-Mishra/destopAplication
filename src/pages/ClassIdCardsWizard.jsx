@@ -398,7 +398,7 @@ export default function ClassIdCardsWizard() {
       name: uploadedTemplate?.name || 'Uploaded Template',
       frontImage: uploadedTemplate?.frontImage,
       backImage: uploadedTemplate?.backImage,
-      schoolId: effectiveSchoolId,
+      schoolId: effectiveSchoolId,     
       classId: effectiveClassId,
       elements: payload.elements,
     };
@@ -409,9 +409,9 @@ export default function ClassIdCardsWizard() {
       await uploadTemplate({
         name: toSave.name,
         schoolId: effectiveSchoolId,
-        classId: effectiveClassId,
         frontImage: toSave.frontImage,
         backImage: toSave.backImage,
+        classId: effectiveClassId,
         elements: toSave.elements,
       });
     } catch (err) {
@@ -728,7 +728,7 @@ export default function ClassIdCardsWizard() {
           backTo={`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
-          Choose one template or upload your own (PNG). Front and back of the ID card are shown below. All ID cards for this class will use this template.
+          Choose one template or upload your own (PNG). Front and back of the ID card are shown below. Uploaded templates are saved at school level, so once created they can be reused across all classes.
         </p>
         {allTemplates.length === 0 && !uploadedTemplate?.frontImage ? (
           <div className="card" style={{ padding: 32, textAlign: 'center' }}>
