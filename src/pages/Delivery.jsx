@@ -89,9 +89,9 @@ export default function Delivery() {
             disabled={loadingSchools}
           >
             <option value="">Select school</option>
-            {schools.map((s) => (
+            {/* {schools.map((s) => (
               <option key={s._id} value={s._id}>{s.schoolName || s.schoolCode || s._id}</option>
-            ))}
+            ))} */}
           </select>
           {loadingSchools && <p className="text-muted" style={{ marginTop: 6, fontSize: '0.9rem' }}>Loading schools…</p>}
           {errorSchools && <p className="text-danger" style={{ marginTop: 6, fontSize: '0.9rem' }}>{errorSchools}</p>}

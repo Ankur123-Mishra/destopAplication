@@ -97,6 +97,31 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * html2canvas respects ancestor overflow:hidden; multiline canvas address would still clip in PDF/JPG.
+ * Relax overflow on the clone only (from .idcard-canvas-text--wrap up toward the page).
+ */
+function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
+  if (!clonedDoc?.querySelectorAll) return;
+  clonedDoc.querySelectorAll(".idcard-canvas-text--wrap").forEach((el) => {
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 24; depth += 1) {
+      const cls = node.classList;
+      if (cls?.contains("preview-overlay") || node === clonedDoc.body) break;
+      if (
+        cls?.contains("print-card-cell") ||
+        cls?.contains("print-page") ||
+        cls?.contains("preview-card-half") ||
+        cls?.contains("preview-card-stack") ||
+        cls?.contains("idcard-image-template-canvas")
+      ) {
+        node.style.setProperty("overflow", "visible", "important");
+      }
+      node = node.parentElement;
+    }
+  });
+}
+
 /** Captures preview page DOM nodes to JPG/PNG (one file per page) or a single multi-page PDF. */
 async function exportPreviewPagesAsFiles(
   pageElements,
@@ -112,6 +137,9 @@ async function exportPreviewPagesAsFiles(
     useCORS: true,
     logging: false,
     backgroundColor: "#ffffff",
+    onclone(clonedDoc) {
+      relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
+    },
   };
 
   if (format === "pdf") {
@@ -650,6 +678,32 @@ export default function SavedIdCardsList({
     return undefined;
   };
 
+  /** Front + back stack in single-student modal: match school card size (same logic as print preview). */
+  const singleStackPreviewStyle = (card) => {
+    const dim = card?.dimension;
+    const unit = card?.dimensionUnit || "mm";
+    let wMm = DEFAULT_CARD_WIDTH_MM;
+    let hMm = DEFAULT_CARD_HEIGHT_MM;
+    if (
+      dim &&
+      typeof dim.width === "number" &&
+      typeof dim.height === "number"
+    ) {
+      wMm = convertToMm(dim.width, unit);
+      hMm = convertToMm(dim.height, unit);
+    }
+    const stackHMm = 2 * hMm + PRINT_GAP_MM;
+    return {
+      width: `min(420px, 92vw, calc(85vh * ${wMm} / ${stackHMm}))`,
+      maxWidth: "100%",
+      height: "auto",
+      aspectRatio: `${wMm} / ${stackHMm}`,
+      boxSizing: "border-box",
+      ["--card-w-mm"]: wMm,
+      ["--card-h-mm"]: hMm,
+    };
+  };
+
   const renderCardForPrint = (card, useGridSize = false) => {
     const isFabric = card.templateId?.startsWith("fabric-");
     const fabricTemplate = isFabric
@@ -744,12 +798,12 @@ export default function SavedIdCardsList({
 
   // Renders one card as front (full size) + back (same size) stacked vertically (single-student modal only)
   const renderCardWithBackForPreview = (card, useGridSize = false) => {
-    const cellStyle = useGridSize ? undefined : cardCellStyle(card);
+    const stackStyle = useGridSize ? undefined : singleStackPreviewStyle(card);
     return (
       <div
         key={`${card._id}-${card.id}`}
         className="preview-card-stack preview-card-with-back"
-        style={cellStyle}
+        style={stackStyle}
       >
         <div className="preview-card-half preview-card-front">
           {renderCardForPrint(card, true)}
@@ -867,7 +921,7 @@ export default function SavedIdCardsList({
               >
                 <span className="saved-idcard-name">
                   {cls.className}
-                  {cls.section ? ` - ${cls.section}` : ""}
+                  {cls.section ? ` ` : ""}
                 </span>
               </button>
             </li>
@@ -1464,16 +1518,14 @@ export default function SavedIdCardsList({
           max-height: none;
         }
         .single-card-preview-card-wrap .preview-card-with-back {
-          max-width: 420px;
-          width: 100%;
-          height: auto;
-          aspect-ratio: 1.72 / 2;
+          /* width / aspect-ratio / max-height come from inline singleStackPreviewStyle (school dimensions) */
+          margin-left: auto;
+          margin-right: auto;
         }
         .single-card-preview-card-wrap .preview-card-stack {
-          width: 100%;
           min-width: 0;
           max-width: 100%;
-          height: 100%;
+          height: auto;
         }
         .single-card-preview-card-wrap .preview-card-half {
           min-height: 0;

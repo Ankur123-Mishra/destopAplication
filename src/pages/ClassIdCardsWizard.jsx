@@ -445,7 +445,7 @@ export default function ClassIdCardsWizard() {
                 >
                   <span className="class-idcards-school-name">{s.schoolName}</span>
                   {s.schoolCode && <span className="text-muted class-idcards-school-code">{s.schoolCode}</span>}
-                  {s.address && <span className="text-muted class-idcards-school-address">{s.address}</span>}
+                  {/* {s.address && <span className="text-muted class-idcards-school-address">{s.address}</span>} */}
                 </button>
               ))}
             </div>
@@ -494,7 +494,7 @@ export default function ClassIdCardsWizard() {
                   onClick={() => selectClass(schoolIdForClasses, c._id)}
                 >
                   <span className="class-idcards-class-name">
-                    {c.className}{c.section ? ` – ${c.section}` : ''}
+                    {c.className}{c.section ? `` : ""}
                   </span>
                 </button>
               ))}

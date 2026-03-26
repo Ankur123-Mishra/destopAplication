@@ -47,14 +47,14 @@ export default function Classes() {
       ) : (
         <>
           <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-            <button
+            {/* <button
               type="button"
               className="btn btn-secondary"
               onClick={() => firstClassId && navigate(`/schools/${schoolId}/classes/${firstClassId}/correction`)}
               disabled={!firstClassId}
             >
               Correction List
-            </button>
+            </button> */}
           </div>
           <div className="class-grid">
             {classes.length === 0 ? (

@@ -175,6 +175,7 @@ export default function IdCardFill() {
         <p className="text-muted" style={{ marginBottom: 20 }}>
           Fill in the student data. Use Export PNG to download the card.
         </p>
+        
         <div className="idcard-fill-layout">
           <div className="card idcard-fill-preview-card">
             <h3 style={{ marginBottom: 16 }}>Preview</h3>
@@ -265,7 +266,7 @@ export default function IdCardFill() {
         Edit the image and content as needed. The preview updates live.
       </p>
 
-      <div className="idcard-fill-layout">
+       <div className="idcard-fill-layout">
         <div className="card idcard-fill-preview-card">
           <h3 style={{ marginBottom: 16 }}>Preview</h3>
           <IdCardRenderer templateId={templateId} data={fillData} size="normal" />
@@ -454,7 +455,7 @@ export default function IdCardFill() {
             </button>
           </div>
         </div>
-      </div>
+       </div>
     </>
   );
 }
