@@ -62,8 +62,12 @@ export function studentPhotoMatchKey(s) {
 /**
  * Register an image file under basename keys so e.g. 240_cropped.png matches student photoNo "240".
  */
+const IMAGE_FILENAME_EXT = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
+
 export function addPhotoFileToMap(fileMap, file) {
-  if (!file?.type?.startsWith('image/')) return;
+  const looksLikeImage =
+    file?.type?.startsWith('image/') || IMAGE_FILENAME_EXT.test(file?.name || '');
+  if (!looksLikeImage) return;
   const baseName = (file.name || '').split(/[/\\]/).pop() || file.name || '';
   const nameWithoutExt = baseName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
   if (!nameWithoutExt) return;

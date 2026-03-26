@@ -63,6 +63,32 @@ export async function getAssignedSchools() {
 }
 
 /**
+ * PUT /api/photographer/schools/:schoolId
+ * Body: { schoolName, schoolCode, address, dimension: { height, width }, dimensionUnit, allowedMobiles }
+ */
+export async function updatePhotographerSchool(schoolId, body) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/schools/${encodeURIComponent(schoolId)}`,
+    {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify(body),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      formatSchoolCreateErrors(data) ||
+      res.statusText ||
+      "Failed to update school";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/**
  * GET /api/photographer/classes/:schoolId
  * Response: { classes: [{ _id, className, section }] }
  */

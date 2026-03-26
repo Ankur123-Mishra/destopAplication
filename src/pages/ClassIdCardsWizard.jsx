@@ -168,7 +168,13 @@ export default function ClassIdCardsWizard() {
   useEffect(() => {
     if (!hasUrlIds) return;
     if (hasStateData) {
-      setApiSchool({ id: stateSchool._id, name: stateSchool.schoolName, address: stateSchool.address });
+      setApiSchool({
+        id: stateSchool._id,
+        name: stateSchool.schoolName,
+        address: stateSchool.address,
+        schoolCode: stateSchool.schoolCode || '',
+        allowedMobiles: Array.isArray(stateSchool.allowedMobiles) ? stateSchool.allowedMobiles : [],
+      });
       setApiClass({ id: stateClass._id, name: `Class ${stateClass.className}${stateClass.section ? ` – ${stateClass.section}` : ''}` });
       setApiStudents(stateStudents);
       setApiDataLoaded(true);
@@ -189,7 +195,17 @@ export default function ClassIdCardsWizard() {
         console.log('studentsList', studentsList);
         const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
         const cls = classesList.find((c) => c._id === classIdFromUrl);
-        setApiSchool(school ? { id: school._id, name: school.schoolName, address: school.address } : null);
+        setApiSchool(
+          school
+            ? {
+                id: school._id,
+                name: school.schoolName,
+                address: school.address,
+                schoolCode: school.schoolCode || '',
+                allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+              }
+            : null,
+        );
         setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}${cls.section ? ` – ${cls.section}` : ''}` } : null);
         setApiStudents(studentsList);
         setApiDataLoaded(true);
@@ -681,6 +697,18 @@ export default function ClassIdCardsWizard() {
           initialData={initialData}
           dimension={previewStudent?.dimension}
           dimensionUnit={previewStudent?.dimensionUnit}
+          schoolId={schoolIdFromUrl || effectiveSchoolId}
+          schoolPutPayload={{
+            schoolName: school?.name || '',
+            schoolCode: school?.schoolCode || '',
+            address: school?.address || '',
+            allowedMobiles: school?.allowedMobiles || [],
+          }}
+          onDimensionUpdated={(next) => {
+            setApiStudents((prev) =>
+              prev.map((s) => ({ ...s, dimension: next.dimension, dimensionUnit: next.dimensionUnit })),
+            );
+          }}
           onSave={handleUseUploadedTemplate}
           onCancel={handleCancelUploadedTemplate}
           saveLabel="Use this template"

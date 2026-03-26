@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { updatePhotographerSchool } from '../api/dashboard';
 import './IdCardCanvasEditor.css';
 
 const FIELD_DEFS = [
@@ -189,6 +190,10 @@ export default function IdCardCanvasEditor({
   /** Physical card size from API (e.g. school dimension) — stage matches this size in the given unit */
   dimension,
   dimensionUnit,
+  /** When set with schoolPutPayload, shows “Edit dimension” and PUTs school on save */
+  schoolId,
+  schoolPutPayload,
+  onDimensionUpdated,
   onSave,
   onCancel,
   saveLabel = 'Save ID Card',
@@ -205,6 +210,20 @@ export default function IdCardCanvasEditor({
   const [alignMenuOpen, setAlignMenuOpen] = useState(false);
   const alignMenuRef = useRef(null);
   const didInitAddAllRef = useRef(false);
+  const [dimensionLocal, setDimensionLocal] = useState(null);
+  const [dimensionFormOpen, setDimensionFormOpen] = useState(false);
+  const [dimHeightDraft, setDimHeightDraft] = useState('56');
+  const [dimWidthDraft, setDimWidthDraft] = useState('88');
+  const [dimUnitDraft, setDimUnitDraft] = useState('mm');
+  const [dimensionSaving, setDimensionSaving] = useState(false);
+  const [dimensionError, setDimensionError] = useState('');
+
+  useEffect(() => {
+    setDimensionLocal(null);
+  }, [dimension?.height, dimension?.width, dimensionUnit, schoolId]);
+
+  const effectiveDimension = dimensionLocal?.dimension ?? dimension;
+  const effectiveDimensionUnit = dimensionLocal?.dimensionUnit ?? dimensionUnit;
 
   useEffect(() => {
     setPhotoUrl(studentImage);
@@ -404,7 +423,63 @@ export default function IdCardCanvasEditor({
 
   const selectedEl = elements.find((e) => e.id === selectedId);
   const isPhoto = selectedEl?.type === 'photo';
-  const physicalStageStyle = getPhysicalStageSizeStyle(dimension, dimensionUnit);
+  const physicalStageStyle = getPhysicalStageSizeStyle(effectiveDimension, effectiveDimensionUnit);
+
+  const openDimensionForm = useCallback(() => {
+    const h =
+      effectiveDimension && typeof effectiveDimension.height === 'number'
+        ? effectiveDimension.height
+        : 56;
+    const w =
+      effectiveDimension && typeof effectiveDimension.width === 'number'
+        ? effectiveDimension.width
+        : 88;
+    const u = normalizeCssDimensionUnit(effectiveDimensionUnit);
+    setDimHeightDraft(String(h));
+    setDimWidthDraft(String(w));
+    setDimUnitDraft(u);
+    setDimensionError('');
+    setDimensionFormOpen(true);
+  }, [effectiveDimension, effectiveDimensionUnit]);
+
+  const handleDimensionUpdate = async () => {
+    if (!schoolId || !schoolPutPayload) return;
+    const h = Number(String(dimHeightDraft).trim());
+    const w = Number(String(dimWidthDraft).trim());
+    if (!Number.isFinite(h) || !Number.isFinite(w) || h <= 0 || w <= 0) {
+      setDimensionError('Enter valid height and width (positive numbers).');
+      return;
+    }
+    const unit = normalizeCssDimensionUnit(dimUnitDraft);
+    const { schoolName, schoolCode = '', address = '', allowedMobiles = [] } = schoolPutPayload;
+    const nameTrim = String(schoolName || '').trim();
+    if (!nameTrim) {
+      setDimensionError('School name is required to update.');
+      return;
+    }
+    let addrTrim = String(address || '').trim();
+    if (!addrTrim) addrTrim = 'Not specified';
+    setDimensionSaving(true);
+    setDimensionError('');
+    try {
+      await updatePhotographerSchool(schoolId, {
+        schoolName: nameTrim,
+        schoolCode: String(schoolCode || '').trim(),
+        address: addrTrim,
+        dimension: { height: h, width: w },
+        dimensionUnit: unit,
+        allowedMobiles: Array.isArray(allowedMobiles) ? allowedMobiles.map((x) => String(x).trim()).filter(Boolean) : [],
+      });
+      const next = { dimension: { height: h, width: w }, dimensionUnit: unit };
+      setDimensionLocal(next);
+      onDimensionUpdated?.(next);
+      setDimensionFormOpen(false);
+    } catch (err) {
+      setDimensionError(err?.message || 'Update failed');
+    } finally {
+      setDimensionSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedEl?.type === 'text') {
@@ -480,6 +555,15 @@ export default function IdCardCanvasEditor({
           )}
         </div>
         <div className="idcard-canvas-actions">
+          {schoolId && schoolPutPayload && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => (dimensionFormOpen ? setDimensionFormOpen(false) : openDimensionForm())}
+            >
+              {dimensionFormOpen ? 'Close dimension' : 'Edit dimension'}
+            </button>
+          )}
           <label className="btn btn-secondary" style={{ marginBottom: 0, cursor: 'pointer' }}>
             Upload photo
             <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} />
@@ -552,6 +636,68 @@ export default function IdCardCanvasEditor({
         </div>
 
         <div className="idcard-canvas-sidebar card">
+          {schoolId && schoolPutPayload && dimensionFormOpen && (
+            <div className="idcard-canvas-dimension-panel">
+              <label className="input-label idcard-canvas-dimension-heading">Dimension (optional)</label>
+              <div className="idcard-canvas-dimension-row">
+                <div>
+                  <span className="text-muted idcard-canvas-dimension-field-label">Height</span>
+                  <input
+                    type="text"
+                    className="input-field idcard-canvas-dimension-input"
+                    value={dimHeightDraft}
+                    onChange={(e) => setDimHeightDraft(e.target.value)}
+                    inputMode="decimal"
+                    aria-label="Card height"
+                  />
+                </div>
+                <div>
+                  <span className="text-muted idcard-canvas-dimension-field-label">Width</span>
+                  <input
+                    type="text"
+                    className="input-field idcard-canvas-dimension-input"
+                    value={dimWidthDraft}
+                    onChange={(e) => setDimWidthDraft(e.target.value)}
+                    inputMode="decimal"
+                    aria-label="Card width"
+                  />
+                </div>
+                <div>
+                  <span className="text-muted idcard-canvas-dimension-field-label">Unit</span>
+                  <select
+                    className="input-field idcard-canvas-dimension-unit"
+                    value={dimUnitDraft}
+                    onChange={(e) => setDimUnitDraft(e.target.value)}
+                    aria-label="Dimension unit"
+                  >
+                    <option value="mm">mm</option>
+                    <option value="cm">cm</option>
+                    <option value="in">in</option>
+                    <option value="px">px</option>
+                    <option value="pt">pt</option>
+                  </select>
+                </div>
+              </div>
+              {dimensionError ? (
+                <p className="idcard-canvas-dimension-error" role="alert">
+                  {dimensionError}
+                </p>
+              ) : null}
+              <div className="idcard-canvas-dimension-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={dimensionSaving}
+                  onClick={handleDimensionUpdate}
+                >
+                  {dimensionSaving ? 'Saving…' : 'Update dimensions'}
+                </button>
+              </div>
+              <p className="text-muted idcard-canvas-dimension-hint">
+                Card preview size updates after a successful save. This updates the school on the server.
+              </p>
+            </div>
+          )}
 
         <h3 style={{ marginBottom: 12 }}>Edit selected</h3>
           {selectedId && selectedEl && (

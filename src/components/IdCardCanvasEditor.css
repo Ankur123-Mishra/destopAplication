@@ -275,3 +275,55 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.idcard-canvas-dimension-panel {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.idcard-canvas-dimension-heading {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.idcard-canvas-dimension-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.idcard-canvas-dimension-field-label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.idcard-canvas-dimension-input {
+  width: 100px;
+  box-sizing: border-box;
+}
+
+.idcard-canvas-dimension-unit {
+  width: 80px;
+  box-sizing: border-box;
+}
+
+.idcard-canvas-dimension-actions {
+  margin-top: 12px;
+}
+
+.idcard-canvas-dimension-error {
+  margin: 10px 0 0;
+  font-size: 0.875rem;
+  color: var(--danger, #f87171);
+}
+
+.idcard-canvas-dimension-hint {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}

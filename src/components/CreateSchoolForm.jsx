@@ -185,7 +185,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
               <>
                 <label className="input-label">Project folder *</label>
                 <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
-                  Select one folder that contains: (1) one Excel file (XLS/XLSX) with student data, (2) one subfolder with student photos named by Student ID (e.g. 101.jpg, 102.png).
+                  Select the project folder. Put the Excel file (XLS/XLSX) and all student photos in that same folder (no separate images subfolder). Photo filenames should match Student ID / photo number (e.g. 1193.JPG, 1194.png).
                 </p>
                 {projectFolderField}
               </>

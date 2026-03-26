@@ -78,12 +78,19 @@ export default function Dashboard() {
     if (projectFolderInputRef.current) projectFolderInputRef.current.click();
   };
 
+  const isExcelFile = (f) => /\.(xls|xlsx)$/i.test(f.name || '');
+  const isImageFile = (f) => {
+    const name = f.name || '';
+    if (f.type?.startsWith('image/')) return true;
+    return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(name);
+  };
+
   const handleProjectFolderSelect = (e) => {
     const files = e.target.files;
     if (files?.length) {
       const list = Array.from(files);
-      const excelFile = list.find((f) => /\.(xls|xlsx)$/i.test(f.name || ''));
-      const imageFiles = list.filter((f) => f.type?.startsWith('image/'));
+      const excelFile = list.find(isExcelFile);
+      const imageFiles = list.filter((f) => !isExcelFile(f) && isImageFile(f));
       setProjectFolderExcel(excelFile || null);
       setPendingPhotoFiles(imageFiles);
     }

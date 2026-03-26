@@ -1127,6 +1127,7 @@ export default function SavedIdCardsList({
               maxWidth: "min(720px, calc(100vw - 120px))",
             }}
           >
+            
             {renderPageSizeControls("print")}
           </div>
           <div ref={printContentRef} className="print-pages-wrap">
@@ -1303,6 +1304,7 @@ export default function SavedIdCardsList({
                       ["--rows"]: rows,
                     }}
                   >
+
                     <div
                       className="print-cards-grid"
                       style={{

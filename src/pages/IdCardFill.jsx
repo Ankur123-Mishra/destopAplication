@@ -239,6 +239,13 @@ export default function IdCardFill() {
           initialElements={undefined}
           dimension={student?.dimension}
           dimensionUnit={student?.dimensionUnit}
+          schoolId={schoolId}
+          schoolPutPayload={{
+            schoolName: school?.name || '',
+            schoolCode: school?.schoolCode || '',
+            address: school?.address || '',
+            allowedMobiles: school?.allowedMobiles || [],
+          }}
           initialData={{
             name: student?.name || '',
             studentId: student?.studentId || '',
