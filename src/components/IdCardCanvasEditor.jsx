@@ -55,6 +55,110 @@ function normalizeValue(v) {
 }
 
 /** Backend unit → valid CSS length unit for width/height */
+const DEFAULT_TEXT_COLOR = '#111111';
+
+/** Normalize to #rrggbb for <input type="color"> */
+function toHexColorForInput(value) {
+  if (!value || typeof value !== 'string') return DEFAULT_TEXT_COLOR;
+  const s = value.trim();
+  if (/^#[0-9A-Fa-f]{6}$/i.test(s)) return s.toLowerCase();
+  if (/^#[0-9A-Fa-f]{3}$/i.test(s)) {
+    const r = s[1];
+    const g = s[2];
+    const b = s[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return DEFAULT_TEXT_COLOR;
+}
+
+const TEXT_COLOR_PRESETS = [
+  { label: 'Black', value: '#111111' },
+  { label: 'White', value: '#ffffff' },
+  { label: 'Navy', value: '#1e3a5f' },
+  { label: 'Maroon', value: '#7f1d1d' },
+  { label: 'Green', value: '#166534' },
+  { label: 'Gold', value: '#b45309' },
+];
+
+/** Canvas snap positions (percent-based stage). */
+const CANVAS_ALIGN_OPTIONS = [
+  { value: 'top-left', label: 'Top left' },
+  { value: 'top-center', label: 'Top center' },
+  { value: 'top-right', label: 'Top right' },
+  { value: 'middle-left', label: 'Middle left' },
+  { value: 'center', label: 'Center' },
+  { value: 'middle-right', label: 'Middle right' },
+  { value: 'bottom-left', label: 'Bottom left' },
+  { value: 'bottom-center', label: 'Bottom center' },
+  { value: 'bottom-right', label: 'Bottom right' },
+];
+
+function getElementBoxPercentForAlign(el) {
+  if (el.type === 'photo') {
+    return {
+      w: typeof el.width === 'number' ? el.width : 30,
+      h: typeof el.height === 'number' ? el.height : 48,
+    };
+  }
+  const multiline = el.dataField === 'address';
+  return {
+    w: 42,
+    h: multiline ? 20 : 8,
+  };
+}
+
+function computeAlignedXY(el, alignValue) {
+  const { w, h } = getElementBoxPercentForAlign(el);
+  const maxX = Math.max(0, 100 - w);
+  const maxY = Math.max(0, 100 - h);
+  let x = 0;
+  let y = 0;
+  switch (alignValue) {
+    case 'top-left':
+      x = 0;
+      y = 0;
+      break;
+    case 'top-center':
+      x = maxX / 2;
+      y = 0;
+      break;
+    case 'top-right':
+      x = maxX;
+      y = 0;
+      break;
+    case 'middle-left':
+      x = 0;
+      y = maxY / 2;
+      break;
+    case 'center':
+      x = maxX / 2;
+      y = maxY / 2;
+      break;
+    case 'middle-right':
+      x = maxX;
+      y = maxY / 2;
+      break;
+    case 'bottom-left':
+      x = 0;
+      y = maxY;
+      break;
+    case 'bottom-center':
+      x = maxX / 2;
+      y = maxY;
+      break;
+    case 'bottom-right':
+      x = maxX;
+      y = maxY;
+      break;
+    default:
+      return null;
+  }
+  return {
+    x: Math.max(0, Math.min(maxX, x)),
+    y: Math.max(0, Math.min(maxY, y)),
+  };
+}
+
 function normalizeCssDimensionUnit(unit) {
   if (!unit || typeof unit !== 'string') return 'mm';
   const u = unit.trim().toLowerCase();
@@ -97,11 +201,29 @@ export default function IdCardCanvasEditor({
   const [resizeState, setResizeState] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoUrl, setPhotoUrl] = useState(studentImage);
+  const [colorHexDraft, setColorHexDraft] = useState('');
+  const [alignMenuOpen, setAlignMenuOpen] = useState(false);
+  const alignMenuRef = useRef(null);
   const didInitAddAllRef = useRef(false);
 
   useEffect(() => {
     setPhotoUrl(studentImage);
   }, [studentImage]);
+
+  useEffect(() => {
+    if (!alignMenuOpen) return;
+    const onDocDown = (e) => {
+      if (alignMenuRef.current && !alignMenuRef.current.contains(e.target)) {
+        setAlignMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDocDown, true);
+    return () => document.removeEventListener('pointerdown', onDocDown, true);
+  }, [alignMenuOpen]);
+
+  useEffect(() => {
+    if (!selectedId) setAlignMenuOpen(false);
+  }, [selectedId]);
 
   const getFieldValue = useCallback((key) => {
     const raw = normalizeValue((initialData || {})[key]);
@@ -252,6 +374,13 @@ export default function IdCardCanvasEditor({
     );
   };
 
+  const setSelectedTextColor = useCallback((hex) => {
+    if (!selectedId) return;
+    setElements((prev) =>
+      prev.map((x) => (x.id === selectedId ? { ...x, color: hex } : x))
+    );
+  }, [selectedId]);
+
   const updateElementDataField = (id, dataField) => {
     setElements((prev) =>
       prev.map((el) => (el.id === id ? { ...el, dataField: dataField || undefined } : el))
@@ -277,6 +406,30 @@ export default function IdCardCanvasEditor({
   const isPhoto = selectedEl?.type === 'photo';
   const physicalStageStyle = getPhysicalStageSizeStyle(dimension, dimensionUnit);
 
+  useEffect(() => {
+    if (selectedEl?.type === 'text') {
+      setColorHexDraft(selectedEl.color ? toHexColorForInput(selectedEl.color) : '');
+    } else {
+      setColorHexDraft('');
+    }
+  }, [selectedId, selectedEl?.type, selectedEl?.color]);
+
+  const applyCanvasAlignment = useCallback(
+    (alignValue) => {
+      if (!selectedId) return;
+      setElements((prev) =>
+        prev.map((el) => {
+          if (el.id !== selectedId) return el;
+          const next = computeAlignedXY(el, alignValue);
+          if (!next) return el;
+          return { ...el, x: next.x, y: next.y };
+        })
+      );
+      setAlignMenuOpen(false);
+    },
+    [selectedId]
+  );
+
   const handleSaveClick = () => {
     onSave({
       elements,
@@ -292,6 +445,40 @@ export default function IdCardCanvasEditor({
     <div className="idcard-canvas-editor">
       <div className="idcard-canvas-toolbar">
         <span className="idcard-canvas-hint">Drag elements to move · Select photo & drag corner to resize · Click text to edit below</span>
+        <div className="idcard-canvas-toolbar-center">
+          {selectedId && selectedEl && (
+            <div className="idcard-canvas-align" ref={alignMenuRef}>
+              <button
+                type="button"
+                className="btn btn-secondary idcard-canvas-align-trigger"
+                aria-expanded={alignMenuOpen}
+                aria-haspopup="listbox"
+                onClick={() => setAlignMenuOpen((o) => !o)}
+              >
+                Align on card
+                <span className="idcard-canvas-align-chevron" aria-hidden>
+                  {alignMenuOpen ? '▲' : '▼'}
+                </span>
+              </button>
+              {alignMenuOpen && (
+                <ul className="idcard-canvas-align-menu" role="listbox">
+                  {CANVAS_ALIGN_OPTIONS.map((opt) => (
+                    <li key={opt.value} role="none">
+                      <button
+                        type="button"
+                        role="option"
+                        className="idcard-canvas-align-item"
+                        onClick={() => applyCanvasAlignment(opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
         <div className="idcard-canvas-actions">
           <label className="btn btn-secondary" style={{ marginBottom: 0, cursor: 'pointer' }}>
             Upload photo
@@ -343,15 +530,17 @@ export default function IdCardCanvasEditor({
             }
             const boundVal = el.dataField ? getFieldValue(el.dataField) : '';
             const textToShow = boundVal || el.content || '';
+            const wrapMultiline = el.dataField === 'address';
             return (
               <div
                 key={el.id}
-                className={`idcard-canvas-el idcard-canvas-text ${selectedId === el.id ? 'selected' : ''}`}
+                className={`idcard-canvas-el idcard-canvas-text ${selectedId === el.id ? 'selected' : ''}${wrapMultiline ? ' idcard-canvas-text--wrap' : ''}`}
                 style={{
                   left: `${el.x}%`,
                   top: `${el.y}%`,
                   fontSize: `${el.fontSize || 12}px`,
                   fontWeight: el.fontWeight || '400',
+                  ...(el.color ? { color: el.color } : {}),
                 }}
                 onPointerDown={(e) => handlePointerDown(e, el.id, false)}
               >
@@ -385,6 +574,94 @@ export default function IdCardCanvasEditor({
                       }
                     />
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 12}px</span>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <span className="input-label">Text color</span>
+                    <div className="idcard-canvas-color-row">
+                      <label className="idcard-canvas-color-picker-hit" title="Open color picker — click to choose">
+                        <input
+                          type="color"
+                          className="idcard-canvas-color-input"
+                          aria-label="Open color picker"
+                          value={toHexColorForInput(selectedEl.color)}
+                          onInput={(e) => setSelectedTextColor(e.target.value)}
+                          onChange={(e) => setSelectedTextColor(e.target.value)}
+                        />
+                        <span className="idcard-canvas-color-picker-hint">Color picker</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field idcard-canvas-color-hex"
+                        aria-label="Hex color (#rrggbb)"
+                        placeholder="Default"
+                        maxLength={7}
+                        value={colorHexDraft}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setColorHexDraft(raw);
+                          const t = raw.trim();
+                          if (!t) return;
+                          const h = t.startsWith('#') ? t : `#${t}`;
+                          if (/^#[0-9A-Fa-f]{6}$/i.test(h)) {
+                            setSelectedTextColor(h.toLowerCase());
+                          }
+                        }}
+                        onBlur={() => {
+                          const t = colorHexDraft.trim();
+                          if (!t) {
+                            setElements((prev) =>
+                              prev.map((x) => {
+                                if (x.id !== selectedEl.id) return x;
+                                const next = { ...x };
+                                delete next.color;
+                                return next;
+                              })
+                            );
+                            setColorHexDraft('');
+                            return;
+                          }
+                          const h = t.startsWith('#') ? t : `#${t}`;
+                          if (/^#[0-9A-Fa-f]{6}$/i.test(h)) {
+                            const hex = h.toLowerCase();
+                            setSelectedTextColor(hex);
+                            setColorHexDraft(hex);
+                          } else {
+                            setColorHexDraft(
+                              selectedEl.color ? toHexColorForInput(selectedEl.color) : ''
+                            );
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() =>
+                          setElements((prev) =>
+                            prev.map((x) => {
+                              if (x.id !== selectedEl.id) return x;
+                              const next = { ...x };
+                              delete next.color;
+                              return next;
+                            })
+                          )
+                        }
+                      >
+                        Default
+                      </button>
+                    </div>
+                    <div className="idcard-canvas-color-swatches" role="group" aria-label="Preset colors">
+                      {TEXT_COLOR_PRESETS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          className="idcard-canvas-color-swatch"
+                          title={p.label}
+                          aria-label={p.label}
+                          style={{ backgroundColor: p.value }}
+                          onClick={() => setSelectedTextColor(p.value)}
+                        />
+                      ))}
+                    </div>
                   </div>
                   <div style={{ marginTop: 12 }}>
                     <label className="input-label">Bind to student field</label>

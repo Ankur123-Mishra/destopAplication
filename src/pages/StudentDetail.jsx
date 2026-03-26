@@ -21,7 +21,6 @@ export default function StudentDetail() {
   const stateSchool = location.state?.school;
   const stateClass = location.state?.class;
   const useStateData = (fromUploadedPhotos || fromCorrections) && stateStudent;
-
   const students = getStudents(classId) || [];
   const contextStudent = students.find((s) => s.id === studentId);
   const student = useStateData ? stateStudent : contextStudent;

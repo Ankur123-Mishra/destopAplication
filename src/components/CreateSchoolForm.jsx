@@ -3,7 +3,6 @@ import { createSchool, bulkUploadStudentsXls } from '../api/dashboard';
 
 export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, onExcelUploadDone, rightOfExcel, showCancel = true, labelAsProject = false, externalExcelFile = null, projectFolderField = null }) {
   const nameLabel = labelAsProject ? 'Project Name' : 'School Name';
-  const codeLabel = labelAsProject ? 'Project Code' : 'School Code';
   const btnLabel = labelAsProject ? 'Create Project' : 'Create School';
   const desc = labelAsProject
     ? 'Enter project details and upload an Excel (XLS/XLSX) file with student data. Project will be created first, then student data will be uploaded.'
@@ -11,7 +10,6 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
   const nameRequiredMsg = labelAsProject ? 'Project name is required.' : 'School name is required.';
   const creatingMsg = labelAsProject ? 'Creating project…' : 'Creating school…';
   const [schoolName, setSchoolName] = useState('');
-  const [schoolCode, setSchoolCode] = useState('');
   const [address, setAddress] = useState('');
   const [dimensionHeight, setDimensionHeight] = useState('56');
   const [dimensionWidth, setDimensionWidth] = useState('88');
@@ -48,7 +46,6 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
       setStep('school');
       const res = await createSchool({
         schoolName: name,
-        schoolCode: schoolCode.trim(),
         address: address.trim(),
         dimensionHeight: dimensionHeight.trim() || undefined,
         dimensionWidth: dimensionWidth.trim() || undefined,
@@ -100,19 +97,9 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
             required
           />
         </div>
-        {/* Project Code & Address hidden for Create Project modal */}
+        {/* School code not collected — API assigns or omits (validation: A-Z, 0-9, -, _ only). */}
         {!labelAsProject && (
           <>
-            <div style={{ marginBottom: 16 }}>
-              <label className="input-label">{codeLabel}</label>
-              <input
-                type="text"
-                className="input-field"
-                value={schoolCode}
-                onChange={(e) => setSchoolCode(e.target.value)}
-                placeholder="e.g. GVS001"
-              />
-            </div>
             <div style={{ marginBottom: 16 }}>
               <label className="input-label">Address</label>
               <textarea

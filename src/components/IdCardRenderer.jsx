@@ -41,15 +41,17 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
           const textContent = el.dataField && (data || {})[el.dataField] != null
             ? String((data || {})[el.dataField])
             : (el.content ?? '');
+          const wrapMultiline = el.dataField === 'address';
           return (
             <div
               key={el.id}
-              className="idcard-canvas-el idcard-canvas-text idcard-render-only"
+              className={`idcard-canvas-el idcard-canvas-text idcard-render-only${wrapMultiline ? ' idcard-canvas-text--wrap' : ''}`}
               style={{
                 left: `${el.x}%`,
                 top: `${el.y}%`,
                 fontSize: `${el.fontSize || 12}px`,
                 fontWeight: el.fontWeight || '400',
+                ...(el.color ? { color: el.color } : {}),
               }}
             >
               {textContent}
