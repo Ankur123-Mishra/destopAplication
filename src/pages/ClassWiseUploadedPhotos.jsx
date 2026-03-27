@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import {
@@ -9,6 +9,10 @@ import {
 } from '../api/dashboard';
 import { API_BASE_URL } from '../api/config';
 import { compressImageForUpload, addPhotoFileToMap, studentPhotoMatchKey } from '../utils/imageUpload';
+import {
+  getProjectBulkPreviewUrl,
+  subscribeProjectBulkPhotoPreview,
+} from '../utils/projectBulkPhotoPreview';
 
 function mapApiStudent(s) {
 // console.log("s Data", s);
@@ -52,8 +56,15 @@ export default function ClassWiseUploadedPhotos() {
   const [bulkUploadMessage, setBulkUploadMessage] = useState(null);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [uploadingStudentId, setUploadingStudentId] = useState(null); // loading state for single upload
+  const [, bumpBulkPreview] = useReducer((n) => n + 1, 0);
   const fileInputRefs = useRef({});
-  const bulkUploadInputRef = useRef(null)
+  const bulkUploadInputRef = useRef(null);
+
+  useEffect(() => {
+    return subscribeProjectBulkPhotoPreview(() => {
+      bumpBulkPreview();
+    });
+  }, []);
   // Load schools on mount
   useEffect(() => {
     let cancelled = false;
@@ -229,7 +240,9 @@ export default function ClassWiseUploadedPhotos() {
   };
 
   const getStudentPhotoUrl = (student) => {
-    const raw = uploadedPhotos[student.id] ?? student.photoUrl ?? null;
+    const schoolId = selectedSchool?._id;
+    const bulk = schoolId ? getProjectBulkPreviewUrl(schoolId, student.id) : null;
+    const raw = uploadedPhotos[student.id] ?? bulk ?? student.photoUrl ?? null;
     if (!raw) return null;
     if (typeof raw === 'string' && (raw.startsWith('http') || raw.startsWith('blob:'))) return raw;
     const base = API_BASE_URL.replace(/\/$/, '');

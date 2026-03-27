@@ -552,36 +552,63 @@ export async function createSchool({
  * POST /api/photographer/students/bulk-upload (multipart/form-data)
  * Body: schoolId (string), file (XLS/XLSX file)
  * Response: { message?, ... }
+ * @param {{ onUploadProgress?: (percent: number) => void }} [options] — percent 0–100 while request body is sent (XHR; fetch has no upload progress)
  */
-export async function bulkUploadStudentsXls(schoolId, file) {
+export function bulkUploadStudentsXls(schoolId, file, options = {}) {
+  const { onUploadProgress } = options;
   const form = new FormData();
   form.append("schoolId", String(schoolId));
-  const arrayBuffer = await file.arrayBuffer();
-  const blob = new Blob([arrayBuffer], {
-    type:
-      file.type ||
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  form.append("file", file, file.name || "students.xlsx");
+
+  const url = `${API_BASE_URL}/api/photographer/students/bulk-upload`;
+  const token = getToken();
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
+    if (typeof onUploadProgress === "function" && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          const pct = Math.min(100, Math.round((100 * e.loaded) / e.total));
+          // Cap at 99 until the request finishes so UI can show bytes uploading, not "done" before response.
+          onUploadProgress(Math.min(99, pct));
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        data = {};
+      }
+      console.log("bulkUploadStudentsXls", data);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (typeof onUploadProgress === "function") {
+          onUploadProgress(100);
+        }
+        resolve(data);
+      } else {
+        const msg =
+          data?.message ||
+          data?.error ||
+          xhr.statusText ||
+          "Bulk upload failed";
+        reject(new Error(msg));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Network error during upload"));
+    };
+
+    xhr.send(form);
   });
-  form.append("file", blob, file.name || "students.xlsx");
-
-  const res = await fetch(
-    `${API_BASE_URL}/api/photographer/students/bulk-upload`,
-    {
-      method: "POST",
-      headers: authHeadersForm(),
-      body: form,
-    },
-  );
-  const data = await res.json().catch(() => ({}));
-  console.log("bulkUploadStudentsXls", data);
-
-  // console.log('res', res);
-  if (!res.ok) {
-    const msg =
-      data?.message || data?.error || res.statusText || "Bulk upload failed";
-    throw new Error(msg);
-  }
-  return data;
 }
 
 /**

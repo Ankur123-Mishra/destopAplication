@@ -3,7 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import Header from '../components/Header';
 import CreateSchoolForm from '../components/CreateSchoolForm';
-import { addPhotoFileToMap, studentPhotoMatchKey } from '../utils/imageUpload';
+import { addPhotoFileToMap, studentPhotoMatchKey, compressImageForUpload } from '../utils/imageUpload';
+import {
+  registerProjectBulkLocalPreviews,
+  setProjectBulkPreviewServerUrl,
+} from '../utils/projectBulkPhotoPreview';
 import {
   getDashboard,
   getAssignedSchools,
@@ -103,11 +107,8 @@ export default function Dashboard() {
     e.target.value = '';
   };
 
-  // Excel ke baad images: GET /api/photographer/classes/:schoolId (getClassesBySchool),
-  // har class par GET /api/photographer/students?schoolId&classId (getStudentsBySchoolAndClass),
-  // har match par POST /api/photographer/photos/upload (uploadStudentPhoto).
+  // Excel ke baad: students se files match karke local blob previews register karo, phir uploads background mein.
   const uploadPhotosAfterExcel = async (schoolId) => {
-
     const files = pendingPhotoFilesRef.current;
     if (!files?.length) return;
     const classesRes = await getClassesBySchool(schoolId);
@@ -129,13 +130,30 @@ export default function Dashboard() {
     files.forEach((file) => {
       addPhotoFileToMap(fileMap, file);
     });
+    const pairs = [];
     for (const student of combined) {
       const idKey = String(student.studentId ?? '').trim().toLowerCase();
       const file = idKey ? fileMap[idKey] : null;
       if (file) {
-        await uploadStudentPhoto(student.id, file, 'Create Project bulk upload');
+        pairs.push({ studentId: student.id, file });
       }
     }
+    if (pairs.length === 0) return;
+    registerProjectBulkLocalPreviews(schoolId, pairs);
+
+    void (async () => {
+      for (const { studentId, file } of pairs) {
+        try {
+          const fileToUpload = await compressImageForUpload(file);
+          const res = await uploadStudentPhoto(studentId, fileToUpload, 'Create Project bulk upload');
+          if (res?.photoUrl) {
+            setProjectBulkPreviewServerUrl(schoolId, studentId, res.photoUrl);
+          }
+        } catch (err) {
+          console.error('Create Project bulk photo upload failed', studentId, err);
+        }
+      }
+    })();
   };
 
   const handleDeleteSchool = async (school) => {

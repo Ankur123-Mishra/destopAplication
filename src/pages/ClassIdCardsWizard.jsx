@@ -13,6 +13,10 @@ import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
 import { getAssignedSchools, getClassesBySchool, getStudentsBySchoolAndClass, uploadStudentPhoto, bulkSaveTemplates, uploadTemplate } from '../api/dashboard';
 import { API_BASE_URL } from '../api/config';
 import { compressImageForUpload } from '../utils/imageUpload';
+import {
+  getProjectBulkPreviewUrl,
+  subscribeProjectBulkPhotoPreview,
+} from '../utils/projectBulkPhotoPreview';
 import '../components/IdCardRenderer.css';
 import '../components/IdCardCanvasEditor.css';
 
@@ -103,6 +107,7 @@ export default function ClassIdCardsWizard() {
   const [selectedTemplateId, setSelectedTemplateId] = useState(templateIdFromUrl || null);
   const [studentImages, setStudentImages] = useState({}); // { [studentId]: dataUrl }
   const [uploadingStudentId, setUploadingStudentId] = useState(null);
+  const [bulkPreviewEpoch, setBulkPreviewEpoch] = useState(0);
   const [savingAll, setSavingAll] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]); // IDs of students to include in ID cards
   const [uploadedTemplate, setUploadedTemplate] = useState(null); // { frontImage, backImage, elements, name } when user uploads PNG templates
@@ -113,6 +118,12 @@ export default function ClassIdCardsWizard() {
   useEffect(() => {
     setStep(stepFromPath);
   }, [stepFromPath]);
+
+  useEffect(() => {
+    return subscribeProjectBulkPhotoPreview(() => {
+      setBulkPreviewEpoch((n) => n + 1);
+    });
+  }, []);
 
   const prevClassKeyRef = useRef('');
   const selectionResetRef = useRef(false);
@@ -258,7 +269,16 @@ export default function ClassIdCardsWizard() {
     ...ID_CARD_TEMPLATES.map((t) => ({ id: t.id, name: t.name, isFabric: false, isUploaded: false })),
   ], [fabricTemplates, savedUploadedTemplates]);
 
-  const getImageForStudent = (student) => studentImages[student.id] ?? student.photoUrl ?? null;
+  const bulkSchoolId = school?.id || schoolIdFromUrl || null;
+  const getImageForStudent = (student) => {
+    const fromPicker = studentImages[student.id];
+    if (fromPicker) return fromPicker;
+    if (bulkSchoolId) {
+      const bulk = getProjectBulkPreviewUrl(bulkSchoolId, student.id);
+      if (bulk) return bulk;
+    }
+    return student.photoUrl ?? null;
+  };
   const setImageForStudent = (studentId, dataUrl) => {
     setStudentImages((prev) => ({ ...prev, [studentId]: dataUrl }));
   };
@@ -270,7 +290,7 @@ export default function ClassIdCardsWizard() {
 
   const canProceedFromStudents = useMemo(() => {
     return selectedStudents.length > 0 && selectedStudents.every((s) => getImageForStudent(s));
-  }, [selectedStudents, studentImages]);
+  }, [selectedStudents, studentImages, bulkPreviewEpoch, bulkSchoolId, students]);
 
   const toggleStudentSelection = (studentId) => {
     setSelectedStudentIds((prev) =>

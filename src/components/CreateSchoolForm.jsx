@@ -46,6 +46,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
   const [xlsFile, setXlsFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState('');
+  const [excelUploadPercent, setExcelUploadPercent] = useState(null);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const xlsInputRef = useRef(null);
@@ -76,6 +77,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
       return;
     }
     setSubmitting(true);
+    setExcelUploadPercent(null);
     try {
       setStep('school');
       const res = await createSchool({
@@ -92,7 +94,82 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
       if (!schoolId) throw new Error('Server did not return school id.');
 
       setStep('upload');
-      await bulkUploadStudentsXls(schoolId, excelToUse);
+      setExcelUploadPercent(0);
+      const displayRef = { current: 0 };
+      const targetRef = { current: 0 };
+      /** False only after XHR settles (so we can creep past the 99% byte cap while the server responds). */
+      const requestPendingRef = { current: true };
+      const CREEP_MAX_WHILE_PENDING = 99.86;
+      const CREEP_STEP = 0.032;
+      let progressRafId = null;
+      const stopSmoothedProgress = () => {
+        if (progressRafId != null) {
+          cancelAnimationFrame(progressRafId);
+          progressRafId = null;
+        }
+      };
+      const pushDisplay = (d) => {
+        displayRef.current = d;
+        const rounded = Math.round(d * 10) / 10;
+        setExcelUploadPercent(rounded >= 100 ? 100 : rounded);
+      };
+      const runSmoothedProgress = () => {
+        const tick = () => {
+          const t = targetRef.current;
+          let d = displayRef.current;
+          const pending = requestPendingRef.current;
+
+          if (d < t) {
+            const gap = t - d;
+            const speed = pending
+              ? Math.min(2, Math.max(0.35, gap * 0.15))
+              : Math.min(2.5, Math.max(0.4, gap * 0.2));
+            d = Math.min(t, d + speed);
+          } else if (
+            pending &&
+            t >= 95 &&
+            d >= t - 0.02 &&
+            d < CREEP_MAX_WHILE_PENDING
+          ) {
+            // At API cap (99) but server still processing: creep slowly until XHR completes.
+            d = Math.min(CREEP_MAX_WHILE_PENDING, d + CREEP_STEP);
+          }
+
+          pushDisplay(d);
+          progressRafId = requestAnimationFrame(tick);
+        };
+        progressRafId = requestAnimationFrame(tick);
+      };
+      runSmoothedProgress();
+
+      await new Promise((resolve, reject) => {
+        bulkUploadStudentsXls(schoolId, excelToUse, {
+          onUploadProgress: (pct) => {
+            targetRef.current = Math.max(targetRef.current, pct);
+          },
+        })
+          .then((data) => {
+            requestPendingRef.current = false;
+            targetRef.current = 100;
+            const waitUntilBarFull = () => {
+              if (displayRef.current >= 99.98) {
+                setExcelUploadPercent(100);
+                stopSmoothedProgress();
+                resolve(data);
+              } else {
+                requestAnimationFrame(waitUntilBarFull);
+              }
+            };
+            waitUntilBarFull();
+          })
+          .catch((err) => {
+            requestPendingRef.current = false;
+            stopSmoothedProgress();
+            reject(err);
+          });
+      });
+
+      setExcelUploadPercent(null);
       if (onExcelUploadDone) {
         setStep('photos');
         try {
@@ -109,6 +186,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
     } catch (err) {
       setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
+      setExcelUploadPercent(null);
       setSubmitting(false);
       setStep('');
     }
@@ -243,9 +321,48 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
           {rightOfExcel && !projectFolderField && <div className="create-form-excel-right">{rightOfExcel}</div>}
         </div>
         {error && <p className="text-danger" style={{ marginBottom: 16 }}>{error}</p>}
-        {submitting && step && (
+        {submitting && step === 'school' && (
+          <p className="text-muted" style={{ marginBottom: 16 }}>{creatingMsg}</p>
+        )}
+        {submitting && step === 'upload' && excelUploadPercent !== null && (
+          <div style={{ marginBottom: 16 }}>
+            <p className="text-muted" style={{ marginBottom: 8 }}>
+              {labelAsProject ? 'Uploading Excel file…' : 'Uploading student data (Excel)…'}{' '}
+              <strong style={{ color: 'var(--text)' }}>
+                {excelUploadPercent >= 100
+                  ? '100'
+                  : excelUploadPercent === 0
+                    ? '0'
+                    : excelUploadPercent.toFixed(1)}
+                %
+              </strong>
+            </p>
+            <div
+              role="progressbar"
+              aria-valuenow={Math.min(100, Math.round(excelUploadPercent))}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              style={{
+                height: 10,
+                background: 'var(--bg-card)',
+                borderRadius: 6,
+                overflow: 'hidden',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${excelUploadPercent}%`,
+                  background: 'var(--accent)',
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {submitting && step === 'photos' && (
           <p className="text-muted" style={{ marginBottom: 16 }}>
-            {step === 'school' ? creatingMsg : step === 'photos' ? 'Uploading photos…' : 'Uploading student data…'}
+            {labelAsProject ? 'Matching folder photos and starting background upload…' : 'Uploading photos…'}
           </p>
         )}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
