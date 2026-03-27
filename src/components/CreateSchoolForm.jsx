@@ -63,6 +63,13 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
     setDimensionUnit(nextUnit);
   };
 
+  const handleSwapDimensions = () => {
+    const h = dimensionHeight;
+    const w = dimensionWidth;
+    setDimensionHeight(w);
+    setDimensionWidth(h);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -228,7 +235,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
         {labelAsProject && (
           <div className="create-form-dimension-row" style={{ marginBottom: 16 }}>
             <label className="input-label" style={{ display: 'block', marginBottom: 8 }}>Dimension (optional)</label>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div>
                 <label className="text-muted" style={{ fontSize: '0.85rem', marginRight: 6 }}>Height</label>
                 <input
@@ -240,6 +247,16 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
                   style={{ width: 100 }}
                 />
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleSwapDimensions}
+                title="Swap height and width"
+                aria-label="Swap height and width"
+                style={{ padding: '6px 10px', marginBottom: 2 }}
+              >
+                ⇄
+              </button>
               <div>
                 <label className="text-muted" style={{ fontSize: '0.85rem', marginRight: 6 }}>Width</label>
                 <input

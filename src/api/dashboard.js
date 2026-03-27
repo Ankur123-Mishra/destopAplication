@@ -322,6 +322,7 @@ function dataURLtoBlob(dataURL) {
  * Body: name (string), schoolId (string), classId (string), frontImage (file), backImage (file), elements (JSON string)
  * Response: API response (e.g. { message?, templateId?, ... })
  */
+
 export async function uploadTemplate({
   name,
   schoolId,
@@ -370,6 +371,7 @@ export async function uploadTemplate({
  * Response: { message?, photoUrl? }
  * In Electron, File may not serialize correctly in FormData — we read to Blob and append with filename.
  */
+
 export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {
   console.log("Student Photo Uploading Single File");
   const form = new FormData();
