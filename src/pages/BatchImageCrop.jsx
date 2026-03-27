@@ -99,6 +99,13 @@ export default function BatchImageCrop() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [croppedImages, setCroppedImages] = useState([]);
   const imgRef = useRef(null);
+  const outputFolderPromiseRef = useRef(null);
+  const saveBufferRef = useRef(new Map());
+  const saveDrainTimeoutRef = useRef(null);
+  const activeSavesRef = useRef(0);
+  const saveCompletionResolversRef = useRef([]);
+  const preloadedImageUrlsRef = useRef(new Set());
+  const [pendingSaveCount, setPendingSaveCount] = useState(0);
 
   React.useEffect(() => {
     if (window.electron && window.electron.onCropProgress) {
@@ -157,15 +164,26 @@ export default function BatchImageCrop() {
 
   const ensureOutputFolderReady = async () => {
     if (outputFolder) return outputFolder;
+    if (outputFolderPromiseRef.current) {
+      return outputFolderPromiseRef.current;
+    }
     if (!(window.electron && window.electron.createCropOutputFolder)) {
       throw new Error('This tool only works inside the desktop app window.');
     }
-    const result = await window.electron.createCropOutputFolder(sourceFolder);
-    if (!result.success || !result.folderPath) {
-      throw new Error(result.error || 'Failed to create output folder');
+    outputFolderPromiseRef.current = (async () => {
+      const result = await window.electron.createCropOutputFolder(sourceFolder);
+      if (!result.success || !result.folderPath) {
+        throw new Error(result.error || 'Failed to create output folder');
+      }
+      setOutputFolder(result.folderPath);
+      return result.folderPath;
+    })();
+    try {
+      return await outputFolderPromiseRef.current;
+    } catch (error) {
+      outputFolderPromiseRef.current = null;
+      throw error;
     }
-    setOutputFolder(result.folderPath);
-    return result.folderPath;
   };
 
   const saveCroppedImageAtIndex = async (imageIndex, cropData) => {
@@ -186,28 +204,130 @@ export default function BatchImageCrop() {
     }
   };
 
+  const saveCroppedImageBatch = async (batchItems) => {
+    if (!batchItems || batchItems.length === 0) return;
+    const outputPath = await ensureOutputFolderReady();
+    const payloadImages = [];
+    for (const item of batchItems) {
+      const imagePath = images[item.imageIndex];
+      const cropData = item.cropData;
+      if (!imagePath || !cropData || cropData.width === 0 || cropData.height === 0) {
+        continue;
+      }
+      payloadImages.push({ imagePath, crop: cropData });
+    }
+    if (payloadImages.length === 0) return;
+
+    const result = await window.electron.cropImagesIndividually({
+      images: payloadImages,
+      outputFolder: outputPath,
+      shape: selectedFrame?.shape || 'rectangle',
+      svgPath: selectedFrame?.svgPath || null
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || 'Failed to save cropped images.');
+    }
+  };
+
+  const resolveSaveWaitersIfIdle = () => {
+    if (activeSavesRef.current !== 0 || saveBufferRef.current.size !== 0) return;
+    const waiters = saveCompletionResolversRef.current;
+    saveCompletionResolversRef.current = [];
+    waiters.forEach((resolve) => resolve());
+  };
+
+  const waitForAllSaves = () => new Promise((resolve) => {
+    if (activeSavesRef.current === 0 && saveBufferRef.current.size === 0) {
+      resolve();
+      return;
+    }
+    saveCompletionResolversRef.current.push(resolve);
+  });
+
+  const runSaveDrain = () => {
+    saveDrainTimeoutRef.current = null;
+    const maxParallelSaves = selectedFrame?.shape === 'rectangle' ? 4 : 3;
+    const batchSize = selectedFrame?.shape === 'rectangle' ? 3 : 2;
+
+    while (activeSavesRef.current < maxParallelSaves && saveBufferRef.current.size > 0) {
+      const batchItems = [];
+      const pendingEntries = Array.from(saveBufferRef.current.entries()).slice(0, batchSize);
+      if (pendingEntries.length === 0) break;
+      pendingEntries.forEach(([imageIndex, cropData]) => {
+        saveBufferRef.current.delete(imageIndex);
+        batchItems.push({ imageIndex, cropData });
+      });
+
+      activeSavesRef.current += 1;
+      setPendingSaveCount((count) => count + 1);
+      saveCroppedImageBatch(batchItems)
+        .catch((error) => {
+          console.error('Failed to save cropped image batch:', error);
+        })
+        .finally(() => {
+          activeSavesRef.current = Math.max(0, activeSavesRef.current - 1);
+          setPendingSaveCount((count) => Math.max(0, count - 1));
+          if (saveBufferRef.current.size > 0 && !saveDrainTimeoutRef.current) {
+            saveDrainTimeoutRef.current = window.setTimeout(runSaveDrain, 10);
+          }
+          resolveSaveWaitersIfIdle();
+        });
+    }
+
+    if (saveBufferRef.current.size > 0 && !saveDrainTimeoutRef.current) {
+      saveDrainTimeoutRef.current = window.setTimeout(runSaveDrain, 10);
+    }
+    resolveSaveWaitersIfIdle();
+  };
+
+  const scheduleImageSave = (imageIndex, cropData) => {
+    saveBufferRef.current.set(imageIndex, cropData);
+    if (saveDrainTimeoutRef.current) return;
+    const launchDelayMs = 0;
+    saveDrainTimeoutRef.current = window.setTimeout(runSaveDrain, launchDelayMs);
+  };
+
+  const preloadImageAtIndex = React.useCallback((index) => {
+    const imagePath = images[index];
+    if (!imagePath) return;
+    const imageUrl = `file://${imagePath}`;
+    if (preloadedImageUrlsRef.current.has(imageUrl)) return;
+    const img = new Image();
+    preloadedImageUrlsRef.current.add(imageUrl);
+    img.src = imageUrl;
+  }, [images]);
+
+  React.useEffect(() => {
+    if (step !== STEPS.DEFINE_CROP || images.length === 0) return;
+    preloadImageAtIndex(currentImageIndex + 1);
+  }, [step, currentImageIndex, images.length, preloadImageAtIndex]);
+
+  React.useEffect(() => {
+    if (step !== STEPS.DEFINE_CROP || !sourceFolder || outputFolder) return;
+    ensureOutputFolderReady().catch((error) => {
+      console.error('Failed to pre-create output folder:', error);
+    });
+  }, [step, sourceFolder, outputFolder]);
+
   const handleNextImage = async () => {
     if (!completedCrop || completedCrop.width === 0 || completedCrop.height === 0) {
       alert('Please define a crop area for this image first.');
       return;
     }
 
-    setProcessing(true);
-
     const updatedCroppedImages = [...croppedImages];
+    const cropSnapshot = {
+      unit: '%',
+      width: completedCrop.width,
+      height: completedCrop.height,
+      x: completedCrop.x,
+      y: completedCrop.y
+    };
     updatedCroppedImages[currentImageIndex] = {
       imagePath: images[currentImageIndex],
-      crop: completedCrop
+      crop: cropSnapshot
     };
     setCroppedImages(updatedCroppedImages);
-
-    try {
-      await saveCroppedImageAtIndex(currentImageIndex, completedCrop);
-    } catch (err) {
-      alert(err?.message || 'Failed to save cropped image.');
-      setProcessing(false);
-      return;
-    }
 
     if (currentImageIndex < images.length - 1) {
       const nextIndex = currentImageIndex + 1;
@@ -223,18 +343,19 @@ export default function BatchImageCrop() {
       } else {
         const newCrop = {
           unit: '%',
-          width: completedCrop.width,
-          height: completedCrop.height,
-          x: completedCrop.x,
-          y: completedCrop.y
+          width: cropSnapshot.width,
+          height: cropSnapshot.height,
+          x: cropSnapshot.x,
+          y: cropSnapshot.y
         };
         setCrop(newCrop);
         setCompletedCrop(newCrop);
       }
+      scheduleImageSave(currentImageIndex, cropSnapshot);
     } else {
+      scheduleImageSave(currentImageIndex, cropSnapshot);
       alert('All images have been cropped and saved. Click "Save & Finish" to complete.');
     }
-    setProcessing(false);
   };
 
   const handlePreviousImage = () => {
@@ -286,13 +407,26 @@ export default function BatchImageCrop() {
     setProcessing(true);
 
     const updatedCroppedImages = [...croppedImages];
+    const cropSnapshot = {
+      unit: '%',
+      width: completedCrop.width,
+      height: completedCrop.height,
+      x: completedCrop.x,
+      y: completedCrop.y
+    };
     updatedCroppedImages[currentImageIndex] = {
       imagePath: images[currentImageIndex],
-      crop: completedCrop
+      crop: cropSnapshot
     };
     setCroppedImages(updatedCroppedImages);
     try {
-      await saveCroppedImageAtIndex(currentImageIndex, completedCrop);
+      if (saveDrainTimeoutRef.current) {
+        window.clearTimeout(saveDrainTimeoutRef.current);
+        saveDrainTimeoutRef.current = null;
+      }
+      scheduleImageSave(currentImageIndex, cropSnapshot);
+      runSaveDrain();
+      await waitForAllSaves();
       const totalSaved = updatedCroppedImages.filter(img => img).length;
       setProcessedCount(totalSaved);
       setProgress(100);
@@ -375,6 +509,16 @@ export default function BatchImageCrop() {
     setAspectRatioLocked(false);
     setCurrentImageIndex(0);
     setCroppedImages([]);
+    setPendingSaveCount(0);
+    outputFolderPromiseRef.current = null;
+    saveBufferRef.current.clear();
+    if (saveDrainTimeoutRef.current) {
+      window.clearTimeout(saveDrainTimeoutRef.current);
+      saveDrainTimeoutRef.current = null;
+    }
+    activeSavesRef.current = 0;
+    saveCompletionResolversRef.current = [];
+    preloadedImageUrlsRef.current = new Set();
   };
 
   const handleBackToFrameSelection = () => {
@@ -382,6 +526,14 @@ export default function BatchImageCrop() {
     setSelectedFrame(null);
     setCurrentImageIndex(0);
     setCroppedImages([]);
+    saveBufferRef.current.clear();
+    if (saveDrainTimeoutRef.current) {
+      window.clearTimeout(saveDrainTimeoutRef.current);
+      saveDrainTimeoutRef.current = null;
+    }
+    activeSavesRef.current = 0;
+    saveCompletionResolversRef.current = [];
+    preloadedImageUrlsRef.current = new Set();
   };
 
   const handleOpenOutputFolder = async () => {
@@ -555,6 +707,11 @@ export default function BatchImageCrop() {
                 <p className="text-muted" style={{ margin: 0, fontSize: '0.85rem' }}>
                   {croppedImages.filter(img => img).length} image{croppedImages.filter(img => img).length !== 1 ? 's' : ''} cropped so far
                 </p>
+                {pendingSaveCount > 0 && (
+                  <p className="text-muted" style={{ margin: 0, fontSize: '0.8rem' }}>
+                    Saving in background ({pendingSaveCount})
+                  </p>
+                )}
               </div>
               <div style={{ fontSize: '2rem' }}>{selectedFrame.icon}</div>
             </div>
@@ -625,6 +782,8 @@ export default function BatchImageCrop() {
                     ref={imgRef}
                     src={previewImage}
                     alt="Preview"
+                    fetchPriority="high"
+                    loading="eager"
                     style={{ width: 'auto', maxWidth: '95vw', maxHeight: '74vh', display: 'block', margin: '0 auto' }}
                     onLoad={() => {
                       if (imgRef.current) {
@@ -668,16 +827,9 @@ export default function BatchImageCrop() {
                     >
                       <defs>
                         <linearGradient id="shape-preview-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" style={{ stopColor: '#3498db', stopOpacity: 0.6 }} />
-                          <stop offset="100%" style={{ stopColor: '#2ecc71', stopOpacity: 0.6 }} />
+                          <stop offset="0%" style={{ stopColor: '#3498db', stopOpacity: 0.3 }} />
+                          <stop offset="100%" style={{ stopColor: '#2ecc71', stopOpacity: 0.3 }} />
                         </linearGradient>
-                        <filter id="glow">
-                          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                          <feMerge>
-                            <feMergeNode in="coloredBlur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                          </feMerge>
-                        </filter>
                       </defs>
                       {selectedFrame.svgPath && (
                         <>
@@ -685,28 +837,8 @@ export default function BatchImageCrop() {
                             d={selectedFrame.svgPath}
                             fill="url(#shape-preview-grad)"
                             stroke="#3498db"
-                            strokeWidth="3"
-                            strokeDasharray="8,4"
-                            filter="url(#glow)"
-                            style={{ 
-                              animation: 'dash 20s linear infinite, pulse-glow 3s ease-in-out infinite'
-                            }}
+                            strokeWidth="2"
                           />
-                          <text
-                            x="50"
-                            y="50"
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            fill="#fff"
-                            fontSize="16"
-                            fontWeight="bold"
-                            style={{ 
-                              textShadow: '0 2px 8px rgba(0,0,0,0.9)',
-                              pointerEvents: 'none'
-                            }}
-                          >
-                            {selectedFrame.icon}
-                          </text>
                         </>
                       )}
                     </svg>
@@ -892,21 +1024,6 @@ export default function BatchImageCrop() {
         .custom-shape-crop .ReactCrop__drag-handle {
           background: rgba(52, 152, 219, 0.8);
           border: 2px solid #fff;
-        }
-        
-        @keyframes dash {
-          to {
-            stroke-dashoffset: -100;
-          }
-        }
-        
-        @keyframes pulse-glow {
-          0%, 100% {
-            filter: drop-shadow(0 0 8px rgba(52, 152, 219, 0.6));
-          }
-          50% {
-            filter: drop-shadow(0 0 16px rgba(52, 152, 219, 0.9));
-          }
         }
         
         .crop-frame-card {

@@ -2,6 +2,19 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const { createCanvas, loadImage } = require('canvas');
+const placeholderPngBuffer = (() => {
+  const canvas = createCanvas(4, 4);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 4, 4);
+  return canvas.toBuffer('image/png', { compressionLevel: 0 });
+})();
+const placeholderJpegBuffer = (() => {
+  const canvas = createCanvas(4, 4);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, 4, 4);
+  return canvas.toBuffer('image/jpeg', { quality: 0.8, progressive: false, chromaSubsampling: false });
+})();
 
 function getImageOutputMeta(shape, inputExt) {
   const lowerExt = String(inputExt || '').toLowerCase();
@@ -13,40 +26,21 @@ function getImageOutputMeta(shape, inputExt) {
   return { ext: lowerExt || '.jpg', mime: 'image/jpeg' };
 }
 
-function canvasBufferWithBudget(canvas, mime, sourceSizeBytes) {
-  // Keep cropped files lightweight (mostly KB range) while preserving readability.
-  const sourceBudget = Number.isFinite(sourceSizeBytes) ? Math.max(45 * 1024, Math.floor(sourceSizeBytes * 0.9)) : 220 * 1024;
-  const targetBudget = Math.min(300 * 1024, sourceBudget);
-
+function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
-    // PNG with transparency can get very large; if needed, progressively downscale.
-    let workCanvas = canvas;
-    let buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
-    while (
-      buffer.length > targetBudget &&
-      workCanvas.width > 420 &&
-      workCanvas.height > 420
-    ) {
-      const nextWidth = Math.max(420, Math.floor(workCanvas.width * 0.85));
-      const nextHeight = Math.max(420, Math.floor(workCanvas.height * 0.85));
-      const scaledCanvas = createCanvas(nextWidth, nextHeight);
-      const scaledCtx = scaledCanvas.getContext('2d');
-      scaledCtx.imageSmoothingEnabled = true;
-      scaledCtx.imageSmoothingQuality = 'high';
-      scaledCtx.drawImage(workCanvas, 0, 0, workCanvas.width, workCanvas.height, 0, 0, nextWidth, nextHeight);
-      workCanvas = scaledCanvas;
-      buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
-    }
-    return buffer;
+    // Favor speed over compression size for instant next-image UX.
+    return canvas.toBuffer('image/png', { compressionLevel: 0 });
   }
 
-  let quality = 0.78;
-  let buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
-  while (buffer.length > targetBudget && quality > 0.42) {
-    quality -= 0.08;
-    buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
-  }
-  return buffer;
+  return canvas.toBuffer('image/jpeg', {
+    quality: 0.95,
+    progressive: false,
+    chromaSubsampling: false
+  });
+}
+
+function getPlaceholderBufferForMime(mime) {
+  return mime === 'image/png' ? placeholderPngBuffer : placeholderJpegBuffer;
 }
 
 /** Dev server only when explicitly requested — otherwise load `dist/` (Windows, macOS, Linux). */
@@ -183,9 +177,11 @@ ipcMain.handle('crop-images', async (event, data) => {
       const imagePath = images[i];
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
-      const sourceStat = await fs.stat(imagePath).catch(() => null);
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+
+      // Write a valid tiny file immediately so output appears instantly in folder.
+      await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
       
       const image = await loadImage(imagePath);
       
@@ -207,7 +203,7 @@ ipcMain.handle('crop-images', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
+      const buffer = canvasBufferFast(canvas, outputMime);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -247,9 +243,11 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
-      const sourceStat = await fs.stat(imagePath).catch(() => null);
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+
+      // Write a valid tiny file immediately so output appears instantly in folder.
+      await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
       
       const image = await loadImage(imagePath);
       
@@ -271,18 +269,10 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
+      const buffer = canvasBufferFast(canvas, outputMime);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
-      const progress = Math.round((processedCount / images.length) * 100);
-      
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('crop-progress', {
-          progress,
-          processedCount
-        });
-      }
     }
     
     return {
