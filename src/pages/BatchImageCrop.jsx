@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useId } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -106,6 +106,7 @@ export default function BatchImageCrop() {
   const saveCompletionResolversRef = useRef([]);
   const preloadedImageUrlsRef = useRef(new Set());
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
+  const shapeDimMaskId = `sdm-${useId().replace(/:/g, '')}`;
 
   React.useEffect(() => {
     if (window.electron && window.electron.onCropProgress) {
@@ -722,25 +723,16 @@ export default function BatchImageCrop() {
             
             {selectedFrame.shape !== 'rectangle' && (
               <div style={{
-                background: 'rgba(52, 152, 219, 0.15)',
-                border: '1px solid rgba(52, 152, 219, 0.4)',
+                background: 'rgba(52, 152, 219, 0.12)',
+                border: '1px solid rgba(52, 152, 219, 0.35)',
                 borderRadius: 8,
                 padding: 12,
                 marginBottom: 24,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10
+                fontSize: '0.85rem',
+                color: 'var(--text-muted)'
               }}>
-                <span style={{ fontSize: '1.5rem' }}>{selectedFrame.icon}</span>
-                <div style={{ flex: 1 }}>
-                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: 'var(--accent)' }}>
-                    Shape Preview Active
-                  </p>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    The {selectedFrame.name.toLowerCase()} shape outline is shown on the crop area. 
-                    This is how your images will be cropped.
-                  </p>
-                </div>
+                <strong style={{ color: 'var(--accent)' }}>{selectedFrame.icon} {selectedFrame.name}</strong>
+                {' — '}Output is cropped to this shape inside the box above (transparent PNG where needed).
               </div>
             )}
             
@@ -776,74 +768,91 @@ export default function BatchImageCrop() {
                   aspect={selectedFrame.aspectRatio || (aspectRatioLocked ? (crop.width / crop.height) : undefined)}
                   locked={false}
                   style={{ position: 'relative' }}
-                  className={selectedFrame.shape !== 'rectangle' ? 'custom-shape-crop' : ''}
+                  className={selectedFrame.shape !== 'rectangle' && selectedFrame.svgPath ? 'shape-frame-crop' : ''}
                 >
-                  <img
-                    ref={imgRef}
-                    src={previewImage}
-                    alt="Preview"
-                    fetchPriority="high"
-                    loading="eager"
-                    style={{ width: 'auto', maxWidth: '95vw', maxHeight: '74vh', display: 'block', margin: '0 auto' }}
-                    onLoad={() => {
-                      if (imgRef.current) {
-                        imgRef.current.dataset.loaded = 'true';
-                      }
-                    }}
-                    onError={(e) => {
-                      console.error('Image load error');
-                      e.target.src = images[0];
-                    }}
-                  />
-                </ReactCrop>
-                
-                {selectedFrame.shape !== 'rectangle' && imgRef.current && imgRef.current.dataset.loaded && crop && crop.width > 0 && (
                   <div
-                    className="shape-overlay"
                     style={{
-                      position: 'absolute',
-                      left: `${crop.x}%`,
-                      top: `${crop.y}%`,
-                      width: `${crop.width}%`,
-                      height: `${crop.height}%`,
-                      pointerEvents: 'none',
-                      zIndex: 1000,
-                      transform: 'translate(0, 0)'
+                      position: 'relative',
+                      display: 'inline-block',
+                      lineHeight: 0
                     }}
                   >
-                    <svg
-                      width="100%"
-                      height="100%"
-                      viewBox="0 0 100 100"
-                      preserveAspectRatio="xMidYMid meet"
-                      style={{ 
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        overflow: 'visible'
+                    <img
+                      ref={imgRef}
+                      src={previewImage}
+                      alt="Preview"
+                      fetchPriority="high"
+                      loading="eager"
+                      style={{ width: 'auto', maxWidth: '95vw', maxHeight: '74vh', display: 'block', margin: '0 auto' }}
+                      onError={(e) => {
+                        console.error('Image load error');
+                        e.target.src = images[0];
                       }}
-                    >
-                      <defs>
-                        <linearGradient id="shape-preview-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" style={{ stopColor: '#3498db', stopOpacity: 0.3 }} />
-                          <stop offset="100%" style={{ stopColor: '#2ecc71', stopOpacity: 0.3 }} />
-                        </linearGradient>
-                      </defs>
-                      {selectedFrame.svgPath && (
-                        <>
+                    />
+                    {selectedFrame.svgPath && crop && crop.width > 0 && crop.height > 0 && (
+                      <>
+                        {/* Shape-only dim: dark overlay outside the selected shape (no rectangular highlight) */}
+                        <svg
+                          aria-hidden
+                          className="shape-dim-full"
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            width: '100%',
+                            height: '100%',
+                            pointerEvents: 'none',
+                            zIndex: 1
+                          }}
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                        >
+                          <defs>
+                            <mask id={shapeDimMaskId}>
+                              <rect width="100" height="100" fill="white" />
+                              <path
+                                d={selectedFrame.svgPath}
+                                fill="black"
+                                transform={`translate(${crop.x}, ${crop.y}) scale(${crop.width / 100}, ${crop.height / 100})`}
+                              />
+                            </mask>
+                          </defs>
+                          <rect width="100" height="100" fill="rgba(0,0,0,0.6)" mask={`url(#${shapeDimMaskId})`} />
+                        </svg>
+                        <svg
+                          aria-hidden
+                          className="shape-frame-overlay"
+                          width="100%"
+                          height="100%"
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                          style={{
+                            position: 'absolute',
+                            left: `${crop.x}%`,
+                            top: `${crop.y}%`,
+                            width: `${crop.width}%`,
+                            height: `${crop.height}%`,
+                            pointerEvents: 'none',
+                            zIndex: 2
+                          }}
+                        >
+                          <defs>
+                            <linearGradient id={`shape-preview-grad-${selectedFrame.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" style={{ stopColor: '#3498db', stopOpacity: 0.35 }} />
+                              <stop offset="100%" style={{ stopColor: '#2ecc71', stopOpacity: 0.35 }} />
+                            </linearGradient>
+                          </defs>
                           <path
                             d={selectedFrame.svgPath}
-                            fill="url(#shape-preview-grad)"
+                            fill={`url(#shape-preview-grad-${selectedFrame.id})`}
                             stroke="#3498db"
                             strokeWidth="2"
                           />
-                        </>
-                      )}
-                    </svg>
+                        </svg>
+                      </>
+                    )}
                   </div>
-                )}
+                </ReactCrop>
               </div>
             </div>
 
@@ -1011,21 +1020,55 @@ export default function BatchImageCrop() {
         .ReactCrop {
           max-width: 100%;
         }
-        .ReactCrop__crop-selection {
+        /* Library mask is always rectangular — hide it; rectangle uses box-shadow dim, shapes use custom SVG dim */
+        .ReactCrop__crop-mask {
+          display: none !important;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__crop-selection {
           border: 3px solid #3498db;
           box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
         }
-        
-        .custom-shape-crop .ReactCrop__crop-selection {
-          border: 2px dashed rgba(52, 152, 219, 0.5);
-          background: transparent !important;
+        /* Non-rectangle: no rectangular border on selection; shape is drawn by SVG. Selection must stay above dim layers for drag/resize */
+        .ReactCrop.shape-frame-crop .ReactCrop__crop-selection {
+          border: none !important;
+          box-shadow: none !important;
+          animation: none !important;
+          background-image: none !important;
+          outline: none !important;
+          z-index: 20 !important;
         }
-        
-        .custom-shape-crop .ReactCrop__drag-handle {
-          background: rgba(52, 152, 219, 0.8);
-          border: 2px solid #fff;
+        .ReactCrop.shape-frame-crop .ReactCrop__crop-selection:focus {
+          outline: none !important;
         }
-        
+        /* Visible corner handles so width/height can be changed (opacity:0 broke pointer hit on some browsers) */
+        .ReactCrop.shape-frame-crop .ReactCrop__drag-handle {
+          opacity: 1 !important;
+          z-index: 21 !important;
+          width: 14px !important;
+          height: 14px !important;
+          background: #fff !important;
+          border: 2px solid #3498db !important;
+          box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) !important;
+        }
+        .ReactCrop.shape-frame-crop .ReactCrop__drag-handle:focus {
+          background: #fff !important;
+          outline: 2px solid rgba(52, 152, 219, 0.8) !important;
+        }
+        .ReactCrop.shape-frame-crop .ReactCrop__drag-bar {
+          display: none !important;
+        }
+        .ReactCrop.shape-frame-crop .ReactCrop__rule-of-thirds-hz,
+        .ReactCrop.shape-frame-crop .ReactCrop__rule-of-thirds-vt {
+          display: none !important;
+        }
+        .shape-frame-overlay {
+          pointer-events: none;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__drag-handle {
+          background: #fff !important;
+          border: 1px solid rgba(255, 255, 255, 0.9) !important;
+          box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+        }
         .crop-frame-card {
           text-align: center;
           cursor: pointer;
