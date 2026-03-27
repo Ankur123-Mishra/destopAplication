@@ -112,11 +112,6 @@ export default function ParentCollection() {
 
   const publicOriginConfigured = isPublicParentOriginConfigured();
 
-  const selectedSchool = useMemo(
-    () => schools.find((item) => item._id === schoolId) || null,
-    [schools, schoolId]
-  );
-
   const flatSections = useMemo(() => {
     const classes = schoolDetails?.data?.classes || [];
     const rows = [];
@@ -151,8 +146,7 @@ export default function ParentCollection() {
   const schoolFormReady =
     linkMode === 'school' &&
     Boolean(schoolId) &&
-    Boolean(classSectionId) &&
-    Boolean(selectedSchool?.studentCollectionFormEnabled);
+    Boolean(classSectionId);
 
   const standaloneReady =
     linkMode === 'standalone' &&
@@ -485,7 +479,6 @@ export default function ParentCollection() {
                   {schools.map((school) => (
                     <option key={school._id} value={school._id}>
                       {school.schoolName}
-                      {!school.studentCollectionFormEnabled ? ' (fixed-class disabled)' : ''}
                     </option>
                   ))}
                 </select>
@@ -514,13 +507,6 @@ export default function ParentCollection() {
                 </select>
               </label>
             </div>
-
-            {selectedSchool && !selectedSchool.studentCollectionFormEnabled && (
-              <div className="parent-collection-warning" style={{ marginTop: 16 }}>
-                This school does not allow fixed-class links. Use standalone mode or ask admin to enable the school
-                option.
-              </div>
-            )}
           </div>
         )}
 
