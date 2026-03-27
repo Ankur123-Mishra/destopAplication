@@ -393,17 +393,19 @@ export default function ClassIdCardsWizard() {
     e.target.value = '';
   };
 
+  
   const handleUseUploadedTemplate = async (payload) => {
     const toSave = {
       name: uploadedTemplate?.name || 'Uploaded Template',
       frontImage: uploadedTemplate?.frontImage,
       backImage: uploadedTemplate?.backImage,
       schoolId: effectiveSchoolId,     
-      classId: effectiveClassId,
+      // classId: effectiveClassId,
       elements: payload.elements,
     };
     console.log('toSave data', toSave);
     const savedId = saveUploadedTemplate(toSave);
+
 
     try {
       await uploadTemplate({
@@ -411,7 +413,7 @@ export default function ClassIdCardsWizard() {
         schoolId: effectiveSchoolId,
         frontImage: toSave.frontImage,
         backImage: toSave.backImage,
-        classId: effectiveClassId,
+        // classId: effectiveClassId,
         elements: toSave.elements,
       });
     } catch (err) {
@@ -425,6 +427,9 @@ export default function ClassIdCardsWizard() {
     setStep(STEPS.REVIEW_SAVE);
     navigate(`/class-id-cards/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
   };
+
+
+
 
   const handleCancelUploadedTemplate = () => {
     setUploadedTemplate(null);

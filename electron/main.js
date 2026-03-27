@@ -60,6 +60,7 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -67,6 +68,11 @@ function createWindow() {
       // In dev, allow cross-origin requests to API (avoids CORS block when origin is localhost:5173)
       ...(isDev && { webSecurity: false }),
     },
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize();
+    mainWindow.show();
   });
 
   if (isDev) {
