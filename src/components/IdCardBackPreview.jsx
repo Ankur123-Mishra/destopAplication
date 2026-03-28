@@ -39,6 +39,7 @@ export default function IdCardBackPreview({ schoolName, address, templateId, siz
       </div>
     );
   }
+  
   return (
     <div
       className={`idcard idcard-back-preview idcard-back-preview--${variant} ${sizeClass}`}

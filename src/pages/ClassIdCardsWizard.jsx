@@ -1,16 +1,24 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import Header from '../components/Header';
 import IdCardRenderer from '../components/IdCardRenderer';
 import IdCardBackPreview from '../components/IdCardBackPreview';
-import IdCardCanvasEditor from '../components/IdCardCanvasEditor';
+import IdCardCanvasEditor, { mapTemplateElementsToNameDobAddress } from '../components/IdCardCanvasEditor';
 import { ID_CARD_TEMPLATES } from '../data/idCardTemplates';
 import { getFabricTemplates } from '../data/fabricTemplatesStorage';
 import { getUploadedTemplates, saveUploadedTemplate, getUploadedTemplateById } from '../data/uploadedTemplatesStorage';
 import { getTemplateById, getApiTemplateId } from '../data/idCardTemplates';
 import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
-import { getAssignedSchools, getClassesBySchool, getStudentsBySchoolAndClass, uploadStudentPhoto, bulkSaveTemplates, uploadTemplate } from '../api/dashboard';
+import {
+  getAssignedSchools,
+  getClassesBySchool,
+  getStudentsBySchool,
+  getStudentsBySchoolAndClass,
+  uploadStudentPhoto,
+  bulkSaveTemplates,
+  uploadTemplate,
+} from '../api/dashboard';
 import { API_BASE_URL } from '../api/config';
 import { compressImageForUpload } from '../utils/imageUpload';
 import {
@@ -23,13 +31,12 @@ import '../components/IdCardCanvasEditor.css';
 const STEPS = { SELECT_SCHOOL: 1, SELECT_CLASS: 2, STUDENTS_IMAGES: 3, SELECT_TEMPLATE: 4, REVIEW_SAVE: 5 };
 
 /** Default elements for uploaded template – with dataField so IdCardRenderer can fill from data */
-function uploadedTemplateDefaultElements(name = '', studentId = '', className = '', schoolName = '') {
+function uploadedTemplateDefaultElements(name = '', dateOfBirth = '', address = '') {
   return [
     { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
     { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 14, content: name, fontWeight: '700' },
-    { type: 'text', id: 'studentId', dataField: 'studentId', x: 45, y: 36, fontSize: 11, content: studentId },
-    { type: 'text', id: 'class', dataField: 'className', x: 45, y: 46, fontSize: 11, content: className },
-    { type: 'text', id: 'school', dataField: 'schoolName', x: 45, y: 56, fontSize: 10, content: schoolName },
+    { type: 'text', id: 'dob', dataField: 'dateOfBirth', x: 45, y: 36, fontSize: 11, content: dateOfBirth },
+    { type: 'text', id: 'address', dataField: 'address', x: 45, y: 48, fontSize: 10, content: address },
   ];
 }
 
@@ -41,7 +48,29 @@ function fullPhotoUrl(url) {
   return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
 }
 
+/** For template upload API (expects data URLs); fetch http(s) / blob URLs into data URL */
+async function imageRefToDataUrlForUpload(ref) {
+  if (!ref || typeof ref !== 'string') return ref;
+  if (ref.startsWith('data:')) return ref;
+  try {
+    const res = await fetch(ref);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error('Failed to read image'));
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return ref;
+  }
+}
+
 function mapApiStudent(s) {
+  const popClass = s.classId && typeof s.classId === 'object' ? s.classId : null;
+  const classLabel = popClass
+    ? `${popClass.className || ''}${popClass.section ? ` – ${popClass.section}` : ''}`.trim()
+    : '';
   return {
     id: s._id,
     name: s.studentName,
@@ -53,6 +82,7 @@ function mapApiStudent(s) {
     phone: s.phone || s.mobile || s.contactNo || '',
     email: s.email || '',
     address: s?.address || '',
+    className: s.className || classLabel || '',
     status: s.status,
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
@@ -112,6 +142,9 @@ export default function ClassIdCardsWizard() {
   const [selectedStudentIds, setSelectedStudentIds] = useState([]); // IDs of students to include in ID cards
   const [uploadedTemplate, setUploadedTemplate] = useState(null); // { frontImage, backImage, elements, name } when user uploads PNG templates
   const [arrangingUploaded, setArrangingUploaded] = useState(false); // true when user clicked "Arrange elements" for uploaded template
+  /** Template object from GET /api/photographer/students (same response as students list) */
+  const [apiClassTemplate, setApiClassTemplate] = useState(null);
+  const [editorOpenedFromApiClassTemplate, setEditorOpenedFromApiClassTemplate] = useState(false);
   const frontFileInputRef = useRef(null);
   const backFileInputRef = useRef(null);
 
@@ -176,9 +209,11 @@ export default function ClassIdCardsWizard() {
   const hasUrlIds = schoolIdFromUrl && classIdFromUrl;
   const hasStateData = fromUploadedPhotos && stateSchool && stateClass && stateStudents?.length;
 
+  
   useEffect(() => {
     if (!hasUrlIds) return;
     if (hasStateData) {
+      setApiClassTemplate(null);
       setApiSchool({
         id: stateSchool._id,
         name: stateSchool.schoolName,
@@ -193,37 +228,109 @@ export default function ClassIdCardsWizard() {
     }
     let cancelled = false;
     setApiDataLoaded(false);
-    Promise.all([
-      getAssignedSchools(),
-      getClassesBySchool(schoolIdFromUrl),
-      getStudentsBySchoolAndClass(schoolIdFromUrl, classIdFromUrl),
-    ])
-      .then(([schoolsRes, classesRes, studentsRes]) => {
-        if (cancelled) return;
-        const schoolsList = schoolsRes.schools ?? [];
-        const classesList = classesRes.classes ?? [];
-        const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
-        console.log('studentsList', studentsList);
-        const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
-        const cls = classesList.find((c) => c._id === classIdFromUrl);
-        setApiSchool(
-          school
-            ? {
-                id: school._id,
-                name: school.schoolName,
-                address: school.address,
-                schoolCode: school.schoolCode || '',
-                allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+    setApiClassTemplate(null);
+
+    const applySchoolStudentsPayload = (schoolsList, studentsRes) => {
+      const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
+      const tpl = studentsRes.template;
+      setApiClassTemplate(
+        tpl && typeof tpl === 'object' && tpl.frontImage && Array.isArray(tpl.elements) && tpl.elements.length
+          ? tpl
+          : null,
+      );
+      const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
+      setApiSchool(
+        school
+          ? {
+              id: school._id,
+              name: school.schoolName,
+              address: school.address,
+              schoolCode: school.schoolCode || '',
+              allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+            }
+          : null,
+      );
+      setApiStudents(studentsList);
+      setApiDataLoaded(true);
+    };
+
+    if (classIdFromUrl === 'all') {
+      const isValidApiTemplate = (t) =>
+        t &&
+        typeof t === 'object' &&
+        t.frontImage &&
+        Array.isArray(t.elements) &&
+        t.elements.length > 0;
+
+      Promise.all([
+        getAssignedSchools(),
+        getStudentsBySchool(schoolIdFromUrl),
+        getClassesBySchool(schoolIdFromUrl).catch(() => ({ classes: [] })),
+      ])
+        .then(async ([schoolsRes, studentsRes, classesRes]) => {
+          if (cancelled) return;
+          const schoolsList = schoolsRes.schools ?? [];
+          const classesList = classesRes.classes ?? [];
+          setApiClass({ id: 'all', name: 'All students' });
+
+          let payload = studentsRes;
+          if (!isValidApiTemplate(studentsRes.template) && classesList.length > 0) {
+            try {
+              const byClass = await getStudentsBySchoolAndClass(
+                schoolIdFromUrl,
+                classesList[0]._id,
+              );
+              if (!cancelled && isValidApiTemplate(byClass.template)) {
+                payload = { ...studentsRes, template: byClass.template };
               }
-            : null,
-        );
-        setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}${cls.section ? ` – ${cls.section}` : ''}` } : null);
-        setApiStudents(studentsList);
-        setApiDataLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setApiDataLoaded(true);
-      });
+            } catch {
+              // use school list without template
+            }
+          }
+          if (cancelled) return;
+          applySchoolStudentsPayload(schoolsList, payload);
+        })
+        .catch(() => {
+          if (!cancelled) setApiDataLoaded(true);
+        });
+    } else {
+      Promise.all([
+        getAssignedSchools(),
+        getClassesBySchool(schoolIdFromUrl),
+        getStudentsBySchoolAndClass(schoolIdFromUrl, classIdFromUrl),
+      ])
+        .then(([schoolsRes, classesRes, studentsRes]) => {
+          if (cancelled) return;
+          const schoolsList = schoolsRes.schools ?? [];
+          const classesList = classesRes.classes ?? [];
+          const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
+          const tpl = studentsRes.template;
+          setApiClassTemplate(
+            tpl && typeof tpl === 'object' && tpl.frontImage && Array.isArray(tpl.elements) && tpl.elements.length
+              ? tpl
+              : null,
+          );
+          const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
+          const cls = classesList.find((c) => c._id === classIdFromUrl);
+          setApiSchool(
+            school
+              ? {
+                  id: school._id,
+                  name: school.schoolName,
+                  address: school.address,
+                  schoolCode: school.schoolCode || '',
+                  allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+                }
+              : null,
+          );
+          setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}${cls.section ? ` – ${cls.section}` : ''}` } : null);
+          setApiStudents(studentsList);
+          setApiDataLoaded(true);
+        })
+        .catch(() => {
+          if (!cancelled) setApiDataLoaded(true);
+        });
+    }
     return () => { cancelled = true; };
   }, [hasUrlIds, hasStateData, schoolIdFromUrl, classIdFromUrl, stateSchool, stateClass, stateStudents]);
 
@@ -241,11 +348,12 @@ export default function ClassIdCardsWizard() {
   }, [classList, effectiveClassId, apiClass, apiDataLoaded, classIdFromUrl]);
 
   const students = useMemo(() => {
-    if (apiDataLoaded && apiStudents.length && (effectiveClassId === classIdFromUrl || effectiveClassId === cls?.id)) return apiStudents;
-    return (cls ? getStudents(cls.id) || [] : []);
+    if (apiDataLoaded && (effectiveClassId === classIdFromUrl || effectiveClassId === cls?.id)) {
+      return apiStudents;
+    }
+    if (cls && cls.id !== 'all') return getStudents(cls.id) || [];
+    return [];
   }, [cls, getStudents, apiStudents, apiDataLoaded, effectiveClassId, classIdFromUrl]);
-
-  console.log("students", students);
 
   // When school/class changes, default selection = all students in that class
   useEffect(() => {
@@ -289,8 +397,10 @@ export default function ClassIdCardsWizard() {
   );
 
   const canProceedFromStudents = useMemo(() => {
-    return selectedStudents.length > 0 && selectedStudents.every((s) => getImageForStudent(s));
-  }, [selectedStudents, studentImages, bulkPreviewEpoch, bulkSchoolId, students]);
+    if (selectedStudents.length === 0) return false;
+    const firstSelected = selectedStudents[0];
+    return Boolean(getImageForStudent(firstSelected));
+  }, [selectedStudents, studentImages, bulkPreviewEpoch, bulkSchoolId]);
 
   const toggleStudentSelection = (studentId) => {
     setSelectedStudentIds((prev) =>
@@ -326,7 +436,7 @@ export default function ClassIdCardsWizard() {
           studentImage: image,
           name: student.name,
           studentId: student.studentId,
-          className: cls.name,
+          className: student.className || cls.name,
           schoolName: school.name,
           address: school.address,
         };
@@ -365,6 +475,25 @@ export default function ClassIdCardsWizard() {
     navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
   };
 
+  /** Open IdCardCanvasEditor with template + elements from getStudentsBySchoolAndClass response */
+  const openClassTemplateEditor = useCallback(() => {
+    const t = apiClassTemplate;
+    if (!t?.frontImage || !Array.isArray(t.elements) || t.elements.length === 0) return;
+    const front = fullPhotoUrl(t.frontImage);
+    const back = t.backImage ? fullPhotoUrl(t.backImage) : front;
+    setUploadedTemplate({
+      frontImage: front,
+      backImage: back,
+      elements: mapTemplateElementsToNameDobAddress(t.elements),
+      name: t.name || t.title || 'Uploaded Template',
+      templateId: t.templateId,
+    });
+    setEditorOpenedFromApiClassTemplate(true);
+    setArrangingUploaded(true);
+    setStep(STEPS.SELECT_TEMPLATE);
+    navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+  }, [apiClassTemplate, effectiveSchoolId, effectiveClassId, navigate]);
+
   const selectTemplate = (tid) => {
     setSelectedTemplateId(tid);
     setUploadedTemplate(null);
@@ -400,40 +529,37 @@ export default function ClassIdCardsWizard() {
     reader.onload = () => {
       const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
       const name = previewStudent?.name ?? 'Student Name';
-      const studentId = previewStudent?.studentId ?? '—';
-      const className = cls?.name ?? 'Class';
-      const schoolName = school?.name ?? 'School Name';
+      const dateOfBirth = previewStudent?.dateOfBirth ?? '';
+      const address = String(previewStudent?.address || school?.address || '').trim();
       setUploadedTemplate((prev) => ({
         ...prev,
         backImage: reader.result,
-        elements: prev?.elements ?? uploadedTemplateDefaultElements(name, studentId, className, schoolName),
+        elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
       }));
     };
     reader.readAsDataURL(file);
     e.target.value = '';
   };
 
-  
   const handleUseUploadedTemplate = async (payload) => {
+    setEditorOpenedFromApiClassTemplate(false);
     const toSave = {
       name: uploadedTemplate?.name || 'Uploaded Template',
       frontImage: uploadedTemplate?.frontImage,
       backImage: uploadedTemplate?.backImage,
-      schoolId: effectiveSchoolId,     
-      // classId: effectiveClassId,
+      schoolId: effectiveSchoolId,
       elements: payload.elements,
     };
-    console.log('toSave data', toSave);
     const savedId = saveUploadedTemplate(toSave);
 
-
     try {
+      const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);
+      const backData = await imageRefToDataUrlForUpload(toSave.backImage);
       await uploadTemplate({
         name: toSave.name,
         schoolId: effectiveSchoolId,
-        frontImage: toSave.frontImage,
-        backImage: toSave.backImage,
-        // classId: effectiveClassId,
+        frontImage: frontData,
+        backImage: backData,
         elements: toSave.elements,
       });
     } catch (err) {
@@ -448,13 +574,16 @@ export default function ClassIdCardsWizard() {
     navigate(`/class-id-cards/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
   };
 
-
-
-
   const handleCancelUploadedTemplate = () => {
+    const backToStudents = editorOpenedFromApiClassTemplate;
+    setEditorOpenedFromApiClassTemplate(false);
     setUploadedTemplate(null);
     setArrangingUploaded(false);
     setSelectedTemplateId(null);
+    if (backToStudents) {
+      setStep(STEPS.STUDENTS_IMAGES);
+      navigate(`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+    }
   };
 
   const backTo = '/uploaded-photos';
@@ -519,7 +648,27 @@ export default function ClassIdCardsWizard() {
           {selectedSchoolForClassStep ? `Classes for ${selectedSchoolForClassStep.schoolName}` : 'Select a class'}
         </p>
         <div className="card" style={{ maxWidth: 720 }}>
-          <h3 style={{ marginBottom: 16 }}>Select class</h3>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap',
+              marginBottom: 16,
+            }}
+          >
+            <h3 style={{ margin: 0 }}>Select class</h3>
+            {schoolIdForClasses && !loadingClasses ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => selectClass(schoolIdForClasses, 'all')}
+              >
+                See all students
+              </button>
+            ) : null}
+          </div>
           {errorClasses && <p className="text-danger" style={{ marginBottom: 16 }}>{errorClasses}</p>}
           {loadingClasses ? (
             <p className="text-muted">Loading classes…</p>
@@ -556,7 +705,33 @@ export default function ClassIdCardsWizard() {
   }
 
   // Step 2: Students & images (ensure we have class selected)
-  if (step === STEPS.STUDENTS_IMAGES && cls) {
+  if (step === STEPS.STUDENTS_IMAGES) {
+    if (hasUrlIds && !hasStateData && !apiDataLoaded) {
+      return (
+        <>
+          <Header
+            title="Students & photos"
+            showBack
+            backTo={effectiveSchoolId ? `/class-id-cards/school/${effectiveSchoolId}` : '/class-id-cards'}
+          />
+          <p className="text-muted">Loading students…</p>
+        </>
+      );
+    }
+    if (!cls) {
+      return (
+        <>
+          <Header title="Class-wise ID Cards" showBack backTo="/class-id-cards" />
+          <p className="text-muted">Invalid step. <button type="button" className="btn btn-secondary" onClick={() => navigate('/class-id-cards')}>Start over</button></p>
+        </>
+      );
+    }
+    const showApiClassTemplateBar =
+      Boolean(
+        apiClassTemplate?.frontImage &&
+          Array.isArray(apiClassTemplate.elements) &&
+          apiClassTemplate.elements.length > 0,
+      );
     return (
       <>
         <Header
@@ -564,8 +739,11 @@ export default function ClassIdCardsWizard() {
           showBack
           backTo={effectiveSchoolId ? `/class-id-cards/school/${effectiveSchoolId}` : '/class-id-cards'}
         />
+        <div
+          className={`class-idcards-students-step-body${showApiClassTemplateBar ? ' class-idcards-students-step-body--with-template-bar' : ''}`}
+        >
         <p className="text-muted" style={{ marginBottom: 16 }}>
-          Select which students to include, then confirm or select a photo for each. Only selected students need a photo.
+          Select which students to include. To continue, the first selected student (top of the list among checked rows) must have a photo; others can be added before save.
         </p>
         <div className="card" style={{ maxWidth: 900 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -581,7 +759,6 @@ export default function ClassIdCardsWizard() {
           </div>
           <div className="class-idcards-students-grid">
             {students.map((student) => {
-              console.log('student data in students images step', student);
               const img = getImageForStudent(student);
               const isSelected = selectedStudentIds.includes(student.id);
               return (
@@ -604,6 +781,9 @@ export default function ClassIdCardsWizard() {
                   <div className="class-idcards-student-info">
                     <span className="class-idcards-student-name">{student.name}</span>
                     <span className="text-muted class-idcards-student-id">{student.studentId}</span>
+                    {student.className ? (
+                      <span className="text-muted" style={{ fontSize: '0.8rem' }}>{student.className}</span>
+                    ) : null}
                   </div>
                   <label className="btn btn-secondary btn-sm" style={{ cursor: uploadingStudentId === student.id ? 'wait' : 'pointer', marginLeft: 'auto' }}>
                     {uploadingStudentId === student.id ? 'Uploading…' : (img ? 'Change photo' : 'Select photo')}
@@ -641,21 +821,90 @@ export default function ClassIdCardsWizard() {
               );
             })}
           </div>
-          <div style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!canProceedFromStudents}
-              onClick={goToTemplate}
-            >
-              Next step – Select template
-            </button>
-            <span className="text-muted" style={{ fontSize: '0.9rem' }}>
-              {selectedStudents.filter((s) => getImageForStudent(s)).length} / {selectedStudents.length} selected students have a photo
-            </span>
+        </div>
+        </div>
+        <div
+          className="class-idcards-students-sticky-footer"
+          role="region"
+          aria-label={showApiClassTemplateBar ? 'Template and next step' : 'Continue to next step'}
+        >
+          {showApiClassTemplateBar ? (
+            <div className="class-idcards-students-sticky-footer-template">
+              <div className="class-idcards-students-sticky-footer-inner class-idcards-students-sticky-footer-template-inner">
+                <button type="button" className="btn btn-secondary" onClick={openClassTemplateEditor}>
+                  Edit template layout
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="class-idcards-students-sticky-footer-next">
+            <div className="class-idcards-students-sticky-footer-inner">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!canProceedFromStudents}
+                onClick={goToTemplate}
+              >
+                Next step – Select template
+              </button>
+              <span className="text-muted class-idcards-students-sticky-footer-hint">
+                First selected needs a photo to continue
+                {selectedStudents.length > 0
+                  ? ` (${getImageForStudent(selectedStudents[0]) ? 'done' : 'missing'}) · ${selectedStudents.filter((s) => getImageForStudent(s)).length} / ${selectedStudents.length} with photos overall`
+                  : ''}
+              </span>
+            </div>
           </div>
         </div>
         <style>{`
+          .class-idcards-students-step-body {
+            padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+            max-width: 100%;
+          }
+          .class-idcards-students-step-body.class-idcards-students-step-body--with-template-bar {
+            padding-bottom: calc(168px + env(safe-area-inset-bottom, 0px));
+          }
+          .class-idcards-students-sticky-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            padding: 0;
+            padding-bottom: max(0px, env(safe-area-inset-bottom, 0px));
+            background: var(--bg-secondary);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35);
+          }
+          .class-idcards-students-sticky-footer-template {
+            padding: 12px 16px 10px;
+            background: rgba(52, 152, 219, 0.1);
+            border-bottom: 1px solid rgba(52, 152, 219, 0.22);
+          }
+          .class-idcards-students-sticky-footer-template-inner {
+            align-items: center;
+            justify-content: flex-start;
+          }
+          .class-idcards-students-sticky-footer-next {
+            padding: 12px 16px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+          }
+          .class-idcards-students-sticky-footer-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+          }
+          .class-idcards-students-sticky-footer-hint {
+            font-size: 0.9rem;
+            flex: 1;
+            min-width: 200px;
+          }
           .class-idcards-students-grid { display: flex; flex-direction: column; gap: 12px; }
           .class-idcards-student-row {
             display: flex; align-items: center; gap: 16px;
@@ -696,11 +945,19 @@ export default function ClassIdCardsWizard() {
           phone: previewStudent.phone || '',
           email: previewStudent.email || '',
           address: previewStudent.address || '',
-          className: cls?.name || 'Class',
+          className: previewStudent.className || cls?.name || 'Class',
           schoolName: school?.name || 'School Name',
         }
-      : { name: 'Student Name', studentId: '—', className: cls?.name || 'Class', schoolName: school?.name || 'School Name' };
+      : {
+          name: 'Student Name',
+          studentId: '—',
+          className: cls?.name || 'Class',
+          schoolName: school?.name || 'School Name',
+          dateOfBirth: '',
+          address: school?.address || '',
+        };
     const backFromArrange = () => {
+      setEditorOpenedFromApiClassTemplate(false);
       setArrangingUploaded(false);
       navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
     };

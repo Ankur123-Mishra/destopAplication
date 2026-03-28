@@ -2,6 +2,19 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const { createCanvas, loadImage } = require('canvas');
+const placeholderPngBuffer = (() => {
+  const canvas = createCanvas(4, 4);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 4, 4);
+  return canvas.toBuffer('image/png', { compressionLevel: 0 });
+})();
+const placeholderJpegBuffer = (() => {
+  const canvas = createCanvas(4, 4);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, 4, 4);
+  return canvas.toBuffer('image/jpeg', { quality: 0.8, progressive: false, chromaSubsampling: false });
+})();
 
 function getImageOutputMeta(shape, inputExt) {
   const lowerExt = String(inputExt || '').toLowerCase();
@@ -13,40 +26,21 @@ function getImageOutputMeta(shape, inputExt) {
   return { ext: lowerExt || '.jpg', mime: 'image/jpeg' };
 }
 
-function canvasBufferWithBudget(canvas, mime, sourceSizeBytes) {
-  // Keep cropped files lightweight (mostly KB range) while preserving readability.
-  const sourceBudget = Number.isFinite(sourceSizeBytes) ? Math.max(45 * 1024, Math.floor(sourceSizeBytes * 0.9)) : 220 * 1024;
-  const targetBudget = Math.min(300 * 1024, sourceBudget);
-
+function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
-    // PNG with transparency can get very large; if needed, progressively downscale.
-    let workCanvas = canvas;
-    let buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
-    while (
-      buffer.length > targetBudget &&
-      workCanvas.width > 420 &&
-      workCanvas.height > 420
-    ) {
-      const nextWidth = Math.max(420, Math.floor(workCanvas.width * 0.85));
-      const nextHeight = Math.max(420, Math.floor(workCanvas.height * 0.85));
-      const scaledCanvas = createCanvas(nextWidth, nextHeight);
-      const scaledCtx = scaledCanvas.getContext('2d');
-      scaledCtx.imageSmoothingEnabled = true;
-      scaledCtx.imageSmoothingQuality = 'high';
-      scaledCtx.drawImage(workCanvas, 0, 0, workCanvas.width, workCanvas.height, 0, 0, nextWidth, nextHeight);
-      workCanvas = scaledCanvas;
-      buffer = workCanvas.toBuffer('image/png', { compressionLevel: 9 });
-    }
-    return buffer;
+    // Favor speed over compression size for instant next-image UX.
+    return canvas.toBuffer('image/png', { compressionLevel: 0 });
   }
 
-  let quality = 0.78;
-  let buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
-  while (buffer.length > targetBudget && quality > 0.42) {
-    quality -= 0.08;
-    buffer = canvas.toBuffer('image/jpeg', { quality, progressive: true, chromaSubsampling: true });
-  }
-  return buffer;
+  return canvas.toBuffer('image/jpeg', {
+    quality: 0.95,
+    progressive: false,
+    chromaSubsampling: false
+  });
+}
+
+function getPlaceholderBufferForMime(mime) {
+  return mime === 'image/png' ? placeholderPngBuffer : placeholderJpegBuffer;
 }
 
 /** Dev server only when explicitly requested — otherwise load `dist/` (Windows, macOS, Linux). */
@@ -84,7 +78,97 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+/**
+ * Register JPEG export IPC before the window loads so invoke() never hits "No handler registered".
+ */
+function registerJpegExportIpcHandlers() {
+  try {
+    ipcMain.removeHandler('save-jpeg-export-folder');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('ensure-jpeg-export-dir');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('write-jpeg-file');
+  } catch (_) {}
+
+  ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName, files } = payload || {};
+      if (!parentFolderPath || !subfolderName || !Array.isArray(files)) {
+        return { success: false, error: 'Invalid save payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-jpeg';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        let name = path
+          .basename(String(f.filename || `card-${i + 1}.jpg`))
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
+          name += '.jpg';
+        }
+        const dataUrl = String(f.dataUrl || '');
+        const comma = dataUrl.indexOf(',');
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        const buffer = Buffer.from(base64, 'base64');
+        await fs.writeFile(path.join(dir, name), buffer);
+      }
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('save-jpeg-export-folder:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('ensure-jpeg-export-dir', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName } = payload || {};
+      if (!parentFolderPath || !subfolderName) {
+        return { success: false, error: 'Invalid folder payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-jpeg';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('ensure-jpeg-export-dir:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('write-jpeg-file', async (event, payload) => {
+    try {
+      const { directoryPath, filename, dataUrl } = payload || {};
+      if (!directoryPath || !dataUrl) {
+        return { success: false, error: 'Invalid file payload' };
+      }
+      let name = path
+        .basename(String(filename || 'card.jpg'))
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+      if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
+        name += '.jpg';
+      }
+      const dataUrlStr = String(dataUrl);
+      const comma = dataUrlStr.indexOf(',');
+      const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
+      const buffer = Buffer.from(base64, 'base64');
+      await fs.writeFile(path.join(directoryPath, name), buffer);
+      return { success: true };
+    } catch (error) {
+      console.error('write-jpeg-file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  console.log('[main] JPEG export IPC handlers registered');
+}
+
+app.whenReady().then(() => {
+  registerJpegExportIpcHandlers();
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -183,9 +267,11 @@ ipcMain.handle('crop-images', async (event, data) => {
       const imagePath = images[i];
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
-      const sourceStat = await fs.stat(imagePath).catch(() => null);
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+
+      // Write a valid tiny file immediately so output appears instantly in folder.
+      await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
       
       const image = await loadImage(imagePath);
       
@@ -207,7 +293,7 @@ ipcMain.handle('crop-images', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
+      const buffer = canvasBufferFast(canvas, outputMime);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -247,9 +333,11 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
-      const sourceStat = await fs.stat(imagePath).catch(() => null);
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
       const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+
+      // Write a valid tiny file immediately so output appears instantly in folder.
+      await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
       
       const image = await loadImage(imagePath);
       
@@ -271,18 +359,10 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvasBufferWithBudget(canvas, outputMime, sourceStat?.size);
+      const buffer = canvasBufferFast(canvas, outputMime);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
-      const progress = Math.round((processedCount / images.length) * 100);
-      
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('crop-progress', {
-          progress,
-          processedCount
-        });
-      }
     }
     
     return {
