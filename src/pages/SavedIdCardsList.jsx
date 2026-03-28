@@ -77,6 +77,34 @@ function convertToMm(value, unit) {
 const MIN_PAGE_CM = 5;
 const MAX_PAGE_CM = 120;
 
+const MIN_PREVIEW_GAP_MM = 0;
+const MAX_PREVIEW_GAP_MM = 40;
+
+function clampPreviewGapMm(value, fallback = PRINT_GAP_MM) {
+  const n =
+    typeof value === "number"
+      ? value
+      : Number.parseFloat(String(value ?? "").replace(",", ".").trim());
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_PREVIEW_GAP_MM, Math.max(MIN_PREVIEW_GAP_MM, n));
+}
+
+const DEFAULT_PREVIEW_PAGE_BG = "#ffffff";
+
+/** Ensures `<input type="color" />` gets a valid #rrggbb value. */
+function normalizeHexColor(input, fallback = DEFAULT_PREVIEW_PAGE_BG) {
+  if (typeof input !== "string") return fallback;
+  const s = input.trim();
+  if (/^#[0-9A-Fa-f]{6}$/.test(s)) return s.toLowerCase();
+  if (/^#[0-9A-Fa-f]{3}$/.test(s)) {
+    const r = s[1];
+    const g = s[2];
+    const b = s[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return fallback;
+}
+
 function parseCmInput(value) {
   const n = Number.parseFloat(
     String(value ?? "")
@@ -122,6 +150,367 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
   });
 }
 
+/** Base file name: mobile digits when available; otherwise student id / fallback. Unique per batch. */
+function jpegBaseNameForCard(card, index, used) {
+  const digits = String(card.phone ?? "").replace(/\D/g, "");
+  let base;
+  if (digits.length >= 4) {
+    base = digits.slice(0, 48);
+  } else {
+    const fallback = String(
+      card.studentId ?? card._id ?? `card_${index + 1}`,
+    )
+      .replace(/[^\w.\-]/g, "_")
+      .replace(/_+/g, "_");
+    base = fallback.slice(0, 48) || `card_${index + 1}`;
+  }
+  base = base
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/^\.+/, "")
+    .trim();
+  if (!base) base = `card_${index + 1}`;
+  let name = base;
+  let n = 2;
+  while (used.has(name)) {
+    name = `${base}_${n}`;
+    n += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
+ * Prefer direct children of the print grid so nested nodes cannot inflate the count
+ * (which caused JPEG export to wait forever or mismatch).
+ */
+function getFrontCardCellElements(wrap) {
+  if (!wrap?.querySelectorAll) return [];
+  const direct = wrap.querySelectorAll(
+    ".preview-page--front .print-cards-grid > .print-card-cell",
+  );
+  if (direct.length > 0) return Array.from(direct);
+  return Array.from(
+    wrap.querySelectorAll(".preview-page--front .print-card-cell"),
+  );
+}
+
+function getBackCardCellElements(wrap) {
+  if (!wrap?.querySelectorAll) return [];
+  const direct = wrap.querySelectorAll(
+    ".preview-page--back .print-cards-grid > .print-card-cell",
+  );
+  if (direct.length > 0) return Array.from(direct);
+  return Array.from(
+    wrap.querySelectorAll(".preview-page--back .print-card-cell"),
+  );
+}
+
+/**
+ * Writes JPEGs into a subfolder of `parentDirHandle`.
+ * The folder must be chosen earlier via `showDirectoryPicker()` during a user click
+ * (calling showDirectoryPicker here after async work throws "Must be handling a user gesture").
+ */
+async function saveJpegsToFolderWithFilePicker(
+  subfolderName,
+  files,
+  onProgress,
+  parentDirHandle,
+) {
+  if (!parentDirHandle?.getDirectoryHandle) {
+    throw new Error("No folder was selected for saving.");
+  }
+  onProgress?.({
+    label: "Saving JPEG files…",
+    current: 0,
+    total: files.length,
+  });
+  const sub = await parentDirHandle.getDirectoryHandle(subfolderName, {
+    create: true,
+  });
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    onProgress?.({
+      label: "Saving JPEG files…",
+      current: i + 1,
+      total: files.length,
+    });
+    const safe = String(f.filename || "card.jpg").replace(
+      /[<>:"/\\|?*\x00-\x1f]/g,
+      "_",
+    );
+    const fh = await sub.getFileHandle(safe, { create: true });
+    const w = await fh.createWritable();
+    const blob = await (await fetch(f.dataUrl)).blob();
+    await w.write(blob);
+    await w.close();
+  }
+}
+
+function makeHtml2CanvasOpts(pageBackgroundColor) {
+  const bg = normalizeHexColor(pageBackgroundColor);
+  return {
+    useCORS: true,
+    logging: false,
+    backgroundColor: bg,
+    imageTimeout: 25000,
+    onclone(clonedDoc) {
+      relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
+    },
+  };
+}
+
+async function html2canvasWithFallback(element, pageBackgroundColor) {
+  const base = makeHtml2CanvasOpts(pageBackgroundColor);
+  try {
+    const canvas = await html2canvas(element, { ...base, scale: 2 });
+    return canvas.toDataURL("image/jpeg", 0.92);
+  } catch (e) {
+    console.warn("html2canvas (scale 2) failed, retrying scale 1", e);
+    const canvas = await html2canvas(element, { ...base, scale: 1 });
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+}
+
+/**
+ * Front + back JPEG per student. Filenames: `{mobile}_front.jpg`, `{mobile}_back.jpg` (same base as before + suffix).
+ * onProgress: ({ label, current, total }) => void — total steps = 2 × card count.
+ */
+async function buildPreviewFrontAndBackJpegFiles(
+  wrap,
+  cards,
+  pageBackgroundColor,
+  onProgress,
+) {
+  const frontEls = getFrontCardCellElements(wrap);
+  const backEls = getBackCardCellElements(wrap);
+  if (
+    frontEls.length !== cards.length ||
+    backEls.length !== cards.length ||
+    cards.length === 0
+  ) {
+    throw new Error(
+      `Preview not ready (front ${frontEls.length}, back ${backEls.length}, students ${cards.length}). Wait and try again.`,
+    );
+  }
+  const used = new Set();
+  const bases = cards.map((card, i) => jpegBaseNameForCard(card, i, used));
+  const files = [];
+  const totalSteps = cards.length * 2;
+
+  async function captureCell(el, label, index1) {
+    let dataUrl;
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        dataUrl = await html2canvasWithFallback(el, pageBackgroundColor);
+        lastErr = undefined;
+        break;
+      } catch (e) {
+        lastErr = e;
+        await delay(300 * (attempt + 1));
+      }
+    }
+    if (!dataUrl) {
+      throw lastErr || new Error(`Failed to capture ${label} card ${index1}`);
+    }
+    return dataUrl;
+  }
+
+  let step = 0;
+  for (let i = 0; i < cards.length; i++) {
+    step += 1;
+    onProgress?.({
+      label: "Capturing JPEGs (front)…",
+      current: step,
+      total: totalSteps,
+    });
+    const dataUrl = await captureCell(frontEls[i], "front", i + 1);
+    files.push({ filename: `${bases[i]}_front.jpg`, dataUrl });
+    await delay(80);
+  }
+  for (let i = 0; i < cards.length; i++) {
+    step += 1;
+    onProgress?.({
+      label: "Capturing JPEGs (back)…",
+      current: step,
+      total: totalSteps,
+    });
+    const dataUrl = await captureCell(backEls[i], "back", i + 1);
+    files.push({ filename: `${bases[i]}_back.jpg`, dataUrl });
+    await delay(80);
+  }
+  return files;
+}
+
+/**
+ * Browser fallback: one .zip download containing a subfolder of all JPEGs.
+ * (Multiple `<a download>` clicks are blocked after the first file in most browsers.)
+ */
+async function downloadJpegsAsZipFolder(safeSub, files, onProgress) {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const root = zip.folder(safeSub);
+  if (!root) throw new Error("Could not build ZIP.");
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    onProgress?.({
+      label: "Packing JPEGs into ZIP…",
+      current: i + 1,
+      total: files.length,
+    });
+    const safeName = String(f.filename || `card-${i + 1}.jpg`).replace(
+      /[<>:"/\\|?*\x00-\x1f]/g,
+      "_",
+    );
+    const s = String(f.dataUrl || "");
+    const comma = s.indexOf(",");
+    const base64 = comma >= 0 ? s.slice(comma + 1) : s;
+    root.file(safeName, base64, { base64: true });
+  }
+  onProgress?.({
+    label: "Saving ZIP file…",
+    current: files.length,
+    total: files.length,
+  });
+  const blob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = `${safeSub}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * @param webParentDirHandle - DirectoryHandle from showDirectoryPicker() during the Download click (browser only).
+ */
+async function saveJpegExportToFolder(
+  subfolderName,
+  files,
+  onProgress,
+  webParentDirHandle = null,
+) {
+  const safeSub =
+    String(subfolderName)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim()
+      .slice(0, 120) || "id-cards-jpeg";
+  if (typeof window !== "undefined" && window.electron?.selectOutputFolder) {
+    const el = window.electron;
+    onProgress?.({ label: "Choose folder to save JPEGs…", current: 0, total: 1 });
+    const pick = await el.selectOutputFolder();
+    if (!pick.success) return { cancelled: true };
+
+    const runBatchSave = async () => {
+      if (!el.saveJpegExportFolder) {
+        throw new Error(
+          "JPEG save is not available. Fully quit the app and start it again so Electron loads the latest code.",
+        );
+      }
+      onProgress?.({
+        label: "Writing JPEG files…",
+        current: 0,
+        total: files.length,
+      });
+      const r = await el.saveJpegExportFolder({
+        parentFolderPath: pick.folderPath,
+        subfolderName: safeSub,
+        files,
+      });
+      if (!r.success) {
+        throw new Error(r.error || "Could not save JPEG files.");
+      }
+      onProgress?.({
+        label: "Writing JPEG files…",
+        current: files.length,
+        total: files.length,
+      });
+      if (el.openFolder) await el.openFolder(r.folderPath);
+      return { folderPath: r.folderPath };
+    };
+
+    if (el.ensureJpegExportDir && el.writeJpegFile) {
+      try {
+        const mkdirRes = await el.ensureJpegExportDir({
+          parentFolderPath: pick.folderPath,
+          subfolderName: safeSub,
+        });
+        if (!mkdirRes.success) {
+          throw new Error(
+            mkdirRes.error || "Could not create folder for JPEG export.",
+          );
+        }
+        const dir = mkdirRes.folderPath;
+        for (let i = 0; i < files.length; i++) {
+          onProgress?.({
+            label: "Writing JPEG files…",
+            current: i + 1,
+            total: files.length,
+          });
+          const wr = await el.writeJpegFile({
+            directoryPath: dir,
+            filename: files[i].filename,
+            dataUrl: files[i].dataUrl,
+          });
+          if (!wr.success) {
+            throw new Error(
+              wr.error || `Failed to write ${files[i].filename}`,
+            );
+          }
+        }
+        if (el.openFolder) await el.openFolder(dir);
+        return { folderPath: dir };
+      } catch (e) {
+        const msg = String(e?.message || e);
+        const ipcNotReady =
+          /no handler registered|not registered for ['"]ensure-jpeg|ERR_UNKNOWN/i.test(
+            msg,
+          );
+        if (ipcNotReady && el.saveJpegExportFolder) {
+          console.warn(
+            "[JPEG export] Per-file save IPC unavailable (fully quit & reopen the app to load main process). Using batch save.",
+            e,
+          );
+          return runBatchSave();
+        }
+        throw e;
+      }
+    }
+
+    return runBatchSave();
+  }
+
+  if (
+    webParentDirHandle &&
+    typeof webParentDirHandle.getDirectoryHandle === "function"
+  ) {
+    try {
+      await saveJpegsToFolderWithFilePicker(
+        safeSub,
+        files,
+        onProgress,
+        webParentDirHandle,
+      );
+      return {};
+    } catch (e) {
+      if (e?.name === "AbortError") return { cancelled: true };
+      throw e;
+    }
+  }
+
+  await downloadJpegsAsZipFolder(safeSub, files, onProgress);
+  window.alert(
+    `Downloaded "${safeSub}.zip". Extract it to get a folder with all ${files.length} JPEG file(s).`,
+  );
+  return { fallbackDownloads: true };
+}
+
 /** Captures preview page DOM nodes to JPG/PNG (one file per page) or a single multi-page PDF. */
 async function exportPreviewPagesAsFiles(
   pageElements,
@@ -129,14 +518,16 @@ async function exportPreviewPagesAsFiles(
   pageWidthMm,
   pageHeightMm,
   fileBaseName,
+  pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
 ) {
   if (!pageElements?.length) return;
   const scale = 2;
+  const bg = normalizeHexColor(pageBackgroundColor);
   const opts = {
     scale,
     useCORS: true,
     logging: false,
-    backgroundColor: "#ffffff",
+    backgroundColor: bg,
     onclone(clonedDoc) {
       relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
     },
@@ -188,16 +579,27 @@ export default function SavedIdCardsList({
   const [singleCardPreview, setSingleCardPreview] = useState(null); // card object when viewing one student's card
   const printContentRef = useRef(null);
   const previewPagesWrapRef = useRef(null);
+  /** Browser JPEG export: DirectoryHandle from showDirectoryPicker (must be set during click). */
+  const jpegWebParentDirHandleRef = useRef(null);
 
   const [showDownloadMenuList, setShowDownloadMenuList] = useState(false);
   const [showDownloadMenuPreview, setShowDownloadMenuPreview] = useState(false);
   const [pendingExportFormat, setPendingExportFormat] = useState(null); // 'jpg' | 'png' | 'pdf'
   const [exporting, setExporting] = useState(false);
+  /** { label: string, current: number, total: number } | null */
+  const [exportProgress, setExportProgress] = useState(null);
   const [chargingDownloadPoints, setChargingDownloadPoints] = useState(false);
 
   const [pageSizeMode, setPageSizeMode] = useState("a4"); // 'a4' | 'custom'
   const [customPageWidthCm, setCustomPageWidthCm] = useState("21");
   const [customPageHeightCm, setCustomPageHeightCm] = useState("29.7");
+
+  const [previewGapHorizontalMm, setPreviewGapHorizontalMm] =
+    useState(PRINT_GAP_MM);
+  const [previewGapVerticalMm, setPreviewGapVerticalMm] =
+    useState(PRINT_GAP_MM);
+  const [previewPageBackgroundColor, setPreviewPageBackgroundColor] =
+    useState(DEFAULT_PREVIEW_PAGE_BG);
 
   const pageWidthMm = React.useMemo(
     () =>
@@ -401,6 +803,8 @@ export default function SavedIdCardsList({
   };
 
   const cardsToPrint = studentsWithTemplates.map(studentToCard);
+  const cardsToPrintRef = useRef(cardsToPrint);
+  cardsToPrintRef.current = cardsToPrint;
   const hasFabricCards = cardsToPrint.some((c) =>
     c.templateId?.startsWith("fabric-"),
   );
@@ -529,6 +933,105 @@ export default function SavedIdCardsList({
     </div>
   );
 
+  const renderPreviewGapControls = (idPrefix = "preview-gap") => (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 10,
+        marginTop: 10,
+      }}
+    >
+      <span style={{ color: "rgba(255,255,255,0.85)", whiteSpace: "nowrap" }}>
+        Card spacing (preview)
+      </span>
+      <label
+        htmlFor={`${idPrefix}-h`}
+        style={{
+          color: "rgba(255,255,255,0.85)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        Horizontal (mm)
+        <input
+          id={`${idPrefix}-h`}
+          type="number"
+          min={MIN_PREVIEW_GAP_MM}
+          max={MAX_PREVIEW_GAP_MM}
+          step={0.5}
+          value={previewGapHorizontalMm}
+          onChange={(e) =>
+            setPreviewGapHorizontalMm(clampPreviewGapMm(e.target.value))
+          }
+          style={{ ...pageSizeControlStyle, width: 72 }}
+        />
+      </label>
+      <label
+        htmlFor={`${idPrefix}-v`}
+        style={{
+          color: "rgba(255,255,255,0.85)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        Vertical (mm)
+        <input
+          id={`${idPrefix}-v`}
+          type="number"
+          min={MIN_PREVIEW_GAP_MM}
+          max={MAX_PREVIEW_GAP_MM}
+          step={0.5}
+          value={previewGapVerticalMm}
+          onChange={(e) =>
+            setPreviewGapVerticalMm(clampPreviewGapMm(e.target.value))
+          }
+          style={{ ...pageSizeControlStyle, width: 72 }}
+        />
+      </label>
+      <label
+        htmlFor={`${idPrefix}-page-bg`}
+        style={{
+          color: "rgba(255,255,255,0.85)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        Page color
+        <input
+          id={`${idPrefix}-page-bg`}
+          type="color"
+          value={normalizeHexColor(previewPageBackgroundColor)}
+          onChange={(e) =>
+            setPreviewPageBackgroundColor(normalizeHexColor(e.target.value))
+          }
+          title="Preview page background"
+          style={{
+            width: 40,
+            height: 32,
+            padding: 0,
+            border: "1px solid rgba(255,255,255,0.35)",
+            borderRadius: 6,
+            cursor: "pointer",
+            background: "transparent",
+          }}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ padding: "6px 10px", fontSize: 12 }}
+          onClick={() => setPreviewPageBackgroundColor(DEFAULT_PREVIEW_PAGE_BG)}
+        >
+          White
+        </button>
+      </label>
+    </div>
+  );
+
   useEffect(() => {
     if (!showPrintView || !printContentRef.current) return;
     const timer = setTimeout(() => window.print(), hasFabricCards ? 2200 : 800);
@@ -559,30 +1062,97 @@ export default function SavedIdCardsList({
     let cancelled = false;
     const run = async () => {
       setExporting(true);
+      setExportProgress({ label: "Preparing…", current: 0, total: 1 });
       const fileBaseName = `id-cards-${classId || schoolId || "export"}-${Date.now()}`;
       let captured = false;
+      const maxAttempts = format === "jpg" ? 220 : 100;
+      const stepMs = format === "jpg" ? 120 : 100;
+      const onProg = (p) => {
+        if (!cancelled) setExportProgress(p);
+      };
       try {
-        for (let attempt = 0; attempt < 80; attempt++) {
-          await delay(100);
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await delay(stepMs);
           if (cancelled) return;
           const wrap = previewPagesWrapRef.current;
           if (!wrap) continue;
           const nodes = wrap.querySelectorAll(".print-page.preview-page");
+          const cards = cardsToPrintRef.current;
           if (
-            nodes.length > 0 &&
-            spreadPagesCount > 0 &&
-            nodes.length === spreadPagesCount
+            nodes.length <= 0 ||
+            spreadPagesCount <= 0 ||
+            nodes.length !== spreadPagesCount
           ) {
-            await exportPreviewPagesAsFiles(
-              Array.from(nodes),
-              format,
-              pageWidthMm,
-              pageHeightMm,
-              fileBaseName,
+            continue;
+          }
+          if (format === "jpg") {
+            const frontCells = getFrontCardCellElements(wrap);
+            const backCells = getBackCardCellElements(wrap);
+            if (
+              frontCells.length !== cards.length ||
+              backCells.length !== cards.length ||
+              cards.length === 0
+            ) {
+              continue;
+            }
+            setExportProgress({
+              label: "Rendering cards…",
+              current: 0,
+              total: 1,
+            });
+            await delay(hasFabricCards ? 2800 : 650);
+            if (cancelled) return;
+            await new Promise((r) =>
+              requestAnimationFrame(() => requestAnimationFrame(r)),
             );
+            const cellsReadyFront = getFrontCardCellElements(wrap);
+            const cellsReadyBack = getBackCardCellElements(wrap);
+            if (
+              cellsReadyFront.length !== cards.length ||
+              cellsReadyBack.length !== cards.length
+            ) {
+              continue;
+            }
+            const subfolderName = `id-cards-jpeg-${Date.now()}`;
+            const files = await buildPreviewFrontAndBackJpegFiles(
+              wrap,
+              cards,
+              previewPageBackgroundColor,
+              onProg,
+            );
+            const saveResult = await saveJpegExportToFolder(
+              subfolderName,
+              files,
+              onProg,
+              jpegWebParentDirHandleRef.current,
+            );
+            if (saveResult?.cancelled) {
+              captured = true;
+              break;
+            }
             captured = true;
             break;
           }
+          setExportProgress({
+            label:
+              format === "pdf"
+                ? "Creating PDF…"
+                : format === "png"
+                  ? "Capturing PNG pages…"
+                  : "Exporting…",
+            current: 0,
+            total: 1,
+          });
+          await exportPreviewPagesAsFiles(
+            Array.from(nodes),
+            format,
+            pageWidthMm,
+            pageHeightMm,
+            fileBaseName,
+            previewPageBackgroundColor,
+          );
+          captured = true;
+          break;
         }
         if (!captured && !cancelled) {
           window.alert(
@@ -592,12 +1162,15 @@ export default function SavedIdCardsList({
       } catch (err) {
         console.error(err);
         window.alert(
-          "Download failed. Wait for the preview to finish loading, then try again.",
+          (typeof err?.message === "string" && err.message.trim()) ||
+            "Download failed. Wait for the preview to finish loading, then try again.",
         );
       } finally {
         if (!cancelled) {
           setExporting(false);
           setPendingExportFormat(null);
+          setExportProgress(null);
+          jpegWebParentDirHandleRef.current = null;
         }
       }
     };
@@ -613,12 +1186,42 @@ export default function SavedIdCardsList({
     pageHeightMm,
     classId,
     schoolId,
+    previewPageBackgroundColor,
+    hasFabricCards,
   ]);
 
   const triggerExport = async (fmt) => {
     if (exporting || chargingDownloadPoints) return;
     setShowDownloadMenuList(false);
     setShowDownloadMenuPreview(false);
+
+    // Desktop app: never use showDirectoryPicker — it is blocked in Electron / file:// and throws
+    // "The request is not allowed by the user agent or the platform in the current context."
+    const isElectronApp = Boolean(
+      typeof window !== "undefined" && window.electron?.selectOutputFolder,
+    );
+    const canTryFileSystemAccessPicker =
+      fmt === "jpg" &&
+      !isElectronApp &&
+      typeof window.showDirectoryPicker === "function" &&
+      window.isSecureContext !== false;
+
+    if (fmt === "jpg") {
+      jpegWebParentDirHandleRef.current = null;
+      if (canTryFileSystemAccessPicker) {
+        try {
+          jpegWebParentDirHandleRef.current =
+            await window.showDirectoryPicker();
+        } catch (e) {
+          if (e?.name === "AbortError") return;
+          // NotAllowedError, SecurityError, or platform block — continue without folder API
+          console.warn("Folder picker unavailable, using download fallback:", e);
+          jpegWebParentDirHandleRef.current = null;
+        }
+      }
+    } else {
+      jpegWebParentDirHandleRef.current = null;
+    }
 
     if (isViewTemplateFlow) {
       const studentIds = studentsWithTemplates
@@ -1190,6 +1793,7 @@ export default function SavedIdCardsList({
               </h3>
               <div style={{ marginTop: 12 }}>
                 {renderPageSizeControls("preview")}
+                {renderPreviewGapControls("preview-gap")}
               </div>
             </div>
             <div
@@ -1294,10 +1898,13 @@ export default function SavedIdCardsList({
                 return (
                   <div
                     key={pageIndex}
-                    className="print-page preview-page print-page-spread"
+                    className={`print-page preview-page print-page-spread ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
                     style={{
                       width: `${pageWidthMm}mm`,
                       height: `${pageHeightMm}mm`,
+                      backgroundColor: normalizeHexColor(
+                        previewPageBackgroundColor,
+                      ),
                       ["--card-w-mm"]: cardWidthMm,
                       ["--card-h-mm"]: cardHeightMm,
                       ["--cols"]: cols,
@@ -1306,10 +1913,12 @@ export default function SavedIdCardsList({
                   >
 
                     <div
-                      className="print-cards-grid"
+                      className="print-cards-grid print-cards-grid--preview"
                       style={{
                         gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
                         gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
+                        columnGap: `${previewGapHorizontalMm}mm`,
+                        rowGap: `${previewGapVerticalMm}mm`,
                       }}
                     >
                       {pageCards.map((card) =>
@@ -1323,6 +1932,81 @@ export default function SavedIdCardsList({
               })}
             </div>
           </div>
+          {exportProgress && (
+            <div
+              className="export-progress-overlay"
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 10050,
+                background: "rgba(0,0,0,0.55)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+              }}
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <div
+                style={{
+                  pointerEvents: "auto",
+                  background: "#2a2a2a",
+                  padding: "20px 24px",
+                  borderRadius: 12,
+                  minWidth: 300,
+                  maxWidth: "min(420px, 92vw)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+                }}
+              >
+                <div
+                  style={{
+                    color: "#fff",
+                    marginBottom: 12,
+                    fontSize: 15,
+                    fontWeight: 600,
+                  }}
+                >
+                  {exportProgress.label}
+                </div>
+                <div
+                  style={{
+                    height: 10,
+                    background: "rgba(255,255,255,0.12)",
+                    borderRadius: 5,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(
+                        100,
+                        (exportProgress.current /
+                          Math.max(exportProgress.total, 1)) *
+                          100,
+                      )}%`,
+                      background: "#3b82f6",
+                      transition: "width 0.2s ease-out",
+                      borderRadius: 5,
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    color: "rgba(255,255,255,0.75)",
+                    marginTop: 10,
+                    fontSize: 13,
+                  }}
+                >
+                  {exportProgress.total > 0
+                    ? `${exportProgress.current} / ${exportProgress.total}`
+                    : ""}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1405,7 +2089,6 @@ export default function SavedIdCardsList({
         .print-page.preview-page {
           flex-shrink: 0;
           box-shadow: 0 4px 24px rgba(0,0,0,0.4);
-          background: #fff;
           border-radius: 2px;
           overflow: hidden;
           box-sizing: border-box;
@@ -1574,6 +2257,9 @@ export default function SavedIdCardsList({
           width: 100%;
           height: 100%;
           box-sizing: border-box;
+        }
+        .print-cards-grid.print-cards-grid--preview {
+          gap: unset;
         }
         .print-card-cell {
           break-inside: avoid;

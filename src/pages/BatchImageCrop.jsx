@@ -1,4 +1,4 @@
-import React, { useState, useRef, useId } from 'react';
+import React, { useState, useRef, useId, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -75,6 +75,114 @@ const CROP_FRAMES = [
   }
 ];
 
+const PX_PER_INCH_REF = 96;
+
+const FRAME_SIZE_UNITS = [
+  { value: 'mm', label: 'mm' },
+  { value: 'px', label: 'px (pixels)' },
+  { value: 'cm', label: 'cm' },
+  { value: 'inch', label: 'inch' }
+];
+
+function pxToInch(px) {
+  return px / PX_PER_INCH_REF;
+}
+
+function inchToPx(inch) {
+  return inch * PX_PER_INCH_REF;
+}
+
+function pxToMm(px) {
+  return pxToInch(px) * 25.4;
+}
+
+function mmToPx(mm) {
+  return inchToPx(mm / 25.4);
+}
+
+function pxToCm(px) {
+  return pxToMm(px) / 10;
+}
+
+function cmToPx(cm) {
+  return mmToPx(cm * 10);
+}
+
+function displayWidthToPct(value, unit, naturalW) {
+  if (!naturalW) return null;
+  let pxW;
+  switch (unit) {
+    case 'px':
+      pxW = value;
+      break;
+    case 'mm':
+      pxW = mmToPx(value);
+      break;
+    case 'cm':
+      pxW = cmToPx(value);
+      break;
+    case 'inch':
+      pxW = inchToPx(value);
+      break;
+    default:
+      return null;
+  }
+  return (pxW / naturalW) * 100;
+}
+
+function displayHeightToPct(value, unit, naturalH) {
+  if (!naturalH) return null;
+  let pxH;
+  switch (unit) {
+    case 'px':
+      pxH = value;
+      break;
+    case 'mm':
+      pxH = mmToPx(value);
+      break;
+    case 'cm':
+      pxH = cmToPx(value);
+      break;
+    case 'inch':
+      pxH = inchToPx(value);
+      break;
+    default:
+      return null;
+  }
+  return (pxH / naturalH) * 100;
+}
+
+function roundForUnitDisplay(val, unit) {
+  if (!Number.isFinite(val)) return 0;
+  switch (unit) {
+    case 'px':
+      return Math.round(val * 10) / 10;
+    case 'mm':
+      return Math.round(val * 100) / 100;
+    case 'cm':
+      return Math.round(val * 1000) / 1000;
+    case 'inch':
+      return Math.round(val * 10000) / 10000;
+    default:
+      return val;
+  }
+}
+
+function getFrameSizeStep(unit) {
+  switch (unit) {
+    case 'px':
+      return 1;
+    case 'mm':
+      return 0.1;
+    case 'cm':
+      return 0.01;
+    case 'inch':
+      return 0.001;
+    default:
+      return 0.1;
+  }
+}
+
 export default function BatchImageCrop() {
   const navigate = useNavigate();
   const isElectronAvailable = Boolean(window.electron);
@@ -99,6 +207,7 @@ export default function BatchImageCrop() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [croppedImages, setCroppedImages] = useState([]);
   const imgRef = useRef(null);
+  const cropMediaWrapperRef = useRef(null);
   const outputFolderPromiseRef = useRef(null);
   const saveBufferRef = useRef(new Map());
   const saveDrainTimeoutRef = useRef(null);
@@ -106,7 +215,131 @@ export default function BatchImageCrop() {
   const saveCompletionResolversRef = useRef([]);
   const preloadedImageUrlsRef = useRef(new Set());
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
+  const [displayedImageSize, setDisplayedImageSize] = useState({ width: 0, height: 0 });
+  const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
+  const [frameSizeUnit, setFrameSizeUnit] = useState('mm');
+  const [frameWidthInputDraft, setFrameWidthInputDraft] = useState(null);
+  const [frameHeightInputDraft, setFrameHeightInputDraft] = useState(null);
+  const [lockedPixelAspect, setLockedPixelAspect] = useState(null);
+  const cropRef = useRef(crop);
+  const displayedImageSizeRef = useRef(displayedImageSize);
   const shapeDimMaskId = `sdm-${useId().replace(/:/g, '')}`;
+
+  cropRef.current = crop;
+  displayedImageSizeRef.current = displayedImageSize;
+
+  const computePixelAspect = useCallback((c, disp) => {
+    if (!c || c.width <= 0 || c.height <= 0 || !disp?.width || !disp?.height) return undefined;
+    return (c.width / c.height) * (disp.width / disp.height);
+  }, []);
+
+  const MIN_CROP_PCT = 0.5;
+  const RESTORE_CROP_PCT = 12;
+
+  const sanitizePercentCrop = useCallback((percentCrop) => {
+    if (!percentCrop || percentCrop.unit !== '%') {
+      return percentCrop;
+    }
+    let w = Number(percentCrop.width);
+    let h = Number(percentCrop.height);
+    let x = Number(percentCrop.x);
+    let y = Number(percentCrop.y);
+    if (!Number.isFinite(w)) w = 0;
+    if (!Number.isFinite(h)) h = 0;
+    if (!Number.isFinite(x)) x = 0;
+    if (!Number.isFinite(y)) y = 0;
+
+    if (w <= 0 && h <= 0) {
+      const size = Math.min(100, Math.max(MIN_CROP_PCT, RESTORE_CROP_PCT));
+      return {
+        unit: '%',
+        width: size,
+        height: size,
+        x: (100 - size) / 2,
+        y: (100 - size) / 2
+      };
+    }
+    if (w <= 0) w = MIN_CROP_PCT;
+    if (h <= 0) h = MIN_CROP_PCT;
+
+    w = Math.min(100, Math.max(MIN_CROP_PCT, w));
+    h = Math.min(100, Math.max(MIN_CROP_PCT, h));
+    x = Math.max(0, Math.min(x, 100 - w));
+    y = Math.max(0, Math.min(y, 100 - h));
+    return { unit: '%', width: w, height: h, x, y };
+  }, []);
+
+  const updateDisplayedImageSize = useCallback(() => {
+    const el = cropMediaWrapperRef.current || imgRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      setDisplayedImageSize({ width: r.width, height: r.height });
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (step !== STEPS.DEFINE_CROP) return undefined;
+    const el = cropMediaWrapperRef.current || imgRef.current;
+    if (!el) return undefined;
+    updateDisplayedImageSize();
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const ro = new ResizeObserver(() => updateDisplayedImageSize());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [step, previewImage, updateDisplayedImageSize]);
+
+  React.useEffect(() => {
+    setImageNaturalSize({ width: 0, height: 0 });
+  }, [previewImage]);
+
+  useLayoutEffect(() => {
+    if (step !== STEPS.DEFINE_CROP || !previewImage) return;
+    const el = imgRef.current;
+    if (el && el.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      setImageNaturalSize({ width: el.naturalWidth, height: el.naturalHeight });
+    }
+  }, [previewImage, step]);
+
+  React.useEffect(() => {
+    setFrameWidthInputDraft(null);
+    setFrameHeightInputDraft(null);
+  }, [frameSizeUnit, previewImage]);
+
+  const frameDisplayDims = useMemo(() => {
+    const nw = imageNaturalSize.width;
+    const nh = imageNaturalSize.height;
+    if (!nw || !nh) {
+      return { w: 0, h: 0 };
+    }
+    const wPx = (crop.width / 100) * nw;
+    const hPx = (crop.height / 100) * nh;
+    switch (frameSizeUnit) {
+      case 'px':
+        return { w: wPx, h: hPx };
+      case 'mm':
+        return { w: pxToMm(wPx), h: pxToMm(hPx) };
+      case 'cm':
+        return { w: pxToCm(wPx), h: pxToCm(hPx) };
+      case 'inch':
+        return { w: pxToInch(wPx), h: pxToInch(hPx) };
+      default:
+        return { w: pxToMm(wPx), h: pxToMm(hPx) };
+    }
+  }, [crop.width, crop.height, imageNaturalSize, frameSizeUnit]);
+
+  const frameUnitLabel = frameSizeUnit === 'inch' ? 'in' : frameSizeUnit;
+
+  const handleCropDragStart = useCallback(() => {
+    const ar = computePixelAspect(cropRef.current, displayedImageSizeRef.current);
+    setLockedPixelAspect(typeof ar === 'number' && Number.isFinite(ar) ? ar : null);
+  }, [computePixelAspect]);
+
+  const handleCropDragEnd = useCallback(() => {
+    setLockedPixelAspect(null);
+  }, []);
 
   React.useEffect(() => {
     if (window.electron && window.electron.onCropProgress) {
@@ -145,7 +378,7 @@ export default function BatchImageCrop() {
     setSelectedFrame(frame);
     setCrop(frame.crop);
     setCompletedCrop(frame.crop);
-    setAspectRatioLocked(frame.aspectRatio !== null);
+    setAspectRatioLocked(false);
     setCurrentImageIndex(0);
     
     const firstImagePath = images[0];
@@ -155,13 +388,97 @@ export default function BatchImageCrop() {
     setStep(STEPS.DEFINE_CROP);
   };
 
-  const handleCropChange = (crop, percentCrop) => {
-    setCrop(percentCrop);
+  const handleCropChange = (_pixelCrop, percentCrop) => {
+    const next = sanitizePercentCrop(percentCrop);
+    setCrop(next);
   };
 
-  const handleCropComplete = (crop, percentCrop) => {
-    setCompletedCrop(percentCrop);
+  const handleCropComplete = (_pixelCrop, percentCrop) => {
+    const next = sanitizePercentCrop(percentCrop);
+    setCompletedCrop(next);
+    setCrop(next);
   };
+
+  const applyCropBoxSize = (prevCrop, width, height) => {
+    const w = Math.min(100, Math.max(0.5, width));
+    const h = Math.min(100, Math.max(0.5, height));
+    const cx = prevCrop.x + prevCrop.width / 2;
+    const cy = prevCrop.y + prevCrop.height / 2;
+    let x = cx - w / 2;
+    let y = cy - h / 2;
+    x = Math.max(0, Math.min(x, 100 - w));
+    y = Math.max(0, Math.min(y, 100 - h));
+    return { unit: '%', width: w, height: h, x, y };
+  };
+
+  const handleFrameWidthChange = (raw) => {
+    const v = parseFloat(raw);
+    if (!Number.isFinite(v) || v <= 0) return;
+    if (!imageNaturalSize.width) return;
+    const p = displayWidthToPct(v, frameSizeUnit, imageNaturalSize.width);
+    if (p == null || !Number.isFinite(p)) return;
+    const widthPct = Math.min(100, Math.max(0.5, p));
+    const next = applyCropBoxSize(crop, widthPct, crop.height);
+    setCrop(next);
+    setCompletedCrop(next);
+  };
+
+  const handleFrameHeightChange = (raw) => {
+    const v = parseFloat(raw);
+    if (!Number.isFinite(v) || v <= 0) return;
+    if (!imageNaturalSize.height) return;
+    const p = displayHeightToPct(v, frameSizeUnit, imageNaturalSize.height);
+    if (p == null || !Number.isFinite(p)) return;
+    const heightPct = Math.min(100, Math.max(0.5, p));
+    const next = applyCropBoxSize(crop, crop.width, heightPct);
+    setCrop(next);
+    setCompletedCrop(next);
+  };
+
+  const bumpFrameWidth = (direction) => {
+    if (!imageNaturalSize.width) return;
+    const step = getFrameSizeStep(frameSizeUnit);
+    const raw =
+      frameWidthInputDraft !== null
+        ? frameWidthInputDraft
+        : String(roundForUnitDisplay(frameDisplayDims.w, frameSizeUnit));
+    let n = parseFloat(raw);
+    if (!Number.isFinite(n)) n = step;
+    n += direction * step;
+    const floor = Math.max(step / 1000, 1e-9);
+    if (n <= 0) n = floor;
+    n = roundForUnitDisplay(n, frameSizeUnit);
+    handleFrameWidthChange(String(n));
+    setFrameWidthInputDraft(null);
+  };
+
+  const bumpFrameHeight = (direction) => {
+    if (!imageNaturalSize.height) return;
+    const step = getFrameSizeStep(frameSizeUnit);
+    const raw =
+      frameHeightInputDraft !== null
+        ? frameHeightInputDraft
+        : String(roundForUnitDisplay(frameDisplayDims.h, frameSizeUnit));
+    let n = parseFloat(raw);
+    if (!Number.isFinite(n)) n = step;
+    n += direction * step;
+    const floor = Math.max(step / 1000, 1e-9);
+    if (n <= 0) n = floor;
+    n = roundForUnitDisplay(n, frameSizeUnit);
+    handleFrameHeightChange(String(n));
+    setFrameHeightInputDraft(null);
+  };
+
+  const reactCropAspect = lockedPixelAspect ?? computePixelAspect(crop, displayedImageSize);
+
+  const frameWidthFieldValue =
+    frameWidthInputDraft !== null
+      ? frameWidthInputDraft
+      : String(roundForUnitDisplay(frameDisplayDims.w, frameSizeUnit));
+  const frameHeightFieldValue =
+    frameHeightInputDraft !== null
+      ? frameHeightInputDraft
+      : String(roundForUnitDisplay(frameDisplayDims.h, frameSizeUnit));
 
   const ensureOutputFolderReady = async () => {
     if (outputFolder) return outputFolder;
@@ -520,6 +837,10 @@ export default function BatchImageCrop() {
     activeSavesRef.current = 0;
     saveCompletionResolversRef.current = [];
     preloadedImageUrlsRef.current = new Set();
+    setImageNaturalSize({ width: 0, height: 0 });
+    setFrameSizeUnit('mm');
+    setFrameWidthInputDraft(null);
+    setFrameHeightInputDraft(null);
   };
 
   const handleBackToFrameSelection = () => {
@@ -535,6 +856,8 @@ export default function BatchImageCrop() {
     activeSavesRef.current = 0;
     saveCompletionResolversRef.current = [];
     preloadedImageUrlsRef.current = new Set();
+    setFrameWidthInputDraft(null);
+    setFrameHeightInputDraft(null);
   };
 
   const handleOpenOutputFolder = async () => {
@@ -735,6 +1058,148 @@ export default function BatchImageCrop() {
                 {' — '}Output is cropped to this shape inside the box above (transparent PNG where needed).
               </div>
             )}
+
+            <div
+              style={{
+                marginBottom: 20,
+                padding: '14px 16px',
+                background: 'rgba(255,255,255,0.04)',
+                borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.12)'
+              }}
+            >
+              <p style={{ margin: '0 0 10px', fontSize: '0.95rem', fontWeight: 600 }}>
+                Frame size
+              </p>
+              <p className="text-muted" style={{ margin: '0 0 12px', fontSize: '0.8rem' }}>
+                Width and height are independent in the fields—changing one does not change the other. Dragging the crop on the image resizes it while keeping the current width-to-height ratio. The box stays centered when possible.
+              </p>
+              <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                <label style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  Unit
+                  <select
+                    value={frameSizeUnit}
+                    onChange={(e) => setFrameSizeUnit(e.target.value)}
+                    style={{
+                      minWidth: 200,
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: 'rgba(0,0,0,0.35)',
+                      color: 'inherit'
+                    }}
+                  >
+                    {FRAME_SIZE_UNITS.map((u) => (
+                      <option
+                        key={u.value}
+                        value={u.value}
+                        disabled={!imageNaturalSize.width || !imageNaturalSize.height}
+                      >
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {(!imageNaturalSize.width || !imageNaturalSize.height) && (
+                  <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+                    Loading image dimensions…
+                  </span>
+                )}
+              </div>
+              <p className="text-muted" style={{ margin: '0 0 12px', fontSize: '0.72rem', lineHeight: 1.4 }}>
+                px uses the image file pixel size. mm, cm, and inch use 96 px per inch (common screen reference) from that pixel size.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.85rem' }}>
+                  {`Width (${frameUnitLabel})`}
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={frameWidthFieldValue}
+                    onFocus={() => {
+                      setFrameWidthInputDraft(
+                        String(roundForUnitDisplay(frameDisplayDims.w, frameSizeUnit))
+                      );
+                    }}
+                    onChange={(e) => setFrameWidthInputDraft(e.target.value)}
+                    onBlur={() => {
+                      const raw = frameWidthInputDraft;
+                      setFrameWidthInputDraft(null);
+                      if (raw === null) return;
+                      const t = String(raw).trim();
+                      if (t === '') return;
+                      handleFrameWidthChange(t);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                        return;
+                      }
+                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        bumpFrameWidth(e.key === 'ArrowUp' ? 1 : -1);
+                      }
+                    }}
+                    disabled={!imageNaturalSize.width || !imageNaturalSize.height}
+                    style={{
+                      width: 120,
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: 'rgba(0,0,0,0.25)',
+                      color: 'inherit',
+                      outline: 'none',
+                      opacity: !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
+                    }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.85rem' }}>
+                  {`Height (${frameUnitLabel})`}
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={frameHeightFieldValue}
+                    onFocus={() => {
+                      setFrameHeightInputDraft(
+                        String(roundForUnitDisplay(frameDisplayDims.h, frameSizeUnit))
+                      );
+                    }}
+                    onChange={(e) => setFrameHeightInputDraft(e.target.value)}
+                    onBlur={() => {
+                      const raw = frameHeightInputDraft;
+                      setFrameHeightInputDraft(null);
+                      if (raw === null) return;
+                      const t = String(raw).trim();
+                      if (t === '') return;
+                      handleFrameHeightChange(t);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                        return;
+                      }
+                      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        bumpFrameHeight(e.key === 'ArrowUp' ? 1 : -1);
+                      }
+                    }}
+                    disabled={!imageNaturalSize.width || !imageNaturalSize.height}
+                    style={{
+                      width: 120,
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: 'rgba(0,0,0,0.25)',
+                      color: 'inherit',
+                      outline: 'none',
+                      opacity: !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
             
             {selectedFrame.id === 'custom' && (
               <div style={{ marginBottom: 24 }}>
@@ -765,12 +1230,17 @@ export default function BatchImageCrop() {
                   crop={crop}
                   onChange={(_, percentCrop) => handleCropChange(_, percentCrop)}
                   onComplete={handleCropComplete}
-                  aspect={selectedFrame.aspectRatio || (aspectRatioLocked ? (crop.width / crop.height) : undefined)}
+                  onDragStart={handleCropDragStart}
+                  onDragEnd={handleCropDragEnd}
+                  aspect={reactCropAspect}
+                  minWidth={1}
+                  minHeight={1}
                   locked={false}
                   style={{ position: 'relative' }}
                   className={selectedFrame.shape !== 'rectangle' && selectedFrame.svgPath ? 'shape-frame-crop' : ''}
                 >
                   <div
+                    ref={cropMediaWrapperRef}
                     style={{
                       position: 'relative',
                       display: 'inline-block',
@@ -784,6 +1254,13 @@ export default function BatchImageCrop() {
                       fetchPriority="high"
                       loading="eager"
                       style={{ width: 'auto', maxWidth: '95vw', maxHeight: '74vh', display: 'block', margin: '0 auto' }}
+                      onLoad={(e) => {
+                        setImageNaturalSize({
+                          width: e.target.naturalWidth,
+                          height: e.target.naturalHeight
+                        });
+                        updateDisplayedImageSize();
+                      }}
                       onError={(e) => {
                         console.error('Image load error');
                         e.target.src = images[0];

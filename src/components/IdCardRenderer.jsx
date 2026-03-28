@@ -1,6 +1,7 @@
 import React from 'react';
 import './IdCardRenderer.css';
 import { getTemplateById, getInternalTemplateId } from '../data/idCardTemplates';
+import { getCanvasTextEffectiveFontSizePx, getTextTypographyStyle } from '../utils/idCardTextTypography';
 
 /**
  * Renders an ID card with given template and data.
@@ -42,6 +43,9 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
             ? String((data || {})[el.dataField])
             : (el.content ?? '');
           const wrapMultiline = el.dataField === 'address';
+          const textBoxW = typeof el.width === 'number' && el.width > 0 ? el.width : 42;
+          const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
+          const fontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
           return (
             <div
               key={el.id}
@@ -49,8 +53,10 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
               style={{
                 left: `${el.x}%`,
                 top: `${el.y}%`,
-                fontSize: `${el.fontSize || 12}px`,
-                fontWeight: el.fontWeight || '400',
+                width: `${textBoxWClamped}%`,
+                maxWidth: `${textBoxWClamped}%`,
+                fontSize: `${fontSizePx}px`,
+                ...getTextTypographyStyle(el),
                 ...(el.color ? { color: el.color } : {}),
               }}
             >

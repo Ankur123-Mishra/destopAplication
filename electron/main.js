@@ -78,7 +78,97 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+/**
+ * Register JPEG export IPC before the window loads so invoke() never hits "No handler registered".
+ */
+function registerJpegExportIpcHandlers() {
+  try {
+    ipcMain.removeHandler('save-jpeg-export-folder');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('ensure-jpeg-export-dir');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('write-jpeg-file');
+  } catch (_) {}
+
+  ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName, files } = payload || {};
+      if (!parentFolderPath || !subfolderName || !Array.isArray(files)) {
+        return { success: false, error: 'Invalid save payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-jpeg';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        let name = path
+          .basename(String(f.filename || `card-${i + 1}.jpg`))
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
+          name += '.jpg';
+        }
+        const dataUrl = String(f.dataUrl || '');
+        const comma = dataUrl.indexOf(',');
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        const buffer = Buffer.from(base64, 'base64');
+        await fs.writeFile(path.join(dir, name), buffer);
+      }
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('save-jpeg-export-folder:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('ensure-jpeg-export-dir', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName } = payload || {};
+      if (!parentFolderPath || !subfolderName) {
+        return { success: false, error: 'Invalid folder payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-jpeg';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('ensure-jpeg-export-dir:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('write-jpeg-file', async (event, payload) => {
+    try {
+      const { directoryPath, filename, dataUrl } = payload || {};
+      if (!directoryPath || !dataUrl) {
+        return { success: false, error: 'Invalid file payload' };
+      }
+      let name = path
+        .basename(String(filename || 'card.jpg'))
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+      if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
+        name += '.jpg';
+      }
+      const dataUrlStr = String(dataUrl);
+      const comma = dataUrlStr.indexOf(',');
+      const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
+      const buffer = Buffer.from(base64, 'base64');
+      await fs.writeFile(path.join(directoryPath, name), buffer);
+      return { success: true };
+    } catch (error) {
+      console.error('write-jpeg-file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  console.log('[main] JPEG export IPC handlers registered');
+}
+
+app.whenReady().then(() => {
+  registerJpegExportIpcHandlers();
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

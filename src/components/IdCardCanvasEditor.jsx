@@ -1,5 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { updatePhotographerSchool } from '../api/dashboard';
+import {
+  getCanvasTextEffectiveFontSizePx,
+  getTextTypographyStyle,
+  isTextElementBold,
+} from '../utils/idCardTextTypography';
 import './IdCardCanvasEditor.css';
 
 const FIELD_DEFS = [
@@ -19,10 +24,50 @@ const FIELD_DEFS = [
 const DEFAULT_ELEMENTS = () => [
   { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
   { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 14, content: '', fontWeight: '700' },
-  { type: 'text', id: 'studentId', dataField: 'studentId', x: 45, y: 36, fontSize: 11, content: '' },
-  { type: 'text', id: 'class', dataField: 'className', x: 45, y: 46, fontSize: 11, content: '' },
-  { type: 'text', id: 'school', dataField: 'schoolName', x: 45, y: 56, fontSize: 10, content: '' },
+  { type: 'text', id: 'dob', dataField: 'dateOfBirth', x: 45, y: 36, fontSize: 11, content: '' },
+  { type: 'text', id: 'address', dataField: 'address', x: 45, y: 48, fontSize: 10, content: '' },
 ];
+
+/**
+ * Maps legacy API/default text fields (student ID, class, school) to Name + DOB + Address
+ * while keeping positions so “Edit template layout” opens with the preferred trio.
+ */
+function mapTemplateElementsToNameDobAddress(elements) {
+  if (!Array.isArray(elements)) return elements;
+  const out = [];
+  for (const el of elements) {
+    if (el.type !== 'text') {
+      out.push(el);
+      continue;
+    }
+    const df = el.dataField;
+    if (df === 'schoolName') {
+      continue;
+    }
+    if (df === 'studentId') {
+      out.push({
+        ...el,
+        id: el.id === 'studentId' ? 'dob' : el.id,
+        dataField: 'dateOfBirth',
+        label: 'DOB',
+      });
+      continue;
+    }
+    if (df === 'className') {
+      out.push({
+        ...el,
+        id: el.id === 'class' ? 'address' : el.id,
+        dataField: 'address',
+        label: 'Address',
+        fontSize:
+          el.fontSize != null ? Math.min(Number(el.fontSize), 11) : 10,
+      });
+      continue;
+    }
+    out.push(el);
+  }
+  return out;
+}
 
 function formatDateDMY(input) {
   if (!input) return '';
@@ -72,6 +117,9 @@ function toHexColorForInput(value) {
   return DEFAULT_TEXT_COLOR;
 }
 
+/** Editor-only display scale; saved element x/y/width/height remain % of the real card size */
+const EDITOR_PREVIEW_ZOOM = 1.62;
+
 const TEXT_COLOR_PRESETS = [
   { label: 'Black', value: '#111111' },
   { label: 'White', value: '#ffffff' },
@@ -94,6 +142,13 @@ const CANVAS_ALIGN_OPTIONS = [
   { value: 'bottom-right', label: 'Bottom right' },
 ];
 
+/** Nominal height % for bounds only. Text has no fixed box; address wraps — a large nominal h was capping y too early (e.g. max y 80%). */
+function getTextElementNominalHeightPercentForBounds(el) {
+  if (el.type !== 'text') return 8;
+  if (typeof el.height === 'number' && el.height > 0) return el.height;
+  return 8;
+}
+
 function getElementBoxPercentForAlign(el) {
   if (el.type === 'photo') {
     return {
@@ -101,11 +156,24 @@ function getElementBoxPercentForAlign(el) {
       h: typeof el.height === 'number' ? el.height : 48,
     };
   }
-  const multiline = el.dataField === 'address';
   return {
-    w: 42,
-    h: multiline ? 20 : 8,
+    w: typeof el.width === 'number' && el.width > 0 ? el.width : 42,
+    h: getTextElementNominalHeightPercentForBounds(el),
   };
+}
+
+/** Width % used for bounds (drag) — must match box width on template. */
+function getElementWidthPercentForBounds(el) {
+  if (el.type === 'photo') return typeof el.width === 'number' ? el.width : 30;
+  if (el.type === 'text') {
+    return typeof el.width === 'number' && el.width > 0 ? el.width : 42;
+  }
+  return 30;
+}
+
+function getTextBoxWidthPercentForRender(el) {
+  if (el.type !== 'text') return 42;
+  return typeof el.width === 'number' && el.width > 0 ? el.width : 42;
 }
 
 function computeAlignedXY(el, alignValue) {
@@ -217,6 +285,7 @@ export default function IdCardCanvasEditor({
   const [dimUnitDraft, setDimUnitDraft] = useState('mm');
   const [dimensionSaving, setDimensionSaving] = useState(false);
   const [dimensionError, setDimensionError] = useState('');
+  const [editorZoomPadBottom, setEditorZoomPadBottom] = useState(0);
 
   useEffect(() => {
     setDimensionLocal(null);
@@ -299,15 +368,35 @@ export default function IdCardCanvasEditor({
     });
   }, [addFieldElement, getFieldValue]);
 
-  // Auto-add all available fields once when arranging/uploading templates, so user can remove before upload.
+  // Auto-add other fields with data when there is no initial layout; skip ID/class/school so defaults stay Name + DOB + Address.
   useEffect(() => {
     if (didInitAddAllRef.current) return;
     if (initialElements) return; // do not override a provided template layout
     didInitAddAllRef.current = true;
-    addAllFields();
-  }, [addAllFields, initialElements]);
+    const skipKeys = new Set(['studentId', 'className', 'schoolName']);
+    FIELD_DEFS.forEach((f) => {
+      if (skipKeys.has(f.key)) return;
+      const val = getFieldValue(f.key);
+      if (val) addFieldElement(f.key);
+    });
+  }, [addFieldElement, getFieldValue, initialElements]);
 
   const getCanvasRect = useCallback(() => canvasRef.current?.getBoundingClientRect() || null);
+
+  /* Reserve space below scaled stage so layout is not clipped; drag math uses getBoundingClientRect (includes scale) */
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const updatePad = () => {
+      const h = el.offsetHeight;
+      if (!h) return;
+      setEditorZoomPadBottom(Math.ceil((EDITOR_PREVIEW_ZOOM - 1) * h));
+    };
+    updatePad();
+    const ro = new ResizeObserver(updatePad);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [effectiveDimension?.width, effectiveDimension?.height, effectiveDimensionUnit, templateImage]);
 
   const pxToPercent = useCallback((pxVal, isX) => {
     const rect = getCanvasRect();
@@ -349,29 +438,36 @@ export default function IdCardCanvasEditor({
         const dx = pxToPercent(e.clientX - resizeState.startX, true);
         const dy = pxToPercent(e.clientY - resizeState.startY, false);
         setElements((prev) =>
-          prev.map((el) =>
-            el.id === resizeState.id
-              ? {
-                  ...el,
-                  width: Math.max(15, Math.min(50, resizeState.startWidth + dx)),
-                  height: Math.max(20, Math.min(70, resizeState.startHeight + dy)),
-                }
-              : el
-          )
+          prev.map((el) => {
+            if (el.id !== resizeState.id) return el;
+            const maxW = Math.max(15, 100 - el.x);
+            const maxH = Math.max(20, 100 - el.y);
+            return {
+              ...el,
+              width: Math.max(15, Math.min(maxW, resizeState.startWidth + dx)),
+              height: Math.max(20, Math.min(maxH, resizeState.startHeight + dy)),
+            };
+          })
         );
       } else if (dragState) {
         const dx = pxToPercent(e.clientX - dragState.startX, true);
         const dy = pxToPercent(e.clientY - dragState.startY, false);
         setElements((prev) =>
-          prev.map((el) =>
-            el.id === dragState.id
-              ? {
-                  ...el,
-                  x: Math.max(0, Math.min(100 - (el.width || 30), dragState.startElX + dx)),
-                  y: Math.max(0, Math.min(100 - (el.height || 10), dragState.startElY + dy)),
-                }
-              : el
-          )
+          prev.map((el) => {
+            if (el.id !== dragState.id) return el;
+            const wPct = getElementWidthPercentForBounds(el);
+            const hPct =
+              el.type === 'photo'
+                ? typeof el.height === 'number'
+                  ? el.height
+                  : 48
+                : getTextElementNominalHeightPercentForBounds(el);
+            return {
+              ...el,
+              x: Math.max(0, Math.min(100 - wPct, dragState.startElX + dx)),
+              y: Math.max(0, Math.min(100 - hPct, dragState.startElY + dy)),
+            };
+          })
         );
       }
     };
@@ -423,6 +519,7 @@ export default function IdCardCanvasEditor({
 
   const selectedEl = elements.find((e) => e.id === selectedId);
   const isPhoto = selectedEl?.type === 'photo';
+  const selectedTextBold = selectedEl?.type === 'text' ? isTextElementBold(selectedEl) : false;
   const physicalStageStyle = getPhysicalStageSizeStyle(effectiveDimension, effectiveDimensionUnit);
 
   const openDimensionForm = useCallback(() => {
@@ -513,13 +610,17 @@ export default function IdCardCanvasEditor({
       studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
       className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
       schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
+      dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
+      address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
     });
   };
 
   return (
     <div className="idcard-canvas-editor">
       <div className="idcard-canvas-toolbar">
-        <span className="idcard-canvas-hint">Drag elements to move · Select photo & drag corner to resize · Click text to edit below</span>
+        <span className="idcard-canvas-hint">
+          Preview zoomed for editing — positions stay relative to your card dimensions · Drag to move · Photo: corner resize or sliders · Text: box width in sidebar
+        </span>
         <div className="idcard-canvas-toolbar-center">
           {selectedId && selectedEl && (
             <div className="idcard-canvas-align" ref={alignMenuRef}>
@@ -576,14 +677,20 @@ export default function IdCardCanvasEditor({
       <div className="idcard-canvas-layout">
         <div className="idcard-canvas-stage-outer">
           <div
-            ref={canvasRef}
-            className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
-            style={{
-              backgroundImage: templateImage ? `url(${templateImage})` : undefined,
-              ...physicalStageStyle,
-            }}
-            onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
+            className="idcard-canvas-stage-zoom-wrap"
+            style={{ paddingBottom: editorZoomPadBottom }}
           >
+            <div
+              ref={canvasRef}
+              className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
+              style={{
+                backgroundImage: templateImage ? `url(${templateImage})` : undefined,
+                ...physicalStageStyle,
+                transform: `scale(${EDITOR_PREVIEW_ZOOM})`,
+                transformOrigin: 'top center',
+              }}
+              onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
+            >
           {elements.map((el) => {
             if (el.type === 'photo') {
               return (
@@ -615,6 +722,9 @@ export default function IdCardCanvasEditor({
             const boundVal = el.dataField ? getFieldValue(el.dataField) : '';
             const textToShow = boundVal || el.content || '';
             const wrapMultiline = el.dataField === 'address';
+            const textBoxW = getTextBoxWidthPercentForRender(el);
+            const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
+            const fontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
             return (
               <div
                 key={el.id}
@@ -622,8 +732,10 @@ export default function IdCardCanvasEditor({
                 style={{
                   left: `${el.x}%`,
                   top: `${el.y}%`,
-                  fontSize: `${el.fontSize || 12}px`,
-                  fontWeight: el.fontWeight || '400',
+                  width: `${textBoxWClamped}%`,
+                  maxWidth: `${textBoxWClamped}%`,
+                  fontSize: `${fontSizePx}px`,
+                  ...getTextTypographyStyle(el),
                   ...(el.color ? { color: el.color } : {}),
                 }}
                 onPointerDown={(e) => handlePointerDown(e, el.id, false)}
@@ -632,6 +744,7 @@ export default function IdCardCanvasEditor({
               </div>
             );
           })}
+            </div>
           </div>
         </div>
 
@@ -705,6 +818,38 @@ export default function IdCardCanvasEditor({
               {selectedEl.type === 'text' ? (
                 <div>
                   <div style={{ marginTop: 8 }}>
+                    <label className="input-label">Text box width (% of card)</label>
+                    <input
+                      type="range"
+                      min={8}
+                      max={Math.max(8, Math.min(100, Math.floor(100 - selectedEl.x)))}
+                      value={Math.min(
+                        getTextBoxWidthPercentForRender(selectedEl),
+                        Math.max(8, 100 - selectedEl.x)
+                      )}
+                      onChange={(e) => {
+                        const nw = Number(e.target.value);
+                        const maxW = Math.max(8, 100 - selectedEl.x);
+                        const v = Math.max(8, Math.min(maxW, nw));
+                        setElements((prev) =>
+                          prev.map((x) => (x.id === selectedEl.id ? { ...x, width: v } : x))
+                        );
+                      }}
+                    />
+                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
+                      {Math.round(
+                        Math.min(
+                          getTextBoxWidthPercentForRender(selectedEl),
+                          Math.max(8, 100 - selectedEl.x)
+                        )
+                      )}
+                      %
+                    </span>
+                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
+                      Up to {Math.max(8, Math.floor(100 - selectedEl.x))}% (template width from this position)
+                    </p>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
                     <label className="input-label">Font size</label>
                     <input
                       type="range"
@@ -720,6 +865,61 @@ export default function IdCardCanvasEditor({
                       }
                     />
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 12}px</span>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <span className="input-label">Font style</span>
+                    <div className="idcard-font-style-group" role="group" aria-label="Font style">
+                      <button
+                        type="button"
+                        className={`idcard-font-style-btn${selectedTextBold ? ' idcard-font-style-btn--active' : ''}`}
+                        aria-pressed={selectedTextBold}
+                        title="Bold"
+                        onClick={() => {
+                          setElements((prev) =>
+                            prev.map((x) => {
+                              if (x.id !== selectedEl.id || x.type !== 'text') return x;
+                              return { ...x, fontWeight: isTextElementBold(x) ? '400' : '700' };
+                            })
+                          );
+                        }}
+                      >
+                        <strong>B</strong>
+                      </button>
+                      <button
+                        type="button"
+                        className={`idcard-font-style-btn${selectedEl.fontStyle === 'italic' ? ' idcard-font-style-btn--active' : ''}`}
+                        aria-pressed={selectedEl.fontStyle === 'italic'}
+                        title="Italic"
+                        onClick={() => {
+                          setElements((prev) =>
+                            prev.map((x) => {
+                              if (x.id !== selectedEl.id || x.type !== 'text') return x;
+                              const next = x.fontStyle === 'italic' ? 'normal' : 'italic';
+                              return { ...x, fontStyle: next === 'normal' ? undefined : next };
+                            })
+                          );
+                        }}
+                      >
+                        <em style={{ fontStyle: 'italic' }}>I</em>
+                      </button>
+                      <button
+                        type="button"
+                        className={`idcard-font-style-btn${selectedEl.textDecoration === 'underline' ? ' idcard-font-style-btn--active' : ''}`}
+                        aria-pressed={selectedEl.textDecoration === 'underline'}
+                        title="Underline"
+                        onClick={() => {
+                          setElements((prev) =>
+                            prev.map((x) => {
+                              if (x.id !== selectedEl.id || x.type !== 'text') return x;
+                              const u = x.textDecoration === 'underline';
+                              return { ...x, textDecoration: u ? undefined : 'underline' };
+                            })
+                          );
+                        }}
+                      >
+                        <span style={{ textDecoration: 'underline' }}>U</span>
+                      </button>
+                    </div>
                   </div>
                   <div style={{ marginTop: 12 }}>
                     <span className="input-label">Text color</span>
@@ -845,7 +1045,63 @@ export default function IdCardCanvasEditor({
                   </div>
                 </div>
               ) : (
-                <p className="text-muted">Photo selected. Drag on canvas to move; drag corner to resize.</p>
+                <div>
+                  <p className="text-muted" style={{ marginBottom: 12 }}>
+                    Drag on canvas to move; drag the corner to resize. Or use the sliders (limited to template edges).
+                  </p>
+                  <div style={{ marginBottom: 10 }}>
+                    <label className="input-label">Photo box width (% of card)</label>
+                    <input
+                      type="range"
+                      min={15}
+                      max={Math.max(15, Math.min(100, Math.floor(100 - selectedEl.x)))}
+                      value={Math.min(
+                        selectedEl.width ?? 30,
+                        Math.max(15, 100 - selectedEl.x)
+                      )}
+                      onChange={(e) => {
+                        const nw = Number(e.target.value);
+                        const maxW = Math.max(15, 100 - selectedEl.x);
+                        const v = Math.max(15, Math.min(maxW, nw));
+                        setElements((prev) =>
+                          prev.map((x) => (x.id === selectedEl.id ? { ...x, width: v } : x))
+                        );
+                      }}
+                    />
+                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
+                      {Math.round(Math.min(selectedEl.width ?? 30, Math.max(15, 100 - selectedEl.x)))}%
+                    </span>
+                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
+                      Max {Math.max(15, Math.floor(100 - selectedEl.x))}% (template width from left edge)
+                    </p>
+                  </div>
+                  <div>
+                    <label className="input-label">Photo box height (% of card)</label>
+                    <input
+                      type="range"
+                      min={20}
+                      max={Math.max(20, Math.min(100, Math.floor(100 - selectedEl.y)))}
+                      value={Math.min(
+                        selectedEl.height ?? 48,
+                        Math.max(20, 100 - selectedEl.y)
+                      )}
+                      onChange={(e) => {
+                        const nh = Number(e.target.value);
+                        const maxH = Math.max(20, 100 - selectedEl.y);
+                        const v = Math.max(20, Math.min(maxH, nh));
+                        setElements((prev) =>
+                          prev.map((x) => (x.id === selectedEl.id ? { ...x, height: v } : x))
+                        );
+                      }}
+                    />
+                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
+                      {Math.round(Math.min(selectedEl.height ?? 48, Math.max(20, 100 - selectedEl.y)))}%
+                    </span>
+                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
+                      Max {Math.max(20, Math.floor(100 - selectedEl.y))}% (template height from top)
+                    </p>
+                  </div>
+                </div>
               )}
             </>
           )}
@@ -874,7 +1130,9 @@ export default function IdCardCanvasEditor({
                 || (f.key === 'name' && elements.some((e) => e.id === 'name'))
                 || (f.key === 'studentId' && elements.some((e) => e.id === 'studentId'))
                 || (f.key === 'className' && elements.some((e) => e.id === 'class'))
-                || (f.key === 'schoolName' && elements.some((e) => e.id === 'school'));
+                || (f.key === 'schoolName' && elements.some((e) => e.id === 'school'))
+                || (f.key === 'dateOfBirth' && elements.some((e) => e.id === 'dob'))
+                || (f.key === 'address' && elements.some((e) => e.id === 'address'));
               const val = getFieldValue(f.key);
               return (
                 <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}>
@@ -905,4 +1163,4 @@ export default function IdCardCanvasEditor({
   );
 }
 
-export { DEFAULT_ELEMENTS };
+export { DEFAULT_ELEMENTS, mapTemplateElementsToNameDobAddress };

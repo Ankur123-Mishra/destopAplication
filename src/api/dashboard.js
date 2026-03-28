@@ -165,11 +165,10 @@ export async function getTemplatesStatus(schoolId, classId) {
 
 /**
  * GET /api/photographer/students?schoolId=xxx&classId=yyy
- * Response: { students: [{ _id, schoolId, classId, studentName, rollNo, admissionNo, status, photoUrl, ... }] }
+ * Response: { students: [...], template?: { frontImage, backImage, elements, templateId, name, title, ... } }
  */
 export async function getStudentsBySchoolAndClass(schoolId, classId) {
   const params = new URLSearchParams({ schoolId, classId });
-  console.log("getStudentsBySchoolAndClass", params);
   const res = await fetch(
     `${API_BASE_URL}/api/photographer/students?${params}`,
     {
@@ -178,7 +177,31 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
     },
   );
   const data = await res.json().catch(() => ({}));
-  console.log("getStudentsBySchoolAndClass", data);
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to load students";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/**
+ * GET /api/photographer/schools/:schoolId/students
+ * All students in the school (not filtered by class).
+ * Response shape aligned with class list: { students: [...], template?: { ... } }
+ */
+export async function getStudentsBySchool(schoolId) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/schools/${encodeURIComponent(schoolId)}/students`,
+    {
+      method: "GET",
+      headers: authHeaders(),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg =
       data?.message ||
