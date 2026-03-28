@@ -14,6 +14,7 @@ export function compressImageForUpload(file) {
         resolve(file);
         return;
       }
+
       if (w > MAX_UPLOAD_DIM || h > MAX_UPLOAD_DIM) {
         if (w > h) {
           h = Math.round((h * MAX_UPLOAD_DIM) / w);
@@ -52,6 +53,7 @@ export function compressImageForUpload(file) {
 /**
  * API student object → string used to match folder filenames (photoNo, else admissionNo / rollNo / uniqueCode).
  */
+
 export function studentPhotoMatchKey(s) {
   if (s == null) return '—';
   const p = s.photoNo;

@@ -21,7 +21,7 @@ export default function Students() {
   const [headerTitle, setHeaderTitle] = useState('Students');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
+  
   useEffect(() => {
     if (!schoolId || !classId) return;
     let cancelled = false;
@@ -54,11 +54,11 @@ export default function Students() {
   // const openCamera = (student) => {
   //   navigate(`/schools/${schoolId}/classes/${classId}/students/${student.id}/camera`);
   // };
-
+  
   const openUpload = (student) => {
     navigate(`/schools/${schoolId}/classes/${classId}/students/${student.id}/id-card`);
   };
-
+  
   return (
     <>
       <Header title={headerTitle} showBack backTo={`/schools/${schoolId}/classes`} />

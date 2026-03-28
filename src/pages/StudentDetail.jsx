@@ -41,11 +41,11 @@ export default function StudentDetail() {
       </>
     );
   }
-
+  
   const openIdCardPreview = (idCardId) => {
     navigate(`/schools/${schoolId}/classes/${classId}/students/${studentId}/id-card/preview/${idCardId}`);
   };
-
+  
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith('image/')) {
@@ -72,9 +72,8 @@ export default function StudentDetail() {
       e.target.value = '';
     }
   };
-
-  const displayPhotoUrl = localPhotoUrl ?? student.photoUrl;
-
+ const displayPhotoUrl = localPhotoUrl ?? student.photoUrl;
+  
   return (
     <>
       <Header title="Student Details" showBack backTo={backTo} />
@@ -127,7 +126,7 @@ export default function StudentDetail() {
           </div>
         </div>
       </div>
-
+      
       {savedIdCards.length > 0 && (
         <div className="card" style={{ marginTop: 24, maxWidth: 960 }}>
           <h3 style={{ marginBottom: 12 }}>Saved ID Cards</h3>

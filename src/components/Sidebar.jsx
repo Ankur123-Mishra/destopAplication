@@ -11,6 +11,7 @@ const links = [
   // { to: '/saved-id-cards', label: 'Saved ID Cards', icon: '🪪' },
   { to: '/view-template', label: 'View Template', icon: '🧩' },
   { to: '/batch-image-crop', label: 'Batch Image Crop', icon: '✂️' },
+  
   // { to: '/corrections', label: 'Corrections', icon: '✏️' },
   
   // { to: '/template-editor', label: 'Template Editor', icon: '🎨' },

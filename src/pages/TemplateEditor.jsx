@@ -117,7 +117,7 @@ export default function TemplateEditor() {
         r.readAsDataURL(blob);
       }));
   };
-
+  
   const handleSave = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -144,7 +144,7 @@ export default function TemplateEditor() {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
-
+  
   return (
     <>
       <Header title="Template Editor" showBack backTo="/dashboard" />
