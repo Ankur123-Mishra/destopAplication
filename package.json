@@ -80,8 +80,6 @@
     "dunder-proto": "^1.0.1",
     "eastasianwidth": "^0.2.0",
     "ejs": "^3.1.10",
-    "electron": "^28.3.3",
-    "electron-builder": "^24.13.3",
     "electron-builder-squirrel-windows": "^24.13.3",
     "electron-publish": "^24.13.1",
     "electron-to-chromium": "^1.5.286",
@@ -276,6 +274,10 @@
     "yauzl": "^2.10.0",
     "zip-stream": "^4.1.1"
   },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
   "scripts": {
     "dev": "concurrently \"node --no-deprecation ./node_modules/vite/bin/vite.js\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
     "build": "vite build",
@@ -289,6 +291,7 @@
   "build": {
     "appId": "com.schoolid.photographerdesktop",
     "productName": "Photographer Desktop",
+    "forceCodeSigning": false,
     "directories": {
       "output": "release"
     },
@@ -300,7 +303,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [
