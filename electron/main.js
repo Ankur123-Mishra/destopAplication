@@ -267,8 +267,15 @@ ipcMain.handle('crop-images', async (event, data) => {
       const imagePath = images[i];
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
+      const normalizedFileName = fileName.replace(/_cropped$/i, '');
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
-      const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+      const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
+      const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
+      if (legacyOutputPath !== outputPath) {
+        try {
+          await fs.unlink(legacyOutputPath);
+        } catch (_) {}
+      }
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
@@ -321,7 +328,7 @@ ipcMain.handle('crop-images', async (event, data) => {
 });
 
 ipcMain.handle('crop-images-individually', async (event, data) => {
-  const { images, outputFolder, shape, svgPath } = data;
+  const { images, outputFolder, shape, svgPath, outputSize } = data;
   
   try {
     let processedCount = 0;
@@ -333,8 +340,15 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
+      const normalizedFileName = fileName.replace(/_cropped$/i, '');
       const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
-      const outputPath = path.join(outputFolder, `${fileName}_cropped${outputExt}`);
+      const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
+      const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
+      if (legacyOutputPath !== outputPath) {
+        try {
+          await fs.unlink(legacyOutputPath);
+        } catch (_) {}
+      }
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
@@ -346,17 +360,26 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       const cropWidth = (crop.width / 100) * image.width;
       const cropHeight = (crop.height / 100) * image.height;
       
-      const canvas = createCanvas(cropWidth, cropHeight);
+      const requestedOutputWidth = Number(outputSize?.width);
+      const requestedOutputHeight = Number(outputSize?.height);
+      const outputWidth = Number.isFinite(requestedOutputWidth) && requestedOutputWidth > 0
+        ? Math.max(1, Math.round(requestedOutputWidth))
+        : Math.max(1, Math.round(cropWidth));
+      const outputHeight = Number.isFinite(requestedOutputHeight) && requestedOutputHeight > 0
+        ? Math.max(1, Math.round(requestedOutputHeight))
+        : Math.max(1, Math.round(cropHeight));
+
+      const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
       
       if (shape && shape !== 'rectangle') {
-        applyShapeClipping(ctx, shape, cropWidth, cropHeight);
+        applyShapeClipping(ctx, shape, outputWidth, outputHeight);
       }
       
       ctx.drawImage(
         image,
         cropX, cropY, cropWidth, cropHeight,
-        0, 0, cropWidth, cropHeight
+        0, 0, outputWidth, outputHeight
       );
       
       const buffer = canvasBufferFast(canvas, outputMime);

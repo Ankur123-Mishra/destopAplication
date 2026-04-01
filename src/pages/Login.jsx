@@ -107,13 +107,13 @@ export default function Login() {
       setLoading(false);
     }
   };
-
+  
   const goBackToMobile = () => {
     setOtpSent(false);
     setOtp("");
     setError("");
   };
-
+  
   return (
     <div className="login-page">
       <div className="login-card card">

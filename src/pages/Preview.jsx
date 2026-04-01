@@ -12,20 +12,19 @@ export default function Preview() {
   const students = getStudents(classId) || [];
   const student = students.find((s) => s.id === studentId);
   const backTo = `/schools/${schoolId}/classes/${classId}/students`;
-
   if (!imageUrl) {
     navigate(backTo);
     return null;
   }
-
+  
   const handleRetake = () => {
     navigate(`/schools/${schoolId}/classes/${classId}/students/${studentId}/camera`);
   };
-
+  
   const handleConfirm = () => {
     navigate(backTo);
   };
-
+  
   return (
     <>
       <Header title="Photo Preview" showBack backTo={backTo} />

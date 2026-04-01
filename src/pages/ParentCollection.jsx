@@ -327,7 +327,7 @@ export default function ParentCollection() {
       setFeedback({ type: 'error', message: err?.message || 'Failed to refresh submissions' });
     }
   }
-
+  
   async function handleExport() {
     setFeedback(null);
     setExporting(true);
@@ -346,7 +346,7 @@ export default function ParentCollection() {
       setExporting(false);
     }
   }
-
+  
   async function handleExportSchool(schoolName, items) {
     setFeedback(null);
     setExportingSchool(schoolName);

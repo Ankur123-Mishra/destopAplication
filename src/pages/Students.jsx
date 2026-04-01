@@ -50,7 +50,7 @@ export default function Students() {
     load();
     return () => { cancelled = true; };
   }, [schoolId, classId]);
-
+  
   // const openCamera = (student) => {
   //   navigate(`/schools/${schoolId}/classes/${classId}/students/${student.id}/camera`);
   // };
@@ -76,7 +76,7 @@ export default function Students() {
               Correction List
             </button>
           </div>
-
+         
           <h3 style={{ marginBottom: 12 }}>All students</h3>
           <StudentTable
             students={students}

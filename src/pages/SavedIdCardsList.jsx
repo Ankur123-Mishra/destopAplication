@@ -210,6 +210,7 @@ function getBackCardCellElements(wrap) {
  * The folder must be chosen earlier via `showDirectoryPicker()` during a user click
  * (calling showDirectoryPicker here after async work throws "Must be handling a user gesture").
  */
+
 async function saveJpegsToFolderWithFilePicker(
   subfolderName,
   files,
@@ -315,7 +316,6 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     return dataUrl;
   }
-
   let step = 0;
   for (let i = 0; i < cards.length; i++) {
     step += 1;

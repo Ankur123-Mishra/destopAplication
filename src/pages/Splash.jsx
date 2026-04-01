@@ -5,13 +5,13 @@ import { useApp } from '../context/AppContext';
 export default function Splash() {
   const navigate = useNavigate();
   const { user, authReady } = useApp();
-
+  
   useEffect(() => {
     if (!authReady) return undefined;
     const t = setTimeout(() => navigate(user ? '/dashboard' : '/login', { replace: true }), 1200);
     return () => clearTimeout(t);
   }, [authReady, navigate, user]);
-
+  
   return (
     <div className="splash">
       <div className="splash-content">
