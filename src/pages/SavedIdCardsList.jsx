@@ -93,6 +93,34 @@ function clampPreviewGapMm(value, fallback = PRINT_GAP_MM) {
 
 const DEFAULT_PREVIEW_PAGE_BG = "#ffffff";
 
+/** Preview download: high-res capture + max JPEG quality (per-card, page ZIP, PDF raster). */
+const PREVIEW_EXPORT_HTML2CANVAS_SCALE = 6;
+const PREVIEW_EXPORT_JPEG_QUALITY = 1;
+
+/** Scales try highest first; primary follows devicePixelRatio so Retina exports stay sharp. */
+function getHtml2CanvasExportScaleAttempts() {
+  const dpr =
+    typeof window !== "undefined" && Number.isFinite(window.devicePixelRatio)
+      ? window.devicePixelRatio
+      : 1;
+  const primary = Math.min(
+    10,
+    Math.max(PREVIEW_EXPORT_HTML2CANVAS_SCALE, Math.round(4 * dpr)),
+  );
+  const list = [
+    primary,
+    PREVIEW_EXPORT_HTML2CANVAS_SCALE,
+    5,
+    4,
+    3,
+    2,
+    1,
+  ];
+  return [...new Set(list)]
+    .filter((n) => n > 0)
+    .sort((a, b) => b - a);
+}
+
 /** Ensures `<input type="color" />` gets a valid #rrggbb value. */
 function normalizeHexColor(input, fallback = DEFAULT_PREVIEW_PAGE_BG) {
   if (typeof input !== "string") return fallback;
@@ -209,6 +237,31 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
       node = node.parentElement;
     }
   });
+}
+
+/**
+ * Clone-only hints so exported JPEG/PDF matches on-screen text and template art more closely.
+ * Extra hints for the canvas renderer path (export clone only).
+ * Do not replace CSS background-image with <img> here — that breaks html2canvas for many
+ * remote template URLs (CORS / canvas), leaving only overlays visible on a white card.
+ */
+function applyExportRenderHintsToClone(clonedDoc) {
+  if (!clonedDoc?.head) return;
+  const id = "idcard-export-capture-hints";
+  if (clonedDoc.getElementById(id)) return;
+  const style = clonedDoc.createElement("style");
+  style.id = id;
+  style.textContent = `
+    .print-card-cell .idcard,
+    .print-card-cell .idcard * {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .print-card-cell .idcard svg {
+      shape-rendering: geometricPrecision;
+    }
+  `;
+  clonedDoc.head.appendChild(style);
 }
 
 /** Base file name: mobile digits when available; otherwise student id / fallback. Unique per batch. */
@@ -377,20 +430,37 @@ function makeHtml2CanvasOpts(pageBackgroundColor) {
     imageTimeout: 25000,
     onclone(clonedDoc) {
       relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
+      applyExportRenderHintsToClone(clonedDoc);
     },
   };
 }
 
-async function html2canvasWithFallback(element, pageBackgroundColor) {
+/**
+ * High-DPI capture with scale fallback. Do not set `foreignObjectRendering: true` here:
+ * in Electron/Chromium it often "succeeds" but rasterizes to a blank (solid black/white) image.
+ */
+async function html2canvasForExport(element, pageBackgroundColor) {
   const base = makeHtml2CanvasOpts(pageBackgroundColor);
-  try {
-    const canvas = await html2canvas(element, { ...base, scale: 2 });
-    return canvas.toDataURL("image/jpeg", 0.92);
-  } catch (e) {
-    console.warn("html2canvas (scale 2) failed, retrying scale 1", e);
-    const canvas = await html2canvas(element, { ...base, scale: 1 });
-    return canvas.toDataURL("image/jpeg", 0.92);
+  const scales = getHtml2CanvasExportScaleAttempts();
+  let lastErr;
+  for (const scale of scales) {
+    try {
+      return await html2canvas(element, {
+        ...base,
+        scale,
+        foreignObjectRendering: false,
+      });
+    } catch (e) {
+      lastErr = e;
+      console.warn(`html2canvas (scale ${scale}) failed, retrying lower scale`, e);
+    }
   }
+  throw lastErr || new Error("html2canvas failed");
+}
+
+async function html2canvasWithFallback(element, pageBackgroundColor) {
+  const canvas = await html2canvasForExport(element, pageBackgroundColor);
+  return canvas.toDataURL("image/jpeg", PREVIEW_EXPORT_JPEG_QUALITY);
 }
 
 /**
@@ -676,17 +746,6 @@ async function exportPreviewPagesAsFiles(
   pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
 ) {
   if (!pageElements?.length) return;
-  const scale = 2;
-  const bg = normalizeHexColor(pageBackgroundColor);
-  const opts = {
-    scale,
-    useCORS: true,
-    logging: false,
-    backgroundColor: bg,
-    onclone(clonedDoc) {
-      relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
-    },
-  };
 
   if (format === "pdf") {
     const pdf = new jsPDF({
@@ -695,8 +754,14 @@ async function exportPreviewPagesAsFiles(
       orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
     });
     for (let i = 0; i < pageElements.length; i++) {
-      const canvas = await html2canvas(pageElements[i], opts);
-      const imgData = canvas.toDataURL("image/jpeg", 0.92);
+      const canvas = await html2canvasForExport(
+        pageElements[i],
+        pageBackgroundColor,
+      );
+      const imgData = canvas.toDataURL(
+        "image/jpeg",
+        PREVIEW_EXPORT_JPEG_QUALITY,
+      );
       if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], "p");
       pdf.addImage(imgData, "JPEG", 0, 0, pageWidthMm, pageHeightMm);
     }
@@ -706,11 +771,14 @@ async function exportPreviewPagesAsFiles(
 
   const ext = format === "png" ? "png" : "jpg";
   for (let i = 0; i < pageElements.length; i++) {
-    const canvas = await html2canvas(pageElements[i], opts);
+    const canvas = await html2canvasForExport(
+      pageElements[i],
+      pageBackgroundColor,
+    );
     const url =
       format === "png"
         ? canvas.toDataURL("image/png")
-        : canvas.toDataURL("image/jpeg", 0.92);
+        : canvas.toDataURL("image/jpeg", PREVIEW_EXPORT_JPEG_QUALITY);
     const a = document.createElement("a");
     a.href = url;
     a.download = `${fileBaseName}-page-${i + 1}.${ext}`;

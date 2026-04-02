@@ -26,6 +26,9 @@ function getImageOutputMeta(shape, inputExt) {
   return { ext: lowerExt || '.jpg', mime: 'image/jpeg' };
 }
 
+/** JPEG export: no chroma subsampling keeps edges/colour cleaner at a modest size cost vs default 4:2:0. */
+const CROP_JPEG_QUALITY = 0.98;
+
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
     // Favor speed over compression size for instant next-image UX.
@@ -33,10 +36,43 @@ function canvasBufferFast(canvas, mime) {
   }
 
   return canvas.toBuffer('image/jpeg', {
-    quality: 0.95,
+    quality: CROP_JPEG_QUALITY,
     progressive: false,
     chromaSubsampling: false
   });
+}
+
+/**
+ * Snap crop to whole source pixels so drawImage does not sample between pixels (reduces blur).
+ */
+function computeIntegralCropRect(imageWidth, imageHeight, crop) {
+  const x = Number(crop?.x);
+  const y = Number(crop?.y);
+  const w = Number(crop?.width);
+  const h = Number(crop?.height);
+  let cropX = Math.round((x / 100) * imageWidth);
+  let cropY = Math.round((y / 100) * imageHeight);
+  let cropWidth = Math.round((w / 100) * imageWidth);
+  let cropHeight = Math.round((h / 100) * imageHeight);
+
+  cropX = Math.max(0, Math.min(cropX, Math.max(0, imageWidth - 1)));
+  cropY = Math.max(0, Math.min(cropY, Math.max(0, imageHeight - 1)));
+  cropWidth = Math.max(1, cropWidth);
+  cropHeight = Math.max(1, cropHeight);
+  if (cropX + cropWidth > imageWidth) {
+    cropWidth = Math.max(1, imageWidth - cropX);
+  }
+  if (cropY + cropHeight > imageHeight) {
+    cropHeight = Math.max(1, imageHeight - cropY);
+  }
+  return { cropX, cropY, cropWidth, cropHeight };
+}
+
+/** node-canvas / Cairo: use highest-quality filters when scaling crops to output size. */
+function configureHighQualityRasterContext(ctx) {
+  ctx.imageSmoothingEnabled = true;
+  ctx.patternQuality = 'best';
+  ctx.quality = 'best';
 }
 
 function getPlaceholderBufferForMime(mime) {
@@ -282,13 +318,15 @@ ipcMain.handle('crop-images', async (event, data) => {
       
       const image = await loadImage(imagePath);
       
-      const cropX = (crop.x / 100) * image.width;
-      const cropY = (crop.y / 100) * image.height;
-      const cropWidth = (crop.width / 100) * image.width;
-      const cropHeight = (crop.height / 100) * image.height;
+      const { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
+        image.width,
+        image.height,
+        crop
+      );
       
       const canvas = createCanvas(cropWidth, cropHeight);
       const ctx = canvas.getContext('2d');
+      configureHighQualityRasterContext(ctx);
       
       if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, cropWidth, cropHeight);
@@ -355,10 +393,11 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       
       const image = await loadImage(imagePath);
       
-      const cropX = (crop.x / 100) * image.width;
-      const cropY = (crop.y / 100) * image.height;
-      const cropWidth = (crop.width / 100) * image.width;
-      const cropHeight = (crop.height / 100) * image.height;
+      const { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
+        image.width,
+        image.height,
+        crop
+      );
       
       const requestedOutputWidth = Number(outputSize?.width);
       const requestedOutputHeight = Number(outputSize?.height);
@@ -371,6 +410,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
 
       const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
+      configureHighQualityRasterContext(ctx);
       
       if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, outputWidth, outputHeight);

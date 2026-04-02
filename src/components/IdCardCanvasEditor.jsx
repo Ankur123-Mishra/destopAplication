@@ -263,6 +263,8 @@ export default function IdCardCanvasEditor({
   schoolId,
   schoolPutPayload,
   onDimensionUpdated,
+  /** Called ~300ms after element positions/size/fonts change (e.g. persist draft layout) */
+  onElementsChange,
   onSave,
   onCancel,
   saveLabel = 'Save ID Card',
@@ -273,7 +275,6 @@ export default function IdCardCanvasEditor({
   const [selectedId, setSelectedId] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [resizeState, setResizeState] = useState(null);
-  const [photoFile, setPhotoFile] = useState(null);
   const [photoUrl, setPhotoUrl] = useState(studentImage);
   const [colorHexDraft, setColorHexDraft] = useState('');
   const [alignMenuOpen, setAlignMenuOpen] = useState(false);
@@ -287,6 +288,15 @@ export default function IdCardCanvasEditor({
   const [dimensionSaving, setDimensionSaving] = useState(false);
   const [dimensionError, setDimensionError] = useState('');
   const [editorZoomPadBottom, setEditorZoomPadBottom] = useState(0);
+
+  const onElementsChangeRef = useRef(onElementsChange);
+  onElementsChangeRef.current = onElementsChange;
+
+  useEffect(() => {
+    if (!onElementsChangeRef.current) return;
+    const t = setTimeout(() => onElementsChangeRef.current(elements), 300);
+    return () => clearTimeout(t);
+  }, [elements]);
 
   useEffect(() => {
     setDimensionLocal(null);
@@ -509,15 +519,6 @@ export default function IdCardCanvasEditor({
     setSelectedId(null);
   };
 
-  const handlePhotoUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file?.type.startsWith('image/')) return;
-    setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onload = () => setPhotoUrl(reader.result);
-    reader.readAsDataURL(file);
-  };
-
   const selectedEl = elements.find((e) => e.id === selectedId);
   const isPhoto = selectedEl?.type === 'photo';
   const selectedTextBold = selectedEl?.type === 'text' ? isTextElementBold(selectedEl) : false;
@@ -673,10 +674,6 @@ export default function IdCardCanvasEditor({
               {dimensionFormOpen ? 'Close dimension' : 'Edit dimension'}
             </button>
           )}
-          <label className="btn btn-secondary" style={{ marginBottom: 0, cursor: 'pointer' }}>
-            Upload photo
-            <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} />
-          </label>
           <button type="button" className="btn btn-secondary" onClick={onCancel}>{cancelLabel}</button>
           <button type="button" className="btn btn-primary" onClick={handleSaveClick}>{saveLabel}</button>
         </div>
@@ -880,7 +877,7 @@ export default function IdCardCanvasEditor({
                     <label className="input-label">Font size</label>
                     <input
                       type="range"
-                      min="8"
+                      min="4"
                       max="24"
                       value={selectedEl.fontSize || 12}
                       onChange={(e) =>

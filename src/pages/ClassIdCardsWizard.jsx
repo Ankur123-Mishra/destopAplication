@@ -40,6 +40,74 @@ function uploadedTemplateDefaultElements(name = '', dateOfBirth = '', address = 
   ];
 }
 
+const LAYOUT_DRAFT_STORAGE_PREFIX = 'classIdCardsWizard.layoutDraft.v1:';
+
+function dataUrlFingerprint(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return '';
+  return `${dataUrl.length}:${dataUrl.slice(0, 160)}`;
+}
+
+function layoutDraftSubKey(uploadedTpl) {
+  if (!uploadedTpl?.frontImage) return '';
+  if (uploadedTpl.templateId != null && String(uploadedTpl.templateId).length > 0) {
+    return `api:${String(uploadedTpl.templateId)}`;
+  }
+  const f = dataUrlFingerprint(uploadedTpl.frontImage);
+  const b = uploadedTpl.backImage ? dataUrlFingerprint(uploadedTpl.backImage) : '';
+  return `u:${f}|${b}`;
+}
+
+function layoutDraftStorageKey(schoolId, classId, subKey) {
+  return `${LAYOUT_DRAFT_STORAGE_PREFIX}${String(schoolId)}:${String(classId)}:${encodeURIComponent(subKey)}`;
+}
+
+function readLayoutDraft(schoolId, classId, subKey) {
+  if (schoolId == null || classId == null || !subKey) return null;
+  try {
+    const raw = localStorage.getItem(layoutDraftStorageKey(schoolId, classId, subKey));
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || !Array.isArray(o.elements)) return null;
+    return o;
+  } catch {
+    return null;
+  }
+}
+
+function writeLayoutDraft(schoolId, classId, subKey, payload) {
+  if (schoolId == null || classId == null || !subKey) return;
+  try {
+    localStorage.setItem(layoutDraftStorageKey(schoolId, classId, subKey), JSON.stringify(payload));
+  } catch (e) {
+    console.warn('classIdCards layout draft save failed', e);
+  }
+}
+
+function clearLayoutDraft(schoolId, classId, subKey) {
+  if (schoolId == null || classId == null || !subKey) return;
+  try {
+    localStorage.removeItem(layoutDraftStorageKey(schoolId, classId, subKey));
+  } catch {
+    /* ignore */
+  }
+}
+
+function mergeUploadedTemplateWithDraft(base, schoolId, classId) {
+  const subKey = layoutDraftSubKey(base);
+  if (!subKey || schoolId == null || classId == null) return base;
+  const draft = readLayoutDraft(schoolId, classId, subKey);
+  const fpF = dataUrlFingerprint(base.frontImage);
+  const fpB = base.backImage ? dataUrlFingerprint(base.backImage) : null;
+  if (
+    draft?.elements?.length &&
+    draft.fpFront === fpF &&
+    (draft.fpBack ?? null) === fpB
+  ) {
+    return { ...base, elements: draft.elements };
+  }
+  return base;
+}
+
 function fullPhotoUrl(url) {
   if (!url || typeof url !== 'string') return url;
   if (url.startsWith('http')) return url;
@@ -148,7 +216,7 @@ export default function ClassIdCardsWizard() {
   const [selectedStudentIds, setSelectedStudentIds] = useState([]); // IDs of students to include in ID cards
   const [uploadedTemplate, setUploadedTemplate] = useState(null); // { frontImage, backImage, elements, name } when user uploads PNG templates
   /** 'single' = front only (back mirrors front); 'both' = separate front + back uploads */
-  const [templateUploadMode, setTemplateUploadMode] = useState('both');
+  const [templateUploadMode, setTemplateUploadMode] = useState('single');
   const [arrangingUploaded, setArrangingUploaded] = useState(false); // true when user clicked "Arrange elements" for uploaded template
   /** Template object from GET /api/photographer/students (same response as students list) */
   const [apiClassTemplate, setApiClassTemplate] = useState(null);
@@ -376,6 +444,47 @@ export default function ClassIdCardsWizard() {
     }
   }, [effectiveSchoolId, effectiveClassId, students]);
 
+  const arrangeEditorElements = useMemo(() => {
+    if (!uploadedTemplate?.frontImage || !Array.isArray(uploadedTemplate.elements)) {
+      return uploadedTemplate?.elements ?? null;
+    }
+    const subKey = layoutDraftSubKey(uploadedTemplate);
+    if (!subKey || effectiveSchoolId == null || effectiveClassId == null) {
+      return uploadedTemplate.elements;
+    }
+    const draft = readLayoutDraft(effectiveSchoolId, effectiveClassId, subKey);
+    const fpF = dataUrlFingerprint(uploadedTemplate.frontImage);
+    const fpB = uploadedTemplate.backImage ? dataUrlFingerprint(uploadedTemplate.backImage) : null;
+    if (
+      draft?.elements?.length &&
+      draft.fpFront === fpF &&
+      (draft.fpBack ?? null) === fpB
+    ) {
+      return draft.elements;
+    }
+    return uploadedTemplate.elements;
+  }, [uploadedTemplate, effectiveSchoolId, effectiveClassId]);
+
+  const handleArrangeElementsPersist = useCallback(
+    (elements) => {
+      setUploadedTemplate((prev) => {
+        if (!prev?.frontImage || effectiveSchoolId == null || effectiveClassId == null) return prev;
+        const subKey = layoutDraftSubKey(prev);
+        if (subKey) {
+          writeLayoutDraft(effectiveSchoolId, effectiveClassId, subKey, {
+            v: 1,
+            elements,
+            templateUploadMode,
+            fpFront: dataUrlFingerprint(prev.frontImage),
+            fpBack: prev.backImage ? dataUrlFingerprint(prev.backImage) : null,
+          });
+        }
+        return { ...prev, elements };
+      });
+    },
+    [effectiveSchoolId, effectiveClassId, templateUploadMode],
+  );
+
   const { templates: fabricTemplates } = useMemo(() => getFabricTemplates(), []);
   const { templates: savedUploadedTemplates } = useMemo(() => getUploadedTemplates(), []);
 
@@ -540,12 +649,16 @@ export default function ClassIdCardsWizard() {
       const address = String(previewStudent?.address || school?.address || '').trim();
       setUploadedTemplate((prev) => {
         const result = reader.result;
-        const next = {
-          ...prev,
-          frontImage: result,
-          name: 'Uploaded Template',
-          elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
-        };
+        const next = mergeUploadedTemplateWithDraft(
+          {
+            ...prev,
+            frontImage: result,
+            name: 'Uploaded Template',
+            elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
+          },
+          effectiveSchoolId,
+          effectiveClassId,
+        );
         return next;
       });
     };
@@ -565,11 +678,17 @@ export default function ClassIdCardsWizard() {
       const name = previewStudent?.name ?? 'Student Name';
       const dateOfBirth = previewStudent?.dateOfBirth ?? '';
       const address = String(previewStudent?.address || school?.address || '').trim();
-      setUploadedTemplate((prev) => ({
-        ...prev,
-        backImage: reader.result,
-        elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
-      }));
+      setUploadedTemplate((prev) =>
+        mergeUploadedTemplateWithDraft(
+          {
+            ...prev,
+            backImage: reader.result,
+            elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
+          },
+          effectiveSchoolId,
+          effectiveClassId,
+        ),
+      );
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -577,6 +696,8 @@ export default function ClassIdCardsWizard() {
 
   const handleUseUploadedTemplate = async (payload) => {
     setEditorOpenedFromApiClassTemplate(false);
+    const draftSub = uploadedTemplate ? layoutDraftSubKey(uploadedTemplate) : '';
+    if (draftSub) clearLayoutDraft(effectiveSchoolId, effectiveClassId, draftSub);
     const front = uploadedTemplate?.frontImage;
     // Single-side mode: do not upload/save back image unless user explicitly selected it.
     const back =
@@ -1017,10 +1138,12 @@ export default function ClassIdCardsWizard() {
           Drag elements to position, resize photo from corner, and change font size in the sidebar. Then click &quot;Use this template&quot; to continue.
         </p>
         <IdCardCanvasEditor
+          key={`class-idcards-arrange-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(layoutDraftSubKey(uploadedTemplate) || 'draft')}`}
           templateImage={uploadedTemplate.frontImage}
           studentImage={getImageForStudent(previewStudent)}
-          initialElements={uploadedTemplate.elements}
+          initialElements={arrangeEditorElements ?? uploadedTemplate.elements}
           initialData={initialData}
+          onElementsChange={handleArrangeElementsPersist}
           dimension={previewStudent?.dimension}
           dimensionUnit={previewStudent?.dimensionUnit}
           schoolId={schoolIdFromUrl || effectiveSchoolId}
