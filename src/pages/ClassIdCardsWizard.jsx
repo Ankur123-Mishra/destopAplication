@@ -48,6 +48,12 @@ function fullPhotoUrl(url) {
   return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
 }
 
+function normalizeClassNameForDisplay(label) {
+  if (!label || typeof label !== 'string') return label;
+  // Data is currently appending "– A" to all class/section labels; strip that suffix for display.
+  return label.replace(/\s*[–-]\s*A\s*$/i, '').trim();
+}
+
 /** For template upload API (expects data URLs); fetch http(s) / blob URLs into data URL */
 async function imageRefToDataUrlForUpload(ref) {
   if (!ref || typeof ref !== 'string') return ref;
@@ -141,6 +147,8 @@ export default function ClassIdCardsWizard() {
   const [savingAll, setSavingAll] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]); // IDs of students to include in ID cards
   const [uploadedTemplate, setUploadedTemplate] = useState(null); // { frontImage, backImage, elements, name } when user uploads PNG templates
+  /** 'single' = front only (back mirrors front); 'both' = separate front + back uploads */
+  const [templateUploadMode, setTemplateUploadMode] = useState('both');
   const [arrangingUploaded, setArrangingUploaded] = useState(false); // true when user clicked "Arrange elements" for uploaded template
   /** Template object from GET /api/photographer/students (same response as students list) */
   const [apiClassTemplate, setApiClassTemplate] = useState(null);
@@ -436,7 +444,7 @@ export default function ClassIdCardsWizard() {
           studentImage: image,
           name: student.name,
           studentId: student.studentId,
-          className: student.className || cls.name,
+          className: normalizeClassNameForDisplay(student.className || cls.name),
           schoolName: school.name,
           address: school.address,
         };
@@ -501,6 +509,23 @@ export default function ClassIdCardsWizard() {
     navigate(`/class-id-cards/review/${effectiveSchoolId}/${effectiveClassId}/${tid}`, { replace: true });
   };
 
+  const handleTemplateUploadModeChange = (e) => {
+    const next = e.target.value === 'single' ? 'single' : 'both';
+    setTemplateUploadMode(next);
+    setUploadedTemplate((prev) => {
+      if (!prev) return prev;
+      if (next === 'single') {
+        // Single-side mode: user uploads ONLY front PNG.
+        // We must not auto-populate backImage (otherwise save/upload sends it).
+        return { ...prev, backImage: null };
+      }
+      if (prev.frontImage && prev.backImage && prev.backImage === prev.frontImage) {
+        return { ...prev, backImage: null };
+      }
+      return prev;
+    });
+  };
+
   const handleFrontTemplateFile = (e) => {
     const file = e.target.files?.[0];
     if (!file?.type.startsWith('image/')) {
@@ -509,11 +534,20 @@ export default function ClassIdCardsWizard() {
     }
     const reader = new FileReader();
     reader.onload = () => {
-      setUploadedTemplate((prev) => ({
-        ...prev,
-        frontImage: reader.result,
-        name: 'Uploaded Template',
-      }));
+      const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
+      const name = previewStudent?.name ?? 'Student Name';
+      const dateOfBirth = previewStudent?.dateOfBirth ?? '';
+      const address = String(previewStudent?.address || school?.address || '').trim();
+      setUploadedTemplate((prev) => {
+        const result = reader.result;
+        const next = {
+          ...prev,
+          frontImage: result,
+          name: 'Uploaded Template',
+          elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
+        };
+        return next;
+      });
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -543,10 +577,16 @@ export default function ClassIdCardsWizard() {
 
   const handleUseUploadedTemplate = async (payload) => {
     setEditorOpenedFromApiClassTemplate(false);
+    const front = uploadedTemplate?.frontImage;
+    // Single-side mode: do not upload/save back image unless user explicitly selected it.
+    const back =
+      templateUploadMode === 'single'
+        ? uploadedTemplate?.backImage ?? null
+        : uploadedTemplate?.backImage;
     const toSave = {
       name: uploadedTemplate?.name || 'Uploaded Template',
-      frontImage: uploadedTemplate?.frontImage,
-      backImage: uploadedTemplate?.backImage,
+      frontImage: front,
+      backImage: back,
       schoolId: effectiveSchoolId,
       elements: payload.elements,
     };
@@ -780,9 +820,8 @@ export default function ClassIdCardsWizard() {
                   </div>
                   <div className="class-idcards-student-info">
                     <span className="class-idcards-student-name">{student.name}</span>
-                    <span className="text-muted class-idcards-student-id">{student.studentId}</span>
                     {student.className ? (
-                      <span className="text-muted" style={{ fontSize: '0.8rem' }}>{student.className}</span>
+                      <span className="text-muted" style={{ fontSize: '0.8rem' }}>{normalizeClassNameForDisplay(student.className)}</span>
                     ) : null}
                   </div>
                   <label className="btn btn-secondary btn-sm" style={{ cursor: uploadingStudentId === student.id ? 'wait' : 'pointer', marginLeft: 'auto' }}>
@@ -931,7 +970,12 @@ export default function ClassIdCardsWizard() {
   }
 
   // Step 3: Select template – sub-view: Arrange uploaded template (drag/resize/font)
-  const showArrangeUploaded = step === STEPS.SELECT_TEMPLATE && cls && arrangingUploaded && uploadedTemplate?.frontImage && uploadedTemplate?.backImage && uploadedTemplate?.elements;
+  const uploadedReadyForArrange =
+    uploadedTemplate?.frontImage &&
+    uploadedTemplate?.elements &&
+    (templateUploadMode === 'single' || uploadedTemplate?.backImage);
+  const showArrangeUploaded =
+    step === STEPS.SELECT_TEMPLATE && cls && arrangingUploaded && uploadedReadyForArrange;
   if (showArrangeUploaded) {
     const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
     const initialData = previewStudent
@@ -1010,7 +1054,7 @@ export default function ClassIdCardsWizard() {
           backTo={`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
-          Choose one template or upload your own (PNG). Front and back of the ID card are shown below. Uploaded templates are saved at school level, so once created they can be reused across all classes.
+          Choose one template or upload your own (PNG/JPG/JPEG). Pick whether your design is single-sided (front only) or both sides. Uploaded templates are saved at school level, so once created they can be reused across all classes.
         </p>
         {allTemplates.length === 0 && !uploadedTemplate?.frontImage ? (
           <div className="card" style={{ padding: 32, textAlign: 'center' }}>
@@ -1021,14 +1065,36 @@ export default function ClassIdCardsWizard() {
           <div className="idcard-template-grid idcard-template-grid-with-back" style={{ maxWidth: 960 }}>
             {/* Upload Template card */}
             <div className="idcard-template-card idcard-template-card-with-back card idcard-template-card-upload">
-              <div className="idcard-template-upload-wrap">
+              <div style={{ marginBottom: 16 }}>
+                <label htmlFor="class-idcards-template-sides" style={{ display: 'block', fontSize: '0.9rem', marginBottom: 8 }}>
+                  Template sides
+                </label>
+                <select
+                  id="class-idcards-template-sides"
+                  className="input-field"
+                  style={{ maxWidth: 320 }}
+                  value={templateUploadMode}
+                  onChange={handleTemplateUploadModeChange}
+                >
+                  <option value="single">Single side (front only)</option>
+                  <option value="both">Both sides (front + back)</option>
+                </select>
+              </div>
+              <div
+                className="idcard-template-upload-wrap"
+                style={
+                  templateUploadMode === 'single'
+                    ? { display: 'grid', gridTemplateColumns: '1fr', gap: 12 }
+                    : undefined
+                }
+              >
                 <div className="idcard-template-side">
-                  <span className="idcard-template-side-label">Front (PNG)</span>
+                  <span className="idcard-template-side-label">Front (PNG/JPG)</span>
                   <label className="idcard-template-upload-area">
                     <input
                       ref={frontFileInputRef}
                       type="file"
-                      accept="image/png,.png"
+                      accept="image/png,image/jpeg,.png,.jpg,.jpeg"
                       style={{ display: 'none' }}
                       onChange={handleFrontTemplateFile}
                     />
@@ -1039,33 +1105,41 @@ export default function ClassIdCardsWizard() {
                     )}
                   </label>
                 </div>
-                <div className="idcard-template-side">
-                  <span className="idcard-template-side-label">Back (PNG)</span>
-                  <label className="idcard-template-upload-area">
-                    <input
-                      ref={backFileInputRef}
-                      type="file"
-                      accept="image/png,.png"
-                      style={{ display: 'none' }}
-                      onChange={handleBackTemplateFile}
-                    />
-                    {uploadedTemplate?.backImage ? (
-                      <img src={uploadedTemplate.backImage} alt="Back" className="idcard-template-preview-img" />
-                    ) : (
-                      <span className="idcard-template-upload-text">Click to select back template</span>
-                    )}
-                  </label>
-                </div>
+                {templateUploadMode === 'both' ? (
+                  <div className="idcard-template-side">
+                    <span className="idcard-template-side-label">Back (PNG/JPG)</span>
+                    <label className="idcard-template-upload-area">
+                      <input
+                        ref={backFileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                        style={{ display: 'none' }}
+                        onChange={handleBackTemplateFile}
+                      />
+                      {uploadedTemplate?.backImage ? (
+                        <img src={uploadedTemplate.backImage} alt="Back" className="idcard-template-preview-img" />
+                      ) : (
+                        <span className="idcard-template-upload-text">Click to select back template</span>
+                      )}
+                    </label>
+                  </div>
+                ) : (
+                  <p className="text-muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+                    Single-side mode: only the front image is required. Back image upload is not included (back preview/print will be skipped).
+                  </p>
+                )}
               </div>
               <div className="idcard-template-info">
                 <strong>Upload Template</strong>
                 <span className="text-muted">
-                  {uploadedTemplate?.frontImage && uploadedTemplate?.backImage
-                    ? 'Both selected. Arrange elements below.'
-                    : 'Select front and back PNG, then arrange photo, name, etc.'}
+                  {uploadedReadyForArrange
+                    ? 'Ready. Arrange elements below.'
+                    : templateUploadMode === 'single'
+                      ? 'Select the front PNG, then arrange photo, name, etc.'
+                      : 'Select front and back PNG, then arrange photo, name, etc.'}
                 </span>
               </div>
-              {uploadedTemplate?.frontImage && uploadedTemplate?.backImage && (
+              {uploadedReadyForArrange && (
                 <div style={{ marginTop: 12 }}>
                   <button type="button" className="btn btn-primary" onClick={() => setArrangingUploaded(true)}>
                     Arrange elements (position, size, font)

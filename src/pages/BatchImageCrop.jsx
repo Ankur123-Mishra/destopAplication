@@ -21,7 +21,8 @@ const CROP_FRAMES = [
     shape: 'rectangle',
     aspectRatio: 4 / 5,
     crop: { unit: '%', width: 45, height: 56, x: 27.5, y: 22 },
-    svgPath: null
+    /* Unit square in 0–100 space; mask transform matches other frames so dim/overlay look identical */
+    svgPath: 'M 0 0 L 100 0 L 100 100 L 0 100 Z'
   },
   {
     id: 'rounded-rectangle',
@@ -1204,7 +1205,7 @@ export default function BatchImageCrop() {
                   minHeight={1}
                   locked={false}
                   style={{ position: 'relative' }}
-                  className={selectedFrame.shape !== 'rectangle' && selectedFrame.svgPath ? 'shape-frame-crop' : ''}
+                  className={selectedFrame.svgPath ? 'shape-frame-crop' : ''}
                 >
                   <div
                     ref={cropMediaWrapperRef}
@@ -1498,13 +1499,25 @@ export default function BatchImageCrop() {
         .ReactCrop {
           max-width: 100%;
         }
-        /* Library mask is always rectangular — hide it; rectangle uses box-shadow dim, shapes use custom SVG dim */
+        /* Library mask is always rectangular — hide it; dim uses SVG overlay (same for rectangle and other frames) */
         .ReactCrop__crop-mask {
           display: none !important;
         }
+        /* Rectangle: same clean look as shape frames — library default marching-ants (#444) makes the crop area look too dark */
         .ReactCrop:not(.shape-frame-crop) .ReactCrop__crop-selection {
           border: 3px solid #3498db;
           box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+          animation: none !important;
+          background-image: none !important;
+          color: transparent !important;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__crop-selection:focus {
+          outline: 2px solid rgba(52, 152, 219, 0.85);
+          outline-offset: 1px;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__rule-of-thirds-hz,
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__rule-of-thirds-vt {
+          display: none !important;
         }
         /* Non-rectangle: no rectangular border on selection; shape is drawn by SVG. Selection must stay above dim layers for drag/resize */
         .ReactCrop.shape-frame-crop .ReactCrop__crop-selection {

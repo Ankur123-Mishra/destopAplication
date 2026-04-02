@@ -3,6 +3,7 @@ import { updatePhotographerSchool } from '../api/dashboard';
 import {
   getCanvasTextEffectiveFontSizePx,
   getTextTypographyStyle,
+  ID_CARD_FONT_FAMILY_OPTIONS,
   isTextElementBold,
 } from '../utils/idCardTextTypography';
 import './IdCardCanvasEditor.css';
@@ -118,7 +119,7 @@ function toHexColorForInput(value) {
 }
 
 /** Editor-only display scale; saved element x/y/width/height remain % of the real card size */
-const EDITOR_PREVIEW_ZOOM = 1.62;
+const EDITOR_PREVIEW_ZOOM = 1.9;
 
 const TEXT_COLOR_PRESETS = [
   { label: 'Black', value: '#111111' },
@@ -539,6 +540,13 @@ export default function IdCardCanvasEditor({
     setDimensionFormOpen(true);
   }, [effectiveDimension, effectiveDimensionUnit]);
 
+  const swapDimensionDrafts = useCallback(() => {
+    const nextH = dimWidthDraft;
+    const nextW = dimHeightDraft;
+    setDimHeightDraft(nextH);
+    setDimWidthDraft(nextW);
+  }, [dimHeightDraft, dimWidthDraft]);
+
   const handleDimensionUpdate = async () => {
     if (!schoolId || !schoolPutPayload) return;
     const h = Number(String(dimHeightDraft).trim());
@@ -753,27 +761,46 @@ export default function IdCardCanvasEditor({
             <div className="idcard-canvas-dimension-panel">
               <label className="input-label idcard-canvas-dimension-heading">Dimension (optional)</label>
               <div className="idcard-canvas-dimension-row">
-                <div>
-                  <span className="text-muted idcard-canvas-dimension-field-label">Height</span>
-                  <input
-                    type="text"
-                    className="input-field idcard-canvas-dimension-input"
-                    value={dimHeightDraft}
-                    onChange={(e) => setDimHeightDraft(e.target.value)}
-                    inputMode="decimal"
-                    aria-label="Card height"
-                  />
-                </div>
-                <div>
-                  <span className="text-muted idcard-canvas-dimension-field-label">Width</span>
-                  <input
-                    type="text"
-                    className="input-field idcard-canvas-dimension-input"
-                    value={dimWidthDraft}
-                    onChange={(e) => setDimWidthDraft(e.target.value)}
-                    inputMode="decimal"
-                    aria-label="Card width"
-                  />
+                <div className="idcard-canvas-dimension-size-row">
+                  <div>
+                    <span className="text-muted idcard-canvas-dimension-field-label">Height</span>
+                    <input
+                      type="text"
+                      className="input-field idcard-canvas-dimension-input"
+                      value={dimHeightDraft}
+                      onChange={(e) => setDimHeightDraft(e.target.value)}
+                      inputMode="decimal"
+                      aria-label="Card height"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="idcard-canvas-dimension-swap"
+                    onClick={swapDimensionDrafts}
+                    title="Swap height and width"
+                    aria-label="Swap height and width"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <div>
+                    <span className="text-muted idcard-canvas-dimension-field-label">Width</span>
+                    <input
+                      type="text"
+                      className="input-field idcard-canvas-dimension-input"
+                      value={dimWidthDraft}
+                      onChange={(e) => setDimWidthDraft(e.target.value)}
+                      inputMode="decimal"
+                      aria-label="Card width"
+                    />
+                  </div>
                 </div>
                 <div>
                   <span className="text-muted idcard-canvas-dimension-field-label">Unit</span>
@@ -865,6 +892,36 @@ export default function IdCardCanvasEditor({
                       }
                     />
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 12}px</span>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <label className="input-label" htmlFor="idcard-font-family-select">
+                      Font family
+                    </label>
+                    <select
+                      id="idcard-font-family-select"
+                      className="input-field"
+                      value={selectedEl.fontFamily ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setElements((prev) =>
+                          prev.map((x) => {
+                            if (x.id !== selectedEl.id || x.type !== 'text') return x;
+                            if (!v) {
+                              const next = { ...x };
+                              delete next.fontFamily;
+                              return next;
+                            }
+                            return { ...x, fontFamily: v };
+                          })
+                        );
+                      }}
+                    >
+                      {ID_CARD_FONT_FAMILY_OPTIONS.map((opt) => (
+                        <option key={opt.value === '' ? '__default' : opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div style={{ marginTop: 12 }}>
                     <span className="input-label">Font style</span>

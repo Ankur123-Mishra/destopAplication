@@ -1,7 +1,14 @@
+/* Fill viewport below page header/hint; only the sidebar scrolls — not the whole window.
+   Needs a definite height so flex children (layout) don't collapse to 0. */
 .idcard-canvas-editor {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  height: calc(100dvh - 10rem);
+  max-height: calc(100dvh - 10rem);
+  box-sizing: border-box;
+  /* Let toolbar dropdowns paint outside; clip only the main row */
+  overflow: visible;
 }
 
 .idcard-canvas-toolbar {
@@ -10,6 +17,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .idcard-canvas-hint {
@@ -87,24 +95,36 @@
 }
 
 .idcard-canvas-layout {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 1fr 280px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 900px) {
   .idcard-canvas-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, min(58dvh, 520px)) minmax(0, min(420px, 42dvh));
+  }
+
+  .idcard-canvas-stage-outer {
+    overflow-y: auto;
+    max-height: 100%;
   }
 }
 
 .idcard-canvas-stage-outer {
   max-width: 100%;
+  min-height: 0;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   padding-bottom: 8px;
 }
 
@@ -126,8 +146,8 @@
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   aspect-ratio: 1.586 / 1;
-  max-width: 520px;
-  min-height: 280px;
+  max-width: 640px;
+  min-height: 320px;
 }
 
 /* Explicit width/height from API (mm/cm/in/px) — overrides aspect-ratio and max-width */
@@ -148,6 +168,11 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   z-index: 2;
+}
+
+/* Text: selection hug tight to glyphs — no extra outline gap */
+.idcard-canvas-el.idcard-canvas-text.selected {
+  outline-offset: 0;
 }
 
 .idcard-canvas-photo {
@@ -195,7 +220,8 @@
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 2px 4px;
+  padding: 0 2px;
+  line-height: 1.12;
 }
 
 .idcard-canvas-text.idcard-canvas-text--wrap {
@@ -243,8 +269,15 @@
 }
 
 .idcard-canvas-sidebar {
-  position: sticky;
-  top: 24px;
+  position: relative;
+  top: auto;
+  min-height: 0;
+  max-height: 100%;
+  align-self: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .idcard-canvas-color-row {
@@ -333,6 +366,40 @@
   gap: 16px;
   flex-wrap: wrap;
   align-items: flex-end;
+}
+
+.idcard-canvas-dimension-size-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.idcard-canvas-dimension-swap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 2px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent, #3498db);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.idcard-canvas-dimension-swap:hover {
+  background: rgba(52, 152, 219, 0.15);
+  border-color: rgba(52, 152, 219, 0.45);
+}
+
+.idcard-canvas-dimension-swap:focus-visible {
+  outline: 2px solid var(--accent, #3498db);
+  outline-offset: 2px;
 }
 
 .idcard-canvas-dimension-field-label {
