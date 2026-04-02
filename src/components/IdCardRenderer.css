@@ -1482,6 +1482,8 @@
   max-width: 55%;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 0 2px;
+  line-height: 1.12;
 }
 
 /* Long address (and similar) wraps within the text box instead of clipping */

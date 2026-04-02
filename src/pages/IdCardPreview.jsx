@@ -25,7 +25,7 @@ export default function IdCardPreview() {
 
   const isFabric = card.templateId.startsWith('fabric-');
   const fabricTemplate = isFabric ? getFabricTemplateById(card.templateId) : null;
-
+  
   if (isFabric && fabricTemplate?.json) {
     const studentData = {
       name: card.name,

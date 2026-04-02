@@ -8,7 +8,7 @@ export default function Schools() {
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
+ 
   useEffect(() => {
     let cancelled = false;
     async function load() {

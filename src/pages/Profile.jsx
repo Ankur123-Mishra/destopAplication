@@ -11,7 +11,7 @@ export default function Profile() {
     logout();
     navigate('/login', { replace: true });
   };
-
+  
   return (
     <>
       <Header title="Profile" />

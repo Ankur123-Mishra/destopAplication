@@ -151,7 +151,7 @@ export default function TemplateEditor() {
       <p className="text-muted" style={{ marginBottom: 16 }}>
         Add text, photo placeholder, QR placeholder. Drag to move, resize as needed. Set background then Save.
       </p>
-
+      
       <div className="template-editor-layout">
         <div className="template-editor-toolbar card">
           <div className="template-editor-toolrow">
@@ -204,7 +204,7 @@ export default function TemplateEditor() {
             </button>
           </div>
         </div>
-
+        
         <div className="template-editor-canvas-wrap card">
           <div className="template-editor-canvas-inner">
             <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />

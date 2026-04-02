@@ -21,7 +21,8 @@ const CROP_FRAMES = [
     shape: 'rectangle',
     aspectRatio: 4 / 5,
     crop: { unit: '%', width: 45, height: 56, x: 27.5, y: 22 },
-    svgPath: null
+    /* Unit square in 0–100 space; mask transform matches other frames so dim/overlay look identical */
+    svgPath: 'M 0 0 L 100 0 L 100 100 L 0 100 Z'
   },
   {
     id: 'rounded-rectangle',
@@ -108,50 +109,6 @@ function cmToPx(cm) {
   return mmToPx(cm * 10);
 }
 
-function displayWidthToPct(value, unit, naturalW) {
-  if (!naturalW) return null;
-  let pxW;
-  switch (unit) {
-    case 'px':
-      pxW = value;
-      break;
-    case 'mm':
-      pxW = mmToPx(value);
-      break;
-    case 'cm':
-      pxW = cmToPx(value);
-      break;
-    case 'inch':
-      pxW = inchToPx(value);
-      break;
-    default:
-      return null;
-  }
-  return (pxW / naturalW) * 100;
-}
-
-function displayHeightToPct(value, unit, naturalH) {
-  if (!naturalH) return null;
-  let pxH;
-  switch (unit) {
-    case 'px':
-      pxH = value;
-      break;
-    case 'mm':
-      pxH = mmToPx(value);
-      break;
-    case 'cm':
-      pxH = cmToPx(value);
-      break;
-    case 'inch':
-      pxH = inchToPx(value);
-      break;
-    default:
-      return null;
-  }
-  return (pxH / naturalH) * 100;
-}
-
 function roundForUnitDisplay(val, unit) {
   if (!Number.isFinite(val)) return 0;
   switch (unit) {
@@ -217,6 +174,7 @@ export default function BatchImageCrop() {
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
   const [displayedImageSize, setDisplayedImageSize] = useState({ width: 0, height: 0 });
   const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
+  const [fixedOutputSizePx, setFixedOutputSizePx] = useState({ width: 0, height: 0 });
   const [frameSizeUnit, setFrameSizeUnit] = useState('mm');
   const [frameWidthInputDraft, setFrameWidthInputDraft] = useState(null);
   const [frameHeightInputDraft, setFrameHeightInputDraft] = useState(null);
@@ -308,14 +266,25 @@ export default function BatchImageCrop() {
     setFrameHeightInputDraft(null);
   }, [frameSizeUnit, previewImage]);
 
+  React.useEffect(() => {
+    if (step !== STEPS.DEFINE_CROP) return;
+    if (!imageNaturalSize.width || !imageNaturalSize.height) return;
+    if (fixedOutputSizePx.width > 0 && fixedOutputSizePx.height > 0) return;
+
+    const defaultWidthPx = (crop.width / 100) * imageNaturalSize.width;
+    const defaultHeightPx = (crop.height / 100) * imageNaturalSize.height;
+    if (!Number.isFinite(defaultWidthPx) || !Number.isFinite(defaultHeightPx)) return;
+    if (defaultWidthPx <= 0 || defaultHeightPx <= 0) return;
+
+    setFixedOutputSizePx({ width: defaultWidthPx, height: defaultHeightPx });
+  }, [step, imageNaturalSize, crop.width, crop.height, fixedOutputSizePx.width, fixedOutputSizePx.height]);
+
   const frameDisplayDims = useMemo(() => {
-    const nw = imageNaturalSize.width;
-    const nh = imageNaturalSize.height;
-    if (!nw || !nh) {
+    const wPx = fixedOutputSizePx.width;
+    const hPx = fixedOutputSizePx.height;
+    if (!wPx || !hPx) {
       return { w: 0, h: 0 };
     }
-    const wPx = (crop.width / 100) * nw;
-    const hPx = (crop.height / 100) * nh;
     switch (frameSizeUnit) {
       case 'px':
         return { w: wPx, h: hPx };
@@ -328,7 +297,7 @@ export default function BatchImageCrop() {
       default:
         return { w: pxToMm(wPx), h: pxToMm(hPx) };
     }
-  }, [crop.width, crop.height, imageNaturalSize, frameSizeUnit]);
+  }, [fixedOutputSizePx.width, fixedOutputSizePx.height, frameSizeUnit]);
 
   const frameUnitLabel = frameSizeUnit === 'inch' ? 'in' : frameSizeUnit;
 
@@ -399,7 +368,7 @@ export default function BatchImageCrop() {
     setCrop(next);
   };
 
-  const applyCropBoxSize = (prevCrop, width, height) => {
+  const applyCropBoxSize = useCallback((prevCrop, width, height) => {
     const w = Math.min(100, Math.max(0.5, width));
     const h = Math.min(100, Math.max(0.5, height));
     const cx = prevCrop.x + prevCrop.width / 2;
@@ -409,30 +378,61 @@ export default function BatchImageCrop() {
     x = Math.max(0, Math.min(x, 100 - w));
     y = Math.max(0, Math.min(y, 100 - h));
     return { unit: '%', width: w, height: h, x, y };
+  }, []);
+
+  const syncCropBoxToFixedOutputSize = useCallback((nextSizePx) => {
+    if (!imageNaturalSize.width || !imageNaturalSize.height) return;
+    const widthPx = Number(nextSizePx?.width);
+    const heightPx = Number(nextSizePx?.height);
+    if (!Number.isFinite(widthPx) || !Number.isFinite(heightPx) || widthPx <= 0 || heightPx <= 0) return;
+
+    let widthPct = (widthPx / imageNaturalSize.width) * 100;
+    let heightPct = (heightPx / imageNaturalSize.height) * 100;
+    if (!Number.isFinite(widthPct) || !Number.isFinite(heightPct) || widthPct <= 0 || heightPct <= 0) return;
+
+    // Keep requested ratio and fit inside image bounds.
+    const fitScale = Math.min(100 / widthPct, 100 / heightPct, 1);
+    widthPct *= fitScale;
+    heightPct *= fitScale;
+
+    const nextCrop = applyCropBoxSize(cropRef.current, widthPct, heightPct);
+    setCrop(nextCrop);
+    setCompletedCrop(nextCrop);
+  }, [imageNaturalSize.width, imageNaturalSize.height, applyCropBoxSize]);
+
+  const convertDisplaySizeToPx = (value, unit) => {
+    switch (unit) {
+      case 'px':
+        return value;
+      case 'mm':
+        return mmToPx(value);
+      case 'cm':
+        return cmToPx(value);
+      case 'inch':
+        return inchToPx(value);
+      default:
+        return null;
+    }
   };
 
   const handleFrameWidthChange = (raw) => {
     const v = parseFloat(raw);
     if (!Number.isFinite(v) || v <= 0) return;
-    if (!imageNaturalSize.width) return;
-    const p = displayWidthToPct(v, frameSizeUnit, imageNaturalSize.width);
-    if (p == null || !Number.isFinite(p)) return;
-    const widthPct = Math.min(100, Math.max(0.5, p));
-    const next = applyCropBoxSize(crop, widthPct, crop.height);
-    setCrop(next);
-    setCompletedCrop(next);
+    const widthPx = convertDisplaySizeToPx(v, frameSizeUnit);
+    if (!Number.isFinite(widthPx) || widthPx <= 0) return;
+    const nextSize = { width: widthPx, height: fixedOutputSizePx.height };
+    setFixedOutputSizePx(nextSize);
+    syncCropBoxToFixedOutputSize(nextSize);
   };
 
   const handleFrameHeightChange = (raw) => {
     const v = parseFloat(raw);
     if (!Number.isFinite(v) || v <= 0) return;
-    if (!imageNaturalSize.height) return;
-    const p = displayHeightToPct(v, frameSizeUnit, imageNaturalSize.height);
-    if (p == null || !Number.isFinite(p)) return;
-    const heightPct = Math.min(100, Math.max(0.5, p));
-    const next = applyCropBoxSize(crop, crop.width, heightPct);
-    setCrop(next);
-    setCompletedCrop(next);
+    const heightPx = convertDisplaySizeToPx(v, frameSizeUnit);
+    if (!Number.isFinite(heightPx) || heightPx <= 0) return;
+    const nextSize = { width: fixedOutputSizePx.width, height: heightPx };
+    setFixedOutputSizePx(nextSize);
+    syncCropBoxToFixedOutputSize(nextSize);
   };
 
   const bumpFrameWidth = (direction) => {
@@ -469,7 +469,17 @@ export default function BatchImageCrop() {
     setFrameHeightInputDraft(null);
   };
 
-  const reactCropAspect = lockedPixelAspect ?? computePixelAspect(crop, displayedImageSize);
+  const fixedOutputAspect = useMemo(() => {
+    if (!fixedOutputSizePx.width || !fixedOutputSizePx.height) return null;
+    if (!displayedImageSize.width || !displayedImageSize.height) return null;
+    if (!imageNaturalSize.width || !imageNaturalSize.height) return null;
+    const sourceAspect = fixedOutputSizePx.width / fixedOutputSizePx.height;
+    return sourceAspect
+      * (displayedImageSize.width / displayedImageSize.height)
+      * (imageNaturalSize.height / imageNaturalSize.width);
+  }, [fixedOutputSizePx.width, fixedOutputSizePx.height, displayedImageSize.width, displayedImageSize.height, imageNaturalSize.width, imageNaturalSize.height]);
+
+  const reactCropAspect = lockedPixelAspect ?? fixedOutputAspect ?? computePixelAspect(crop, displayedImageSize);
 
   const frameWidthFieldValue =
     frameWidthInputDraft !== null
@@ -515,7 +525,8 @@ export default function BatchImageCrop() {
       images: [{ imagePath, crop: cropData }],
       outputFolder: outputPath,
       shape: selectedFrame?.shape || 'rectangle',
-      svgPath: selectedFrame?.svgPath || null
+      svgPath: selectedFrame?.svgPath || null,
+      outputSize: fixedOutputSizePx
     });
     if (!result?.success) {
       throw new Error(result?.error || 'Failed to save cropped image.');
@@ -540,7 +551,8 @@ export default function BatchImageCrop() {
       images: payloadImages,
       outputFolder: outputPath,
       shape: selectedFrame?.shape || 'rectangle',
-      svgPath: selectedFrame?.svgPath || null
+      svgPath: selectedFrame?.svgPath || null,
+      outputSize: fixedOutputSizePx
     });
     if (!result?.success) {
       throw new Error(result?.error || 'Failed to save cropped images.');
@@ -672,7 +684,7 @@ export default function BatchImageCrop() {
       scheduleImageSave(currentImageIndex, cropSnapshot);
     } else {
       scheduleImageSave(currentImageIndex, cropSnapshot);
-      alert('All images have been cropped and saved. Click "Save & Finish" to complete.');
+      alert('All images have been cropped. Please click Save & Finish to complete.');
     }
   };
 
@@ -769,7 +781,6 @@ export default function BatchImageCrop() {
       if (isTypingTarget) return;
       if (e.key?.toLowerCase() !== 'c') return;
       if (processing) return;
-      if (currentImageIndex >= images.length - 1) return;
       e.preventDefault();
       handleNextImage();
     };
@@ -791,7 +802,8 @@ export default function BatchImageCrop() {
           images: validImages,
           outputFolder: outputPath,
           shape: selectedFrame?.shape || 'rectangle',
-          svgPath: selectedFrame?.svgPath || null
+          svgPath: selectedFrame?.svgPath || null,
+          outputSize: fixedOutputSizePx
         });
 
         if (result.success) {
@@ -838,6 +850,7 @@ export default function BatchImageCrop() {
     saveCompletionResolversRef.current = [];
     preloadedImageUrlsRef.current = new Set();
     setImageNaturalSize({ width: 0, height: 0 });
+    setFixedOutputSizePx({ width: 0, height: 0 });
     setFrameSizeUnit('mm');
     setFrameWidthInputDraft(null);
     setFrameHeightInputDraft(null);
@@ -856,6 +869,7 @@ export default function BatchImageCrop() {
     activeSavesRef.current = 0;
     saveCompletionResolversRef.current = [];
     preloadedImageUrlsRef.current = new Set();
+    setFixedOutputSizePx({ width: 0, height: 0 });
     setFrameWidthInputDraft(null);
     setFrameHeightInputDraft(null);
   };
@@ -1014,51 +1028,6 @@ export default function BatchImageCrop() {
                 {selectedFrame.icon} {selectedFrame.name}
               </span>
             </div>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              marginBottom: 16,
-              padding: '12px 16px',
-              background: 'rgba(52, 152, 219, 0.1)',
-              borderRadius: 8,
-              border: '1px solid rgba(52, 152, 219, 0.3)'
-            }}>
-              <div>
-                <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>
-                  Image {currentImageIndex + 1} of {images.length}
-                </p>
-                <p className="text-muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                  {croppedImages.filter(img => img).length} image{croppedImages.filter(img => img).length !== 1 ? 's' : ''} cropped so far
-                </p>
-                {pendingSaveCount > 0 && (
-                  <p className="text-muted" style={{ margin: 0, fontSize: '0.8rem' }}>
-                    Saving in background ({pendingSaveCount})
-                  </p>
-                )}
-              </div>
-              <div style={{ fontSize: '2rem' }}>{selectedFrame.icon}</div>
-            </div>
-            
-            <p className="text-muted" style={{ marginBottom: 16 }}>
-              ✂️ Adjust the crop box size and position for each image as needed, then click "Next" to continue.
-            </p>
-            
-            {selectedFrame.shape !== 'rectangle' && (
-              <div style={{
-                background: 'rgba(52, 152, 219, 0.12)',
-                border: '1px solid rgba(52, 152, 219, 0.35)',
-                borderRadius: 8,
-                padding: 12,
-                marginBottom: 24,
-                fontSize: '0.85rem',
-                color: 'var(--text-muted)'
-              }}>
-                <strong style={{ color: 'var(--accent)' }}>{selectedFrame.icon} {selectedFrame.name}</strong>
-                {' — '}Output is cropped to this shape inside the box above (transparent PNG where needed).
-              </div>
-            )}
-
             <div
               style={{
                 marginBottom: 20,
@@ -1068,11 +1037,8 @@ export default function BatchImageCrop() {
                 border: '1px solid rgba(255,255,255,0.12)'
               }}
             >
-              <p style={{ margin: '0 0 10px', fontSize: '0.95rem', fontWeight: 600 }}>
+              <p style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 600 }}>
                 Frame size
-              </p>
-              <p className="text-muted" style={{ margin: '0 0 12px', fontSize: '0.8rem' }}>
-                Width and height are independent in the fields—changing one does not change the other. Dragging the crop on the image resizes it while keeping the current width-to-height ratio. The box stays centered when possible.
               </p>
               <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                 <label style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1106,9 +1072,6 @@ export default function BatchImageCrop() {
                   </span>
                 )}
               </div>
-              <p className="text-muted" style={{ margin: '0 0 12px', fontSize: '0.72rem', lineHeight: 1.4 }}>
-                px uses the image file pixel size. mm, cm, and inch use 96 px per inch (common screen reference) from that pixel size.
-              </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.85rem' }}>
                   {`Width (${frameUnitLabel})`}
@@ -1216,7 +1179,12 @@ export default function BatchImageCrop() {
 
             <div style={{ 
               display: 'flex', 
-              justifyContent: 'center', 
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 20,
+              flexWrap: 'wrap',
+              width: '100%',
               marginBottom: 24,
               background: 'rgba(0,0,0,0.3)',
               padding: 24,
@@ -1225,7 +1193,7 @@ export default function BatchImageCrop() {
               maxHeight: '80vh',
               position: 'relative'
             }}>
-              <div style={{ position: 'relative', display: 'inline-block', width: '100%', textAlign: 'center' }}>
+              <div style={{ flex: '1 1 auto', minWidth: 0, textAlign: 'center' }}>
                 <ReactCrop
                   crop={crop}
                   onChange={(_, percentCrop) => handleCropChange(_, percentCrop)}
@@ -1237,7 +1205,7 @@ export default function BatchImageCrop() {
                   minHeight={1}
                   locked={false}
                   style={{ position: 'relative' }}
-                  className={selectedFrame.shape !== 'rectangle' && selectedFrame.svgPath ? 'shape-frame-crop' : ''}
+                  className={selectedFrame.svgPath ? 'shape-frame-crop' : ''}
                 >
                   <div
                     ref={cropMediaWrapperRef}
@@ -1330,6 +1298,40 @@ export default function BatchImageCrop() {
                     )}
                   </div>
                 </ReactCrop>
+              </div>
+              <div
+                style={{
+                  flex: '0 0 auto',
+                  alignSelf: 'stretch',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'flex-start',
+                  minWidth: 160,
+                  maxWidth: 220
+                }}
+              >
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: 'rgba(0, 0, 0, 0.58)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    textAlign: 'left',
+                    lineHeight: 1.3
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: '#fff' }}>
+                    Image {currentImageIndex + 1} of {images.length}
+                  </p>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#d1d5db' }}>
+                    {croppedImages.filter(img => img).length} image{croppedImages.filter(img => img).length !== 1 ? 's' : ''} cropped
+                  </p>
+                  {pendingSaveCount > 0 && (
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af' }}>
+                      Saving ({pendingSaveCount})
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1497,13 +1499,25 @@ export default function BatchImageCrop() {
         .ReactCrop {
           max-width: 100%;
         }
-        /* Library mask is always rectangular — hide it; rectangle uses box-shadow dim, shapes use custom SVG dim */
+        /* Library mask is always rectangular — hide it; dim uses SVG overlay (same for rectangle and other frames) */
         .ReactCrop__crop-mask {
           display: none !important;
         }
+        /* Rectangle: same clean look as shape frames — library default marching-ants (#444) makes the crop area look too dark */
         .ReactCrop:not(.shape-frame-crop) .ReactCrop__crop-selection {
           border: 3px solid #3498db;
           box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+          animation: none !important;
+          background-image: none !important;
+          color: transparent !important;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__crop-selection:focus {
+          outline: 2px solid rgba(52, 152, 219, 0.85);
+          outline-offset: 1px;
+        }
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__rule-of-thirds-hz,
+        .ReactCrop:not(.shape-frame-crop) .ReactCrop__rule-of-thirds-vt {
+          display: none !important;
         }
         /* Non-rectangle: no rectangular border on selection; shape is drawn by SVG. Selection must stay above dim layers for drag/resize */
         .ReactCrop.shape-frame-crop .ReactCrop__crop-selection {

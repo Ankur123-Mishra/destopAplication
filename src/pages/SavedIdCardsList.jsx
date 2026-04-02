@@ -76,6 +76,8 @@ function convertToMm(value, unit) {
 
 const MIN_PAGE_CM = 5;
 const MAX_PAGE_CM = 120;
+const MIN_PAGE_MM = MIN_PAGE_CM * 10;
+const MAX_PAGE_MM = MAX_PAGE_CM * 10;
 
 const MIN_PREVIEW_GAP_MM = 0;
 const MAX_PREVIEW_GAP_MM = 40;
@@ -119,6 +121,65 @@ function clampPageCm(value, fallbackCm) {
   const n = parseCmInput(value);
   const cm = Number.isFinite(n) ? n : fallbackCm;
   return Math.min(MAX_PAGE_CM, Math.max(MIN_PAGE_CM, cm));
+}
+
+function parseUnitInput(value) {
+  const n = Number.parseFloat(
+    String(value ?? "")
+      .replace(",", ".")
+      .trim(),
+  );
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function mmToUnit(mm, unit) {
+  const n = Number(mm);
+  if (!Number.isFinite(n)) return n;
+  switch (unit) {
+    case "cm":
+      return n / 10;
+    case "inch":
+      return n / 25.4;
+    case "px":
+      return n / 0.264583; // 1px ~= 0.264583mm (96dpi)
+    case "mm":
+    default:
+      return n;
+  }
+}
+
+function clampPageMm(valueMm, fallbackMm) {
+  const n = typeof valueMm === "number" ? valueMm : Number(valueMm);
+  if (!Number.isFinite(n)) return fallbackMm;
+  return Math.min(MAX_PAGE_MM, Math.max(MIN_PAGE_MM, n));
+}
+
+function getStepForUnit(unit) {
+  switch (unit) {
+    case "cm":
+      return 0.1;
+    case "inch":
+      return 0.04;
+    case "px":
+      return 4;
+    case "mm":
+    default:
+      return 1;
+  }
+}
+
+function getGapStepForUnit(unit) {
+  switch (unit) {
+    case "cm":
+      return 0.05;
+    case "inch":
+      return 0.02;
+    case "px":
+      return 2;
+    case "mm":
+    default:
+      return 0.5;
+  }
 }
 
 function delay(ms) {
@@ -205,11 +266,72 @@ function getBackCardCellElements(wrap) {
   );
 }
 
+/** Resolved custom back PNG for uploaded templates (same as renderBackOnlyForPrint). */
+function resolveCardBackImage(card) {
+  const uploadedT =
+    card.uploadedTemplate ||
+    (card.templateId?.startsWith("uploaded-")
+      ? getUploadedTemplateById(card.templateId)
+      : null);
+  return uploadedT?.backImage ?? undefined;
+}
+
+function isUploadedStyleTemplate(card) {
+  return (
+    card.uploadedTemplate != null ||
+    (typeof card.templateId === "string" &&
+      card.templateId.startsWith("uploaded-"))
+  );
+}
+
+/** Show a back preview/print page for this card: built-in/fabric backs, or uploaded template with a custom back image. */
+function cardShowsBackOnPreview(card) {
+  return !isUploadedStyleTemplate(card) || Boolean(resolveCardBackImage(card));
+}
+
+/** Include a back JPEG for this student (skip when uploaded template has no custom back image). */
+function cardExportsBackJpeg(card) {
+  return cardShowsBackOnPreview(card);
+}
+
+function batchHasBackPage(pageCards) {
+  if (!pageCards?.length) return false;
+  return pageCards.some((c) => cardShowsBackOnPreview(c));
+}
+
+/** How many back grid cells exist in the preview DOM (one per slot on each batch that has a back page). */
+function countExpectedBackDomCells(cards, cardsPerPage) {
+  let n = 0;
+  const batches = Math.ceil(cards.length / cardsPerPage) || 0;
+  for (let b = 0; b < batches; b++) {
+    const start = b * cardsPerPage;
+    const pageCards = cards.slice(start, start + cardsPerPage);
+    if (batchHasBackPage(pageCards)) n += pageCards.length;
+  }
+  return n;
+}
+
+/** Index into getBackCardCellElements() for global card index, or -1 if that batch has no back page. */
+function backDomIndexForCard(cards, cardsPerPage, cardIndex) {
+  const batchIndex = Math.floor(cardIndex / cardsPerPage);
+  let offset = 0;
+  for (let b = 0; b < batchIndex; b++) {
+    const start = b * cardsPerPage;
+    const pageCards = cards.slice(start, start + cardsPerPage);
+    if (batchHasBackPage(pageCards)) offset += pageCards.length;
+  }
+  const start = batchIndex * cardsPerPage;
+  const pageCards = cards.slice(start, start + cardsPerPage);
+  if (!batchHasBackPage(pageCards)) return -1;
+  return offset + (cardIndex - start);
+}
+
 /**
  * Writes JPEGs into a subfolder of `parentDirHandle`.
  * The folder must be chosen earlier via `showDirectoryPicker()` during a user click
  * (calling showDirectoryPicker here after async work throws "Must be handling a user gesture").
  */
+
 async function saveJpegsToFolderWithFilePicker(
   subfolderName,
   files,
@@ -272,30 +394,34 @@ async function html2canvasWithFallback(element, pageBackgroundColor) {
 }
 
 /**
- * Front + back JPEG per student. Filenames: `{mobile}_front.jpg`, `{mobile}_back.jpg` (same base as before + suffix).
- * onProgress: ({ label, current, total }) => void — total steps = 2 × card count.
+ * Front + optional back JPEG per student. Backs are omitted when the template has no custom back image (uploaded single-side).
+ * onProgress: ({ label, current, total }) => void.
  */
 async function buildPreviewFrontAndBackJpegFiles(
   wrap,
   cards,
   pageBackgroundColor,
   onProgress,
+  cardsPerPage,
 ) {
   const frontEls = getFrontCardCellElements(wrap);
   const backEls = getBackCardCellElements(wrap);
-  if (
-    frontEls.length !== cards.length ||
-    backEls.length !== cards.length ||
-    cards.length === 0
-  ) {
+  const expectedBackCells = countExpectedBackDomCells(cards, cardsPerPage);
+  if (!cards.length || frontEls.length !== cards.length) {
     throw new Error(
-      `Preview not ready (front ${frontEls.length}, back ${backEls.length}, students ${cards.length}). Wait and try again.`,
+      `Preview not ready (front ${frontEls.length}, students ${cards.length}). Wait and try again.`,
+    );
+  }
+  if (backEls.length !== expectedBackCells) {
+    throw new Error(
+      `Preview not ready (front ${frontEls.length}, back ${backEls.length}, expected back slots ${expectedBackCells}). Wait and try again.`,
     );
   }
   const used = new Set();
   const bases = cards.map((card, i) => jpegBaseNameForCard(card, i, used));
   const files = [];
-  const totalSteps = cards.length * 2;
+  const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
+  const totalSteps = cards.length + backExportCount;
 
   async function captureCell(el, label, index1) {
     let dataUrl;
@@ -315,7 +441,6 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     return dataUrl;
   }
-
   let step = 0;
   for (let i = 0; i < cards.length; i++) {
     step += 1;
@@ -329,15 +454,45 @@ async function buildPreviewFrontAndBackJpegFiles(
     await delay(80);
   }
   for (let i = 0; i < cards.length; i++) {
+    if (!cardExportsBackJpeg(cards[i])) continue;
+    const domIdx = backDomIndexForCard(cards, cardsPerPage, i);
+    if (domIdx < 0 || !backEls[domIdx]) {
+      throw new Error(
+        `Back preview missing for card ${i + 1}. Wait and try again.`,
+      );
+    }
     step += 1;
     onProgress?.({
       label: "Capturing JPEGs (back)…",
       current: step,
       total: totalSteps,
     });
-    const dataUrl = await captureCell(backEls[i], "back", i + 1);
+    const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
     files.push({ filename: `${bases[i]}_back.jpg`, dataUrl });
     await delay(80);
+  }
+  return files;
+}
+
+/**
+ * Builds one JPEG per preview page (same page size as the preview),
+ * e.g. page-001.jpg, page-002.jpg... This avoids the "thin width" issue
+ * of stitching all pages into a single long image.
+ */
+async function buildPreviewPagesJpegFiles(pageNodes, pageBackgroundColor, onProgress) {
+  const nodes = Array.from(pageNodes || []);
+  if (nodes.length === 0) return [];
+  const files = [];
+  for (let i = 0; i < nodes.length; i++) {
+    onProgress?.({
+      label: "Capturing JPEG pages…",
+      current: i + 1,
+      total: nodes.length,
+    });
+    const dataUrl = await html2canvasWithFallback(nodes[i], pageBackgroundColor);
+    const idx = String(i + 1).padStart(3, "0");
+    files.push({ filename: `page-${idx}.jpg`, dataUrl });
+    await delay(120);
   }
   return files;
 }
@@ -591,13 +746,17 @@ export default function SavedIdCardsList({
   const [chargingDownloadPoints, setChargingDownloadPoints] = useState(false);
 
   const [pageSizeMode, setPageSizeMode] = useState("a4"); // 'a4' | 'custom'
-  const [customPageWidthCm, setCustomPageWidthCm] = useState("21");
-  const [customPageHeightCm, setCustomPageHeightCm] = useState("29.7");
+  const [pageSizeUnit, setPageSizeUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
+  const [customPageWidthMm, setCustomPageWidthMm] = useState(A4_WIDTH_MM);
+  const [customPageHeightMm, setCustomPageHeightMm] = useState(A4_HEIGHT_MM);
+
+  const [previewGapUnit, setPreviewGapUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
 
   const [previewGapHorizontalMm, setPreviewGapHorizontalMm] =
     useState(PRINT_GAP_MM);
   const [previewGapVerticalMm, setPreviewGapVerticalMm] =
     useState(PRINT_GAP_MM);
+  const [centerPreviewCards, setCenterPreviewCards] = useState(false);
   const [previewPageBackgroundColor, setPreviewPageBackgroundColor] =
     useState(DEFAULT_PREVIEW_PAGE_BG);
 
@@ -605,15 +764,15 @@ export default function SavedIdCardsList({
     () =>
       pageSizeMode === "a4"
         ? A4_WIDTH_MM
-        : clampPageCm(customPageWidthCm, 21) * 10,
-    [pageSizeMode, customPageWidthCm],
+        : clampPageMm(customPageWidthMm, A4_WIDTH_MM),
+    [pageSizeMode, customPageWidthMm],
   );
   const pageHeightMm = React.useMemo(
     () =>
       pageSizeMode === "a4"
         ? A4_HEIGHT_MM
-        : clampPageCm(customPageHeightCm, 29.7) * 10,
-    [pageSizeMode, customPageHeightCm],
+        : clampPageMm(customPageHeightMm, A4_HEIGHT_MM),
+    [pageSizeMode, customPageHeightMm],
   );
 
   // Level 1: Schools
@@ -843,13 +1002,30 @@ export default function SavedIdCardsList({
   const { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages } =
     printLayout;
 
-  // One A4 page = fronts only, next A4 page = backs for the same students (same grid positions)
-  const spreadPagesCount = totalPages > 0 ? totalPages * 2 : 0;
+  // One A4 page = fronts; optional second page = backs per batch only when at least one card has a back (uploaded custom or built-in)
+  const previewSpreadPages = React.useMemo(() => {
+    const out = [];
+    if (!cardsToPrint.length || !cardsPerPage) return out;
+    const batches = Math.ceil(cardsToPrint.length / cardsPerPage);
+    for (let b = 0; b < batches; b++) {
+      const start = b * cardsPerPage;
+      const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
+      out.push({ batchIndex: b, side: "front" });
+      if (batchHasBackPage(pageCards)) out.push({ batchIndex: b, side: "back" });
+    }
+    return out;
+  }, [cardsToPrint, cardsPerPage]);
+
+  const spreadPagesCount = previewSpreadPages.length;
 
   const pageSizeSummary =
     pageSizeMode === "a4"
-      ? `A4 (${A4_WIDTH_MM}×${A4_HEIGHT_MM} mm)`
-      : `Custom (${(pageWidthMm / 10).toFixed(1)}×${(pageHeightMm / 10).toFixed(1)} cm)`;
+      ? `A4 (${mmToUnit(A4_WIDTH_MM, pageSizeUnit).toFixed(1)}×${mmToUnit(A4_HEIGHT_MM, pageSizeUnit).toFixed(1)} ${
+          pageSizeUnit === "px" ? "px" : pageSizeUnit
+        })`
+      : `Custom (${mmToUnit(pageWidthMm, pageSizeUnit).toFixed(1)}×${mmToUnit(pageHeightMm, pageSizeUnit).toFixed(1)} ${
+          pageSizeUnit === "px" ? "px" : pageSizeUnit
+        })`;
 
   const pageSizeControlStyle = {
     background: "#2a2a2a",
@@ -881,13 +1057,30 @@ export default function SavedIdCardsList({
         onChange={(e) => setPageSizeMode(e.target.value)}
         style={{ ...pageSizeControlStyle, minWidth: 140 }}
       >
-        <option value="a4">A4 (21×29.7 cm)</option>
-        <option value="custom">Custom (cm)</option>
+        <option value="a4">A4</option>
+        <option value="custom">Custom</option>
+      </select>
+      <label
+        htmlFor={`${idPrefix}-unit`}
+        style={{ color: "rgba(255,255,255,0.85)", whiteSpace: "nowrap" }}
+      >
+        Unit
+      </label>
+      <select
+        id={`${idPrefix}-unit`}
+        value={pageSizeUnit}
+        onChange={(e) => setPageSizeUnit(e.target.value)}
+        style={{ ...pageSizeControlStyle, minWidth: 110 }}
+      >
+        <option value="mm">mm</option>
+        <option value="cm">cm</option>
+        <option value="px">pixel</option>
+        <option value="inch">inch</option>
       </select>
       {pageSizeMode === "custom" && (
         <>
           <label
-            htmlFor={`${idPrefix}-w-cm`}
+            htmlFor={`${idPrefix}-w`}
             style={{
               color: "rgba(255,255,255,0.85)",
               display: "flex",
@@ -895,20 +1088,28 @@ export default function SavedIdCardsList({
               gap: 6,
             }}
           >
-            Width (cm)
+            Width ({pageSizeUnit === "px" ? "px" : pageSizeUnit})
             <input
-              id={`${idPrefix}-w-cm`}
+              id={`${idPrefix}-w`}
               type="number"
-              min={MIN_PAGE_CM}
-              max={MAX_PAGE_CM}
-              step={0.1}
-              value={customPageWidthCm}
-              onChange={(e) => setCustomPageWidthCm(e.target.value)}
+              min={mmToUnit(MIN_PAGE_MM, pageSizeUnit)}
+              max={mmToUnit(MAX_PAGE_MM, pageSizeUnit)}
+              step={getStepForUnit(pageSizeUnit)}
+              value={mmToUnit(customPageWidthMm, pageSizeUnit)}
+              onChange={(e) => {
+                const parsed = parseUnitInput(e.target.value);
+                if (!Number.isFinite(parsed)) return;
+                const nextMm = clampPageMm(
+                  convertToMm(parsed, pageSizeUnit),
+                  A4_WIDTH_MM,
+                );
+                setCustomPageWidthMm(nextMm);
+              }}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
           <label
-            htmlFor={`${idPrefix}-h-cm`}
+            htmlFor={`${idPrefix}-h`}
             style={{
               color: "rgba(255,255,255,0.85)",
               display: "flex",
@@ -916,15 +1117,23 @@ export default function SavedIdCardsList({
               gap: 6,
             }}
           >
-            Height (cm)
+            Height ({pageSizeUnit === "px" ? "px" : pageSizeUnit})
             <input
-              id={`${idPrefix}-h-cm`}
+              id={`${idPrefix}-h`}
               type="number"
-              min={MIN_PAGE_CM}
-              max={MAX_PAGE_CM}
-              step={0.1}
-              value={customPageHeightCm}
-              onChange={(e) => setCustomPageHeightCm(e.target.value)}
+              min={mmToUnit(MIN_PAGE_MM, pageSizeUnit)}
+              max={mmToUnit(MAX_PAGE_MM, pageSizeUnit)}
+              step={getStepForUnit(pageSizeUnit)}
+              value={mmToUnit(customPageHeightMm, pageSizeUnit)}
+              onChange={(e) => {
+                const parsed = parseUnitInput(e.target.value);
+                if (!Number.isFinite(parsed)) return;
+                const nextMm = clampPageMm(
+                  convertToMm(parsed, pageSizeUnit),
+                  A4_HEIGHT_MM,
+                );
+                setCustomPageHeightMm(nextMm);
+              }}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
@@ -947,6 +1156,23 @@ export default function SavedIdCardsList({
         Card spacing (preview)
       </span>
       <label
+        htmlFor={`${idPrefix}-unit`}
+        style={{ color: "rgba(255,255,255,0.85)", whiteSpace: "nowrap" }}
+      >
+        Unit
+      </label>
+      <select
+        id={`${idPrefix}-unit`}
+        value={previewGapUnit}
+        onChange={(e) => setPreviewGapUnit(e.target.value)}
+        style={{ ...pageSizeControlStyle, minWidth: 110 }}
+      >
+        <option value="mm">mm</option>
+        <option value="cm">cm</option>
+        <option value="px">pixel</option>
+        <option value="inch">inch</option>
+      </select>
+      <label
         htmlFor={`${idPrefix}-h`}
         style={{
           color: "rgba(255,255,255,0.85)",
@@ -955,17 +1181,23 @@ export default function SavedIdCardsList({
           gap: 6,
         }}
       >
-        Horizontal (mm)
+        Horizontal ({previewGapUnit === "px" ? "px" : previewGapUnit})
         <input
           id={`${idPrefix}-h`}
           type="number"
-          min={MIN_PREVIEW_GAP_MM}
-          max={MAX_PREVIEW_GAP_MM}
-          step={0.5}
-          value={previewGapHorizontalMm}
-          onChange={(e) =>
-            setPreviewGapHorizontalMm(clampPreviewGapMm(e.target.value))
-          }
+          min={mmToUnit(MIN_PREVIEW_GAP_MM, previewGapUnit)}
+          max={mmToUnit(MAX_PREVIEW_GAP_MM, previewGapUnit)}
+          step={getGapStepForUnit(previewGapUnit)}
+          value={mmToUnit(previewGapHorizontalMm, previewGapUnit)}
+          onChange={(e) => {
+            const parsed = parseUnitInput(e.target.value);
+            if (!Number.isFinite(parsed)) return;
+            const nextMm = clampPreviewGapMm(
+              convertToMm(parsed, previewGapUnit),
+              PRINT_GAP_MM,
+            );
+            setPreviewGapHorizontalMm(nextMm);
+          }}
           style={{ ...pageSizeControlStyle, width: 72 }}
         />
       </label>
@@ -978,17 +1210,23 @@ export default function SavedIdCardsList({
           gap: 6,
         }}
       >
-        Vertical (mm)
+        Vertical ({previewGapUnit === "px" ? "px" : previewGapUnit})
         <input
           id={`${idPrefix}-v`}
           type="number"
-          min={MIN_PREVIEW_GAP_MM}
-          max={MAX_PREVIEW_GAP_MM}
-          step={0.5}
-          value={previewGapVerticalMm}
-          onChange={(e) =>
-            setPreviewGapVerticalMm(clampPreviewGapMm(e.target.value))
-          }
+          min={mmToUnit(MIN_PREVIEW_GAP_MM, previewGapUnit)}
+          max={mmToUnit(MAX_PREVIEW_GAP_MM, previewGapUnit)}
+          step={getGapStepForUnit(previewGapUnit)}
+          value={mmToUnit(previewGapVerticalMm, previewGapUnit)}
+          onChange={(e) => {
+            const parsed = parseUnitInput(e.target.value);
+            if (!Number.isFinite(parsed)) return;
+            const nextMm = clampPreviewGapMm(
+              convertToMm(parsed, previewGapUnit),
+              PRINT_GAP_MM,
+            );
+            setPreviewGapVerticalMm(nextMm);
+          }}
           style={{ ...pageSizeControlStyle, width: 72 }}
         />
       </label>
@@ -1088,9 +1326,13 @@ export default function SavedIdCardsList({
           if (format === "jpg") {
             const frontCells = getFrontCardCellElements(wrap);
             const backCells = getBackCardCellElements(wrap);
+            const expectedBackCells = countExpectedBackDomCells(
+              cards,
+              cardsPerPage,
+            );
             if (
               frontCells.length !== cards.length ||
-              backCells.length !== cards.length ||
+              backCells.length !== expectedBackCells ||
               cards.length === 0
             ) {
               continue;
@@ -1109,17 +1351,35 @@ export default function SavedIdCardsList({
             const cellsReadyBack = getBackCardCellElements(wrap);
             if (
               cellsReadyFront.length !== cards.length ||
-              cellsReadyBack.length !== cards.length
+              cellsReadyBack.length !== expectedBackCells
             ) {
               continue;
             }
-            const subfolderName = `id-cards-jpeg-${Date.now()}`;
+            const classLabel = selectedClass
+              ? `${selectedClass.className}${
+                  selectedClass.section ? ` - ${selectedClass.section}` : ""
+                }`.trim()
+              : String(classId || schoolId || "Class").trim();
+            const subfolderName = `${classLabel}`;
             const files = await buildPreviewFrontAndBackJpegFiles(
               wrap,
               cards,
               previewPageBackgroundColor,
               onProg,
+              cardsPerPage,
             );
+
+            // Additionally export one JPEG per preview page (page-sized, clearer than a stitched long image).
+            try {
+              const pageFiles = await buildPreviewPagesJpegFiles(
+                nodes,
+                previewPageBackgroundColor,
+                onProg,
+              );
+              files.push(...pageFiles);
+            } catch (e) {
+              console.warn("Page JPEG export failed (keeping per-card JPEGs):", e);
+            }
             const saveResult = await saveJpegExportToFolder(
               subfolderName,
               files,
@@ -1182,6 +1442,7 @@ export default function SavedIdCardsList({
     pendingExportFormat,
     showPreviewView,
     spreadPagesCount,
+    cardsPerPage,
     pageWidthMm,
     pageHeightMm,
     classId,
@@ -1307,6 +1568,31 @@ export default function SavedIdCardsList({
     };
   };
 
+  /** Single-student modal when uploaded template has no back image: one card height only. */
+  const singleStackFrontOnlyStyle = (card) => {
+    const dim = card?.dimension;
+    const unit = card?.dimensionUnit || "mm";
+    let wMm = DEFAULT_CARD_WIDTH_MM;
+    let hMm = DEFAULT_CARD_HEIGHT_MM;
+    if (
+      dim &&
+      typeof dim.width === "number" &&
+      typeof dim.height === "number"
+    ) {
+      wMm = convertToMm(dim.width, unit);
+      hMm = convertToMm(dim.height, unit);
+    }
+    return {
+      width: `min(420px, 92vw, calc(85vh * ${wMm} / ${hMm}))`,
+      maxWidth: "100%",
+      height: "auto",
+      aspectRatio: `${wMm} / ${hMm}`,
+      boxSizing: "border-box",
+      ["--card-w-mm"]: wMm,
+      ["--card-h-mm"]: hMm,
+    };
+  };
+
   const renderCardForPrint = (card, useGridSize = false) => {
     const isFabric = card.templateId?.startsWith("fabric-");
     const fabricTemplate = isFabric
@@ -1399,8 +1685,23 @@ export default function SavedIdCardsList({
     );
   };
 
-  // Renders one card as front (full size) + back (same size) stacked vertically (single-student modal only)
+  // Renders one card as front (full size) + optional back (single-student modal only)
   const renderCardWithBackForPreview = (card, useGridSize = false) => {
+    const customBack = resolveCardBackImage(card);
+    if (isUploadedStyleTemplate(card) && !customBack) {
+      const stackStyle = useGridSize ? undefined : singleStackFrontOnlyStyle(card);
+      return (
+        <div
+          key={`${card._id}-${card.id}`}
+          className="preview-card-stack preview-card-stack-front-only"
+          style={stackStyle}
+        >
+          <div className="preview-card-half preview-card-front">
+            {renderCardForPrint(card, true)}
+          </div>
+        </div>
+      );
+    }
     const stackStyle = useGridSize ? undefined : singleStackPreviewStyle(card);
     return (
       <div
@@ -1734,14 +2035,14 @@ export default function SavedIdCardsList({
             {renderPageSizeControls("print")}
           </div>
           <div ref={printContentRef} className="print-pages-wrap">
-            {Array.from({ length: spreadPagesCount }, (_, pageIndex) => {
-              const batchIndex = Math.floor(pageIndex / 2);
-              const isBackPage = pageIndex % 2 === 1;
+            {previewSpreadPages.map((desc) => {
+              const { batchIndex, side } = desc;
+              const isBackPage = side === "back";
               const start = batchIndex * cardsPerPage;
               const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
               return (
                 <div
-                  key={pageIndex}
+                  key={`print-${batchIndex}-${side}`}
                   className="print-page print-page-spread"
                   style={{
                     width: `${pageWidthMm}mm`,
@@ -1788,12 +2089,23 @@ export default function SavedIdCardsList({
             <div style={{ flex: 1, minWidth: 0 }}>
               <h3 style={{ margin: 0 }}>
                 ID Cards Preview – {pageSizeSummary} ({spreadPagesCount} page
-                {spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then
-                backs)
+                {spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then backs
+                only when the template has a back image)
               </h3>
               <div style={{ marginTop: 12 }}>
                 {renderPageSizeControls("preview")}
                 {renderPreviewGapControls("preview-gap")}
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setCenterPreviewCards((v) => !v)}
+                  >
+                    {centerPreviewCards
+                      ? "Centered layout: ON"
+                      : "Center cards on page"}
+                  </button>
+                </div>
               </div>
             </div>
             <div
@@ -1887,9 +2199,9 @@ export default function SavedIdCardsList({
           </div>
           <div className="preview-cards-scroll">
             <div className="preview-pages-wrap" ref={previewPagesWrapRef}>
-              {Array.from({ length: spreadPagesCount }, (_, pageIndex) => {
-                const batchIndex = Math.floor(pageIndex / 2);
-                const isBackPage = pageIndex % 2 === 1;
+              {previewSpreadPages.map((desc) => {
+                const { batchIndex, side } = desc;
+                const isBackPage = side === "back";
                 const start = batchIndex * cardsPerPage;
                 const pageCards = cardsToPrint.slice(
                   start,
@@ -1897,8 +2209,8 @@ export default function SavedIdCardsList({
                 );
                 return (
                   <div
-                    key={pageIndex}
-                    className={`print-page preview-page print-page-spread ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
+                    key={`preview-${batchIndex}-${side}`}
+                    className={`print-page preview-page print-page-spread ${centerPreviewCards ? "preview-page--center" : ""} ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
                     style={{
                       width: `${pageWidthMm}mm`,
                       height: `${pageHeightMm}mm`,
@@ -2248,6 +2560,14 @@ export default function SavedIdCardsList({
           display: flex;
           align-items: flex-start;
           justify-content: flex-start;
+        }
+        .preview-page--center {
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        .preview-page--center .print-cards-grid.print-cards-grid--preview {
+          width: max-content !important;
+          height: max-content !important;
         }
         .print-cards-grid {
           display: grid;
