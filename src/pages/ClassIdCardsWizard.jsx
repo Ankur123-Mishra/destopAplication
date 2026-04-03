@@ -148,7 +148,7 @@ function mapApiStudent(s) {
   return {
     id: s._id,
     name: s.studentName,
-    studentId: s.admissionNo || s.rollNo || s.uniqueCode || '—',
+    studentId: s.studentId || s.admissionNo || s.rollNo || s.uniqueCode || '',
     admissionNo: s.admissionNo || '',
     rollNo: s.rollNo || '',
     uniqueCode: s.uniqueCode || '',
@@ -157,7 +157,11 @@ function mapApiStudent(s) {
     email: s.email || '',
     address: s?.address || '',
     className: s.className || classLabel || '',
+    fatherName: s.fatherName || '',
+    photoNo: s.photoNo || '',
     status: s.status,
+    uploadedVia: s.uploadedVia || '',
+    extraFields: (s.extraFields && typeof s.extraFields === 'object') ? s.extraFields : {},
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
@@ -1101,8 +1105,8 @@ export default function ClassIdCardsWizard() {
     const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
     const initialData = previewStudent
       ? {
-          name: previewStudent.name || 'Student Name',
-          studentId: previewStudent.studentId || '—',
+          name: previewStudent.name || '',
+          studentId: previewStudent.studentId || '',
           admissionNo: previewStudent.admissionNo || '',
           rollNo: previewStudent.rollNo || '',
           uniqueCode: previewStudent.uniqueCode || '',
@@ -1110,16 +1114,18 @@ export default function ClassIdCardsWizard() {
           phone: previewStudent.phone || '',
           email: previewStudent.email || '',
           address: previewStudent.address || '',
-          className: previewStudent.className || cls?.name || 'Class',
-          schoolName: school?.name || 'School Name',
+          className: previewStudent.className || cls?.name || '',
+          schoolName: school?.name || '',
+          extraFields: previewStudent.extraFields || {},
         }
       : {
-          name: 'Student Name',
-          studentId: '—',
-          className: cls?.name || 'Class',
-          schoolName: school?.name || 'School Name',
+          name: '',
+          studentId: '',
+          className: cls?.name || '',
+          schoolName: school?.name || '',
           dateOfBirth: '',
           address: school?.address || '',
+          extraFields: {},
         };
     const backFromArrange = () => {
       setEditorOpenedFromApiClassTemplate(false);
