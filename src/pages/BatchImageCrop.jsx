@@ -179,6 +179,10 @@ export default function BatchImageCrop() {
   const [frameWidthInputDraft, setFrameWidthInputDraft] = useState(null);
   const [frameHeightInputDraft, setFrameHeightInputDraft] = useState(null);
   const [lockedPixelAspect, setLockedPixelAspect] = useState(null);
+  /** manual: one image at a time (C / Next). auto: same crop applied to all images immediately. */
+  const [cropMode, setCropMode] = useState('manual');
+  const autoBatchStartedRef = useRef(false);
+  const autoCropCancelledRef = useRef(false);
   const cropRef = useRef(crop);
   const displayedImageSizeRef = useRef(displayedImageSize);
   const shapeDimMaskId = `sdm-${useId().replace(/:/g, '')}`;
@@ -344,6 +348,8 @@ export default function BatchImageCrop() {
   };
 
   const handleSelectFrame = (frame) => {
+    autoCropCancelledRef.current = false;
+    autoBatchStartedRef.current = false;
     setSelectedFrame(frame);
     setCrop(frame.crop);
     setCompletedCrop(frame.crop);
@@ -639,6 +645,81 @@ export default function BatchImageCrop() {
     });
   }, [step, sourceFolder, outputFolder]);
 
+  React.useEffect(() => {
+    if (cropMode !== 'auto' || step !== STEPS.DEFINE_CROP) return;
+    if (autoBatchStartedRef.current) return;
+    if (!completedCrop || completedCrop.width === 0 || completedCrop.height === 0) return;
+    if (!imageNaturalSize.width || !imageNaturalSize.height) return;
+    if (!fixedOutputSizePx.width || !fixedOutputSizePx.height) return;
+    if (images.length === 0) return;
+
+    autoBatchStartedRef.current = true;
+
+    const cropSnapshot = {
+      unit: '%',
+      width: completedCrop.width,
+      height: completedCrop.height,
+      x: completedCrop.x,
+      y: completedCrop.y
+    };
+
+    const allCropped = images.map((imagePath) => ({ imagePath, crop: cropSnapshot }));
+    setCroppedImages(allCropped);
+    setProcessing(true);
+
+    (async () => {
+      try {
+        if (saveDrainTimeoutRef.current) {
+          window.clearTimeout(saveDrainTimeoutRef.current);
+          saveDrainTimeoutRef.current = null;
+        }
+        // Visually step through images while we queue all saves.
+        for (let i = 0; i < images.length; i += 1) {
+          if (autoCropCancelledRef.current) return;
+
+          // Update UI to show current image.
+          setCurrentImageIndex(i);
+          const imagePath = images[i];
+          if (imagePath) {
+            setPreviewImage(`file://${imagePath}`);
+          }
+
+          // Queue save for this image.
+          scheduleImageSave(i, cropSnapshot);
+
+          // Small delay so the user can see images change.
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        }
+        runSaveDrain();
+        await waitForAllSaves();
+        if (autoCropCancelledRef.current) return;
+        setProcessedCount(images.length);
+        setProgress(100);
+        setStep(STEPS.COMPLETE);
+      } catch (err) {
+        console.error('Auto batch crop failed:', err);
+        if (!autoCropCancelledRef.current) {
+          autoBatchStartedRef.current = false;
+          alert(err?.message || 'Auto crop failed. Please try again.');
+        }
+      } finally {
+        setProcessing(false);
+      }
+    })();
+  }, [
+    cropMode,
+    step,
+    completedCrop,
+    imageNaturalSize.width,
+    imageNaturalSize.height,
+    fixedOutputSizePx.width,
+    fixedOutputSizePx.height,
+    images,
+    selectedFrame?.id,
+    previewImage
+  ]);
+
   const handleNextImage = async () => {
     if (!completedCrop || completedCrop.width === 0 || completedCrop.height === 0) {
       alert('Please define a crop area for this image first.');
@@ -770,7 +851,7 @@ export default function BatchImageCrop() {
   };
 
   React.useEffect(() => {
-    if (step !== STEPS.DEFINE_CROP) return undefined;
+    if (step !== STEPS.DEFINE_CROP || cropMode !== 'manual') return undefined;
     const onKeyDown = (e) => {
       const targetTag = e.target?.tagName;
       const isTypingTarget =
@@ -786,7 +867,7 @@ export default function BatchImageCrop() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [step, processing, currentImageIndex, images.length, completedCrop, croppedImages, outputFolder, selectedFrame, sourceFolder]);
+  }, [cropMode, step, processing, currentImageIndex, images.length, completedCrop, croppedImages, outputFolder, selectedFrame, sourceFolder]);
 
   const processBatchCrop = async (outputPath, imagesToCrop) => {
     setStep(STEPS.PROCESSING);
@@ -854,9 +935,14 @@ export default function BatchImageCrop() {
     setFrameSizeUnit('mm');
     setFrameWidthInputDraft(null);
     setFrameHeightInputDraft(null);
+    setCropMode('manual');
+    autoCropCancelledRef.current = true;
+    autoBatchStartedRef.current = false;
   };
 
   const handleBackToFrameSelection = () => {
+    autoCropCancelledRef.current = true;
+    autoBatchStartedRef.current = false;
     setStep(STEPS.SELECT_FRAME);
     setSelectedFrame(null);
     setCurrentImageIndex(0);
@@ -1027,7 +1113,52 @@ export default function BatchImageCrop() {
               }}>
                 {selectedFrame.icon} {selectedFrame.name}
               </span>
+              <label
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  fontSize: '0.85rem',
+                  fontWeight: 600
+                }}
+              >
+                Crop mode
+                <select
+                  value={cropMode}
+                  onChange={(e) => setCropMode(e.target.value)}
+                  disabled={processing}
+                  style={{
+                    minWidth: 240,
+                    padding: '8px 10px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    background: 'rgba(0,0,0,0.35)',
+                    color: 'inherit',
+                    opacity: processing ? 0.6 : 1
+                  }}
+                >
+                  <option value="manual">Manual — review each image (C key or Next)</option>
+                  <option value="auto">Auto — same crop for every image, save all at once</option>
+                </select>
+              </label>
             </div>
+            {cropMode === 'auto' && (
+              <p
+                className="text-muted"
+                style={{
+                  marginBottom: 16,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(46, 204, 113, 0.08)',
+                  border: '1px solid rgba(46, 204, 113, 0.25)',
+                  fontSize: '0.95rem'
+                }}
+              >
+                {processing
+                  ? 'Cropping and saving all images…'
+                  : 'Loading the first image, then all images will be cropped with the same area automatically.'}
+              </p>
+            )}
             <div
               style={{
                 marginBottom: 20,
@@ -1046,13 +1177,15 @@ export default function BatchImageCrop() {
                   <select
                     value={frameSizeUnit}
                     onChange={(e) => setFrameSizeUnit(e.target.value)}
+                    disabled={cropMode === 'auto'}
                     style={{
                       minWidth: 200,
                       padding: '8px 10px',
                       borderRadius: 6,
                       border: '1px solid rgba(255,255,255,0.2)',
                       background: 'rgba(0,0,0,0.35)',
-                      color: 'inherit'
+                      color: 'inherit',
+                      opacity: cropMode === 'auto' ? 0.6 : 1
                     }}
                   >
                     {FRAME_SIZE_UNITS.map((u) => (
@@ -1104,7 +1237,7 @@ export default function BatchImageCrop() {
                         bumpFrameWidth(e.key === 'ArrowUp' ? 1 : -1);
                       }
                     }}
-                    disabled={!imageNaturalSize.width || !imageNaturalSize.height}
+                    disabled={cropMode === 'auto' || !imageNaturalSize.width || !imageNaturalSize.height}
                     style={{
                       width: 120,
                       padding: '8px 10px',
@@ -1113,7 +1246,7 @@ export default function BatchImageCrop() {
                       background: 'rgba(0,0,0,0.25)',
                       color: 'inherit',
                       outline: 'none',
-                      opacity: !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
+                      opacity: cropMode === 'auto' || !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
                     }}
                   />
                 </label>
@@ -1148,7 +1281,7 @@ export default function BatchImageCrop() {
                         bumpFrameHeight(e.key === 'ArrowUp' ? 1 : -1);
                       }
                     }}
-                    disabled={!imageNaturalSize.width || !imageNaturalSize.height}
+                    disabled={cropMode === 'auto' || !imageNaturalSize.width || !imageNaturalSize.height}
                     style={{
                       width: 120,
                       padding: '8px 10px',
@@ -1157,7 +1290,7 @@ export default function BatchImageCrop() {
                       background: 'rgba(0,0,0,0.25)',
                       color: 'inherit',
                       outline: 'none',
-                      opacity: !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
+                      opacity: cropMode === 'auto' || !imageNaturalSize.width || !imageNaturalSize.height ? 0.5 : 1
                     }}
                   />
                 </label>
@@ -1203,7 +1336,7 @@ export default function BatchImageCrop() {
                   aspect={reactCropAspect}
                   minWidth={1}
                   minHeight={1}
-                  locked={false}
+                  locked={cropMode === 'auto'}
                   style={{ position: 'relative' }}
                   className={selectedFrame.svgPath ? 'shape-frame-crop' : ''}
                 >
@@ -1359,14 +1492,14 @@ export default function BatchImageCrop() {
                 <button 
                   className="btn btn-secondary" 
                   onClick={handlePreviousImage}
-                  disabled={currentImageIndex === 0}
+                  disabled={cropMode === 'auto' || currentImageIndex === 0}
                 >
                   ← Previous
                 </button>
                 <button 
                   className="btn btn-secondary" 
                   onClick={handleSkipImage}
-                  disabled={currentImageIndex >= images.length - 1}
+                  disabled={cropMode === 'auto' || currentImageIndex >= images.length - 1}
                 >
                   Skip →
                 </button>
@@ -1377,7 +1510,13 @@ export default function BatchImageCrop() {
                   <button 
                     className="btn btn-primary" 
                     onClick={handleNextImage}
-                    disabled={processing || !completedCrop || completedCrop.width === 0 || completedCrop.height === 0}
+                    disabled={
+                      cropMode === 'auto' ||
+                      processing ||
+                      !completedCrop ||
+                      completedCrop.width === 0 ||
+                      completedCrop.height === 0
+                    }
                     style={{ fontSize: '1rem', padding: '10px 24px' }}
                   >
                     Next Image →
@@ -1386,7 +1525,13 @@ export default function BatchImageCrop() {
                   <button 
                     className="btn btn-success" 
                     onClick={handleSelectOutputFolder}
-                    disabled={processing || !completedCrop || completedCrop.width === 0 || completedCrop.height === 0}
+                    disabled={
+                      cropMode === 'auto' ||
+                      processing ||
+                      !completedCrop ||
+                      completedCrop.width === 0 ||
+                      completedCrop.height === 0
+                    }
                     style={{ fontSize: '1rem', padding: '10px 24px', background: '#2ecc71', borderColor: '#2ecc71' }}
                   >
                     💾 Save & Finish ({croppedImages.filter(img => img).length + 1})

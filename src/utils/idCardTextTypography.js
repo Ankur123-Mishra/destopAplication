@@ -61,22 +61,18 @@ function fontFamilyCssForElement(el) {
   return FONT_FAMILY_STACKS[key];
 }
 
-/** Default text box width % — nominal fontSize is tuned for this width */
+/** Default text box width % when an element omits width */
 export const ID_CARD_TEXT_REF_WIDTH_PERCENT = 42;
 
 /**
- * Effective font size (px) for canvas template text: scales down when the box is wider or
- * narrower than the reference width so lines stay within the box and nothing clips.
- * User-set fontSize is the "design" size at {@link ID_CARD_TEXT_REF_WIDTH_PERCENT}% width.
+ * Pixel font size for canvas template text: follows `el.fontSize` only.
+ * Text box width/height does not change type size — adjust font with the font size control.
+ * @param {number} [_widthPercent] legacy argument from callers; ignored
  */
-export function getCanvasTextEffectiveFontSizePx(el, widthPercent) {
+export function getCanvasTextEffectiveFontSizePx(el, _widthPercent) {
   if (el?.type !== 'text') return 12;
   const base = typeof el.fontSize === 'number' && el.fontSize > 0 ? el.fontSize : 12;
-  const w = Math.max(5, Math.min(100, widthPercent));
-  const ref = ID_CARD_TEXT_REF_WIDTH_PERCENT;
-  const sym = Math.min(ref / w, w / ref);
-  const scaled = base * sym;
-  return Math.round(Math.max(6, scaled));
+  return Math.round(Math.max(4, base));
 }
 
 /** CSS object for text elements — editor canvas and IdCardRenderer must match */
