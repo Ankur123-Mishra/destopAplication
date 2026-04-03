@@ -1039,6 +1039,11 @@ export default function SavedIdCardsList({
     };
   }, [schoolId, classId]);
 
+  // Student data source:
+  // `studentsWithTemplates` comes from `getTemplatesStatus(schoolId, classId)`
+  // which calls API: GET `/api/photographer/templates/status?schoolId=...&classId=...`
+  // Response includes `students` with `hasTemplate: true` for saved ID cards
+  // (fallback to `summary.withTemplates` when available).
   const studentsWithTemplates =
     templateStatus?.students?.filter((s) => s.hasTemplate) ??
     templateStatus?.summary?.withTemplates ??
@@ -1105,6 +1110,7 @@ export default function SavedIdCardsList({
         student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
       phone: student.mobile ?? student.phone ?? undefined,
       email: student.email ?? undefined,
+      extraFields: student.extraFields || {},
       dimension: student.school?.dimension ?? null,
       dimensionUnit: student.school?.dimensionUnit ?? "mm",
     };
@@ -1125,7 +1131,7 @@ export default function SavedIdCardsList({
     c.templateId?.startsWith("fabric-"),
   );
 
-  // How many cards fit per page from current page size (A4 or custom) and card dimensions
+  // How many cards fit per page from current page size (A4 or custom), card dimensions and current preview gaps
   const printLayout = React.useMemo(() => {
     const first = cardsToPrint[0];
     let cardWidthMm = DEFAULT_CARD_WIDTH_MM;
@@ -1141,20 +1147,22 @@ export default function SavedIdCardsList({
     }
     const usableW = pageWidthMm - 2 * PRINT_PAGE_MARGIN_MM;
     const usableH = pageHeightMm - 2 * PRINT_PAGE_MARGIN_MM;
+    const gapH = previewGapHorizontalMm;
+    const gapV = previewGapVerticalMm;
     const cols = Math.max(
       1,
-      Math.floor((usableW + PRINT_GAP_MM) / (cardWidthMm + PRINT_GAP_MM)),
+      Math.floor((usableW + gapH) / (cardWidthMm + gapH)),
     );
     const rows = Math.max(
       1,
-      Math.floor((usableH + PRINT_GAP_MM) / (cardHeightMm + PRINT_GAP_MM)),
+      Math.floor((usableH + gapV) / (cardHeightMm + gapV)),
     );
     const cardsPerPage = cols * rows;
     const totalPages = cardsToPrint.length
       ? Math.ceil(cardsToPrint.length / cardsPerPage)
       : 0;
     return { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages };
-  }, [cardsToPrint, pageWidthMm, pageHeightMm]);
+  }, [cardsToPrint, pageWidthMm, pageHeightMm, previewGapHorizontalMm, previewGapVerticalMm]);
 
   const { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages } =
     printLayout;
@@ -1529,9 +1537,7 @@ export default function SavedIdCardsList({
               continue;
             }
             const classLabel = selectedClass
-              ? `${selectedClass.className}${
-                  selectedClass.section ? ` - ${selectedClass.section}` : ""
-                }`.trim()
+              ? `${selectedClass.className}`.trim()
               : String(classId || schoolId || "Class").trim();
             const subfolderName = `${classLabel}`;
             const files = await buildPreviewFrontAndBackJpegFiles(
@@ -1802,6 +1808,7 @@ export default function SavedIdCardsList({
       studentId: card.studentId,
       className: card.className,
       schoolName: card.schoolName,
+      extraFields: card.extraFields || {},
       ...(card.address != null &&
         card.address !== "" && { address: card.address }),
       ...(card.dateOfBirth && { dateOfBirth: formatDateDMY(card.dateOfBirth) }),
@@ -2029,7 +2036,7 @@ export default function SavedIdCardsList({
         </button>
         <h3 style={{ margin: 0 }}>
           {selectedClass
-            ? `${selectedClass.className}${selectedClass.section ? ` - ${selectedClass.section}` : ""}`
+            ? `${selectedClass.className}`
             : classId}
           {isViewTemplateFlow ? " – Templates" : " – Saved ID cards"}
         </h3>
@@ -2080,7 +2087,7 @@ export default function SavedIdCardsList({
               >
                 🖨️ Print Cards
               </button>
-              <div
+              {/* <div
                 className="download-dropdown-wrap"
                 style={{ position: "relative", display: "inline-block" }}
               >
@@ -2148,11 +2155,13 @@ export default function SavedIdCardsList({
                     ))}
                   </div>
                 )}
-              </div>
+              </div> */}
             </div>
             <ul className="saved-idcards-list">
+              {/* `student` yahan `studentsWithTemplates` se aa raha hai, jo `getTemplatesStatus` (templates/status API) se populate hota hai. */}
               {studentsWithTemplates.map((student) => {
-                // console.log('student', student);
+
+                console.log('student', student);
                 const card = studentToCard(student);
                 return (
                   <li key={student._id}>

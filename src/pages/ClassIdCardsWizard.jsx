@@ -301,7 +301,7 @@ export default function ClassIdCardsWizard() {
         schoolCode: stateSchool.schoolCode || '',
         allowedMobiles: Array.isArray(stateSchool.allowedMobiles) ? stateSchool.allowedMobiles : [],
       });
-      setApiClass({ id: stateClass._id, name: `Class ${stateClass.className}${stateClass.section ? ` – ${stateClass.section}` : ''}` });
+      setApiClass({ id: stateClass._id, name: `Class ${stateClass.className}` });
       setApiStudents(stateStudents);
       setApiDataLoaded(true);
       return;
@@ -403,7 +403,7 @@ export default function ClassIdCardsWizard() {
                 }
               : null,
           );
-          setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}${cls.section ? ` – ${cls.section}` : ''}` } : null);
+          setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}` } : null);
           setApiStudents(studentsList);
           setApiDataLoaded(true);
         })
@@ -427,6 +427,7 @@ export default function ClassIdCardsWizard() {
     return classList.find((c) => c.id === effectiveClassId) || apiClass;
   }, [classList, effectiveClassId, apiClass, apiDataLoaded, classIdFromUrl]);
 
+  console.log('cls', cls);
   const students = useMemo(() => {
     if (apiDataLoaded && (effectiveClassId === classIdFromUrl || effectiveClassId === cls?.id)) {
       return apiStudents;
@@ -900,7 +901,7 @@ export default function ClassIdCardsWizard() {
     return (
       <>
         <Header
-          title={`Students & Photos – ${cls.name}`}
+          title={`Students & Photos – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
           backTo={effectiveSchoolId ? `/class-id-cards/school/${effectiveSchoolId}` : '/class-id-cards'}
         />
@@ -1135,7 +1136,7 @@ export default function ClassIdCardsWizard() {
     return (
       <>
         <Header
-          title={`Arrange elements – ${cls.name}`}
+          title={`Arrange elements – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
           backTo={`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`}
           onBackClick={backFromArrange}
@@ -1178,7 +1179,7 @@ export default function ClassIdCardsWizard() {
     return (
       <>
         <Header
-          title={`Select template – ${cls.name}`}
+          title={`Select template – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
           backTo={`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`}
         />
@@ -1431,7 +1432,7 @@ export default function ClassIdCardsWizard() {
         <div className="card" style={{ maxWidth: 560 }}>
           <h3 style={{ marginBottom: 16 }}>Confirm</h3>
           <p className="text-muted" style={{ marginBottom: 8 }}>
-            ID cards for <strong>{readyCount}</strong> selected student{readyCount !== 1 ? 's' : ''} in <strong>{cls.name}</strong> will be created and saved.
+            ID cards for <strong>{readyCount}</strong> selected student{readyCount !== 1 ? 's' : ''} in <strong>{normalizeClassNameForDisplay(cls.name)}</strong> will be created and saved.
           </p>
           <p className="text-muted" style={{ marginBottom: 20 }}>
             Template: <strong>{template?.name || selectedTemplateId}</strong>

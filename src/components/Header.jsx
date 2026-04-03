@@ -21,6 +21,7 @@ function resolveUserPoints(user) {
 }
 
 export default function Header({ title, showBack, backTo, onBackClick }) {
+  console.log('Header', title);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useApp();

@@ -4,7 +4,7 @@ import { getParentCollectionEnabled } from '../api/parentCollection';
 
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
-  { to: '/schools', label: 'Assigned Schools', icon: '🏫' },
+  // { to: '/schools', label: 'Assigned Schools', icon: '🏫' },
   // { to: '/create-school', label: 'Create School', icon: '➕' },
   // { to: '/uploaded-photos', label: 'Uploaded Photos (Class-wise)', icon: '📷' },
   { to: '/class-id-cards', label: 'Class-wise ID Cards', icon: '🪪' },

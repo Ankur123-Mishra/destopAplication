@@ -42,9 +42,24 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
               </div>
             );
           }
-          const textContent = el.dataField && (data || {})[el.dataField] != null
-            ? String((data || {})[el.dataField])
-            : (el.content ?? '');
+          const resolveDataField = (fieldKey) => {
+            if (!fieldKey) return null;
+            const direct = data?.[fieldKey];
+            if (direct != null) return direct;
+            const extras = data?.extraFields;
+            if (
+              extras &&
+              typeof extras === 'object' &&
+              Object.prototype.hasOwnProperty.call(extras, fieldKey)
+            ) {
+              return extras[fieldKey];
+            }
+            return null;
+          };
+
+          const resolved = el.dataField ? resolveDataField(el.dataField) : null;
+          const textContent =
+            resolved != null ? String(resolved) : (el.content ?? '');
           const wrapMultiline = el.dataField === 'address';
           const textBoxW = typeof el.width === 'number' && el.width > 0 ? el.width : 42;
           const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
