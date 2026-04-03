@@ -74,7 +74,9 @@ function convertToMm(value, unit) {
   }
 }
 
-const MIN_PAGE_CM = 5;
+// Allow smaller custom sizes (user wants < 50mm).
+// Keep a small but practical minimum of 1mm (0.1cm).
+const MIN_PAGE_CM = 0.1;
 const MAX_PAGE_CM = 120;
 const MIN_PAGE_MM = MIN_PAGE_CM * 10;
 const MAX_PAGE_MM = MAX_PAGE_CM * 10;
@@ -241,9 +243,7 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
 
 /**
  * Clone-only hints so exported JPEG/PDF matches on-screen text and template art more closely.
- * Extra hints for the canvas renderer path (export clone only).
- * Do not replace CSS background-image with <img> here — that breaks html2canvas for many
- * remote template URLs (CORS / canvas), leaving only overlays visible on a white card.
+ * Template art is rendered as a full-bleed <img> in IdCardRenderer (not CSS background-image).
  */
 function applyExportRenderHintsToClone(clonedDoc) {
   if (!clonedDoc?.head) return;
@@ -260,8 +260,38 @@ function applyExportRenderHintsToClone(clonedDoc) {
     .print-card-cell .idcard svg {
       shape-rendering: geometricPrecision;
     }
+    /*
+      Some template art + absolute-positioned elements can end up a couple pixels
+      lower in the captured clone (percent-based positioning vs export layout).
+      Nudge overlay elements slightly up only for export so JPEG matches preview.
+    */
+    .print-card-cell .idcard-image-template-canvas .idcard-canvas-el {
+      transform: translateY(-0.25px) !important;
+    }
+    .print-card-cell .idcard-image-template-overlay {
+      transform: translateY(-0.25px) !important;
+    }
   `;
   clonedDoc.head.appendChild(style);
+}
+
+/**
+ * Fabric.js cards: capture the backing-store canvas directly at width×height×scale.
+ * html2canvas re-samples the CSS-downscaled <canvas> in the cell and looks soft/blurred.
+ */
+function rasterizeFabricCanvasForExport(sourceCanvas, pageBackgroundColor, scale) {
+  const bg = normalizeHexColor(pageBackgroundColor);
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(sourceCanvas.width * scale));
+  out.height = Math.max(1, Math.round(sourceCanvas.height * scale));
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Could not get 2d context for export");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(sourceCanvas, 0, 0, out.width, out.height);
+  return out;
 }
 
 /** Base file name: mobile digits when available; otherwise student id / fallback. Unique per batch. */
@@ -440,6 +470,39 @@ function makeHtml2CanvasOpts(pageBackgroundColor) {
  * in Electron/Chromium it often "succeeds" but rasterizes to a blank (solid black/white) image.
  */
 async function html2canvasForExport(element, pageBackgroundColor) {
+  const fabricSource = element?.querySelector?.(
+    ".fabric-idcard-canvas-wrap canvas",
+  );
+  if (
+    fabricSource &&
+    typeof fabricSource.width === "number" &&
+    fabricSource.width > 0 &&
+    typeof fabricSource.height === "number" &&
+    fabricSource.height > 0
+  ) {
+    const scales = getHtml2CanvasExportScaleAttempts();
+    let lastFabricErr;
+    for (const scale of scales) {
+      try {
+        return rasterizeFabricCanvasForExport(
+          fabricSource,
+          pageBackgroundColor,
+          scale,
+        );
+      } catch (e) {
+        lastFabricErr = e;
+        console.warn(
+          `Fabric canvas direct export (scale ${scale}) failed, retrying`,
+          e,
+        );
+      }
+    }
+    console.warn(
+      "Fabric direct export failed; falling back to html2canvas on cell",
+      lastFabricErr,
+    );
+  }
+
   const base = makeHtml2CanvasOpts(pageBackgroundColor);
   const scales = getHtml2CanvasExportScaleAttempts();
   let lastErr;
@@ -817,6 +880,16 @@ export default function SavedIdCardsList({
   const [pageSizeUnit, setPageSizeUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
   const [customPageWidthMm, setCustomPageWidthMm] = useState(A4_WIDTH_MM);
   const [customPageHeightMm, setCustomPageHeightMm] = useState(A4_HEIGHT_MM);
+  // Keep a raw string input so Backspace/Delete can clear fully.
+  // Numeric values are applied to `customPageWidthMm/HeightMm` only when parseable.
+  const [customPageWidthInput, setCustomPageWidthInput] = useState(
+    String(mmToUnit(A4_WIDTH_MM, pageSizeUnit)),
+  );
+  const [customPageHeightInput, setCustomPageHeightInput] = useState(
+    String(mmToUnit(A4_HEIGHT_MM, pageSizeUnit)),
+  );
+  const [isEditingPageWidth, setIsEditingPageWidth] = useState(false);
+  const [isEditingPageHeight, setIsEditingPageHeight] = useState(false);
 
   const [previewGapUnit, setPreviewGapUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
 
@@ -842,6 +915,22 @@ export default function SavedIdCardsList({
         : clampPageMm(customPageHeightMm, A4_HEIGHT_MM),
     [pageSizeMode, customPageHeightMm],
   );
+
+  // When the unit changes, re-render the input from numeric mm values,
+  // but don't clobber while the user is actively editing.
+  useEffect(() => {
+    if (pageSizeMode !== "custom") return;
+    if (isEditingPageWidth) return;
+    setCustomPageWidthInput(String(mmToUnit(customPageWidthMm, pageSizeUnit)));
+  }, [pageSizeMode, isEditingPageWidth, customPageWidthMm, pageSizeUnit]);
+
+  useEffect(() => {
+    if (pageSizeMode !== "custom") return;
+    if (isEditingPageHeight) return;
+    setCustomPageHeightInput(
+      String(mmToUnit(customPageHeightMm, pageSizeUnit)),
+    );
+  }, [pageSizeMode, isEditingPageHeight, customPageHeightMm, pageSizeUnit]);
 
   // Level 1: Schools
   const [schools, setSchools] = useState([]);
@@ -1163,16 +1252,24 @@ export default function SavedIdCardsList({
               min={mmToUnit(MIN_PAGE_MM, pageSizeUnit)}
               max={mmToUnit(MAX_PAGE_MM, pageSizeUnit)}
               step={getStepForUnit(pageSizeUnit)}
-              value={mmToUnit(customPageWidthMm, pageSizeUnit)}
+              value={customPageWidthInput}
               onChange={(e) => {
-                const parsed = parseUnitInput(e.target.value);
-                if (!Number.isFinite(parsed)) return;
+                const raw = e.target.value;
+                setCustomPageWidthInput(raw);
+
+                const parsed = parseUnitInput(raw);
+                if (!Number.isFinite(parsed)) return; // allow empty while editing
+
                 const nextMm = clampPageMm(
                   convertToMm(parsed, pageSizeUnit),
                   A4_WIDTH_MM,
                 );
                 setCustomPageWidthMm(nextMm);
+                // Normalize to the clamped value (keeps preview + input consistent).
+                setCustomPageWidthInput(String(mmToUnit(nextMm, pageSizeUnit)));
               }}
+              onFocus={() => setIsEditingPageWidth(true)}
+              onBlur={() => setIsEditingPageWidth(false)}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
@@ -1192,16 +1289,24 @@ export default function SavedIdCardsList({
               min={mmToUnit(MIN_PAGE_MM, pageSizeUnit)}
               max={mmToUnit(MAX_PAGE_MM, pageSizeUnit)}
               step={getStepForUnit(pageSizeUnit)}
-              value={mmToUnit(customPageHeightMm, pageSizeUnit)}
+              value={customPageHeightInput}
               onChange={(e) => {
-                const parsed = parseUnitInput(e.target.value);
-                if (!Number.isFinite(parsed)) return;
+                const raw = e.target.value;
+                setCustomPageHeightInput(raw);
+
+                const parsed = parseUnitInput(raw);
+                if (!Number.isFinite(parsed)) return; // allow empty while editing
+
                 const nextMm = clampPageMm(
                   convertToMm(parsed, pageSizeUnit),
                   A4_HEIGHT_MM,
                 );
                 setCustomPageHeightMm(nextMm);
+                // Normalize to the clamped value (keeps preview + input consistent).
+                setCustomPageHeightInput(String(mmToUnit(nextMm, pageSizeUnit)));
               }}
+              onFocus={() => setIsEditingPageHeight(true)}
+              onBlur={() => setIsEditingPageHeight(false)}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>

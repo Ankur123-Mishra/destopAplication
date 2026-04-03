@@ -21,7 +21,10 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
   const layoutElements = template?.elements ?? elements;
   if (template?.image && layoutElements?.length) {
     return (
-      <div className={`idcard idcard-image-template idcard-image-template-canvas ${sizeClass}`} style={{ backgroundImage: `url(${template.image})` }}>
+      <div className={`idcard idcard-image-template idcard-image-template-canvas ${sizeClass}`}>
+        <div className="idcard-canvas-bg-wrap" aria-hidden="true">
+          <img className="idcard-canvas-template-bg" src={template.image} alt="" draggable={false} />
+        </div>
         {layoutElements.map((el) => {
           if (el.type === 'photo') {
             return (
@@ -71,7 +74,10 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
   /* Image-based template – fixed overlay (no custom layout) */
   if (template?.image) {
     return (
-      <div className={`idcard idcard-image-template ${sizeClass}`} style={{ backgroundImage: `url(${template.image})` }}>
+      <div className={`idcard idcard-image-template ${sizeClass}`}>
+        <div className="idcard-canvas-bg-wrap" aria-hidden="true">
+          <img className="idcard-canvas-template-bg" src={template.image} alt="" draggable={false} />
+        </div>
         <div className="idcard-image-template-overlay">
           {studentImage && (
             <div className="idcard-image-template-photo">

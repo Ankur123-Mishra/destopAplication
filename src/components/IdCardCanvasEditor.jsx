@@ -279,6 +279,8 @@ export default function IdCardCanvasEditor({
   const [colorHexDraft, setColorHexDraft] = useState('');
   const [alignMenuOpen, setAlignMenuOpen] = useState(false);
   const alignMenuRef = useRef(null);
+  // Disabled currently: “Align on card” UI.
+  const SHOW_ALIGN_ON_CARD = false;
   const didInitAddAllRef = useRef(false);
   const [dimensionLocal, setDimensionLocal] = useState(null);
   const [dimensionFormOpen, setDimensionFormOpen] = useState(false);
@@ -631,7 +633,7 @@ export default function IdCardCanvasEditor({
           Preview zoomed for editing — positions stay relative to your card dimensions · Drag to move · Photo: corner resize or sliders · Text: box width in sidebar
         </span>
         <div className="idcard-canvas-toolbar-center">
-          {selectedId && selectedEl && (
+          {selectedId && selectedEl && SHOW_ALIGN_ON_CARD && (
             <div className="idcard-canvas-align" ref={alignMenuRef}>
               <button
                 type="button"

@@ -1439,14 +1439,15 @@
   border-radius: 6px;
 }
 
-/* Image-based template (PNG background + overlay) */
+/* Image-based template (PNG/JPG art + overlay — art is a real <img>, not background-image, for sharp display/export) */
 .idcard-image-template {
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
   position: relative;
   min-height: 180px;
   aspect-ratio: 1.586 / 1;
+  /* Hairline edge only: a real border shrinks the padding box under border-box sizing and shifts %‑based
+     canvas elements vs the editor; shadow ring does not change layout dimensions. */
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+  border: none;
 }
 
 /* Canvas layout: allow wrapped address lines past inner bounds (base .idcard is overflow:hidden) */
@@ -1454,16 +1455,35 @@
   overflow: visible;
 }
 
+/* Full-bleed template art */
+.idcard-image-template > .idcard-canvas-bg-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.idcard-image-template > .idcard-canvas-bg-wrap .idcard-canvas-template-bg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
 /* Canvas layout (saved from Canva-style editor) – elements positioned by % */
 .idcard-image-template-canvas .idcard-canvas-el {
   position: absolute;
+  z-index: 1;
   box-sizing: border-box;
 }
 
 .idcard-image-template-canvas .idcard-canvas-photo {
   overflow: hidden;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.2);
+  background: transparent;
 }
 
 .idcard-image-template-canvas .idcard-canvas-photo img {
@@ -1478,7 +1498,7 @@
 
 .idcard-image-template-canvas .idcard-canvas-text {
   color: #111;
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+  text-shadow: none;
   white-space: nowrap;
   max-width: 55%;
   overflow: hidden;
@@ -1500,6 +1520,7 @@
 .idcard-image-template-overlay {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: flex;
   align-items: stretch;
   padding: 10% 8%;
@@ -1510,7 +1531,7 @@
   flex: 0 0 32%;
   border-radius: 6px;
   overflow: hidden;
-  background: rgba(255,255,255,0.2);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
