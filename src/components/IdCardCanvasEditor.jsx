@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { updatePhotographerSchool } from '../api/dashboard';
 import {
   getCanvasTextEffectiveFontSizePx,
@@ -21,6 +21,8 @@ const FIELD_DEFS = [
   { key: 'email', label: 'Email' },
   { key: 'address', label: 'Address' },
 ];
+
+const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
 
 const DEFAULT_ELEMENTS = () => [
   { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
@@ -99,6 +101,16 @@ function normalizeValue(v) {
   if (typeof v === 'string') return v;
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
   return String(v);
+}
+
+function humanizeFieldLabel(key) {
+  const s = String(key ?? '').trim();
+  if (!s) return '';
+  return s
+    .replace(/_/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .replace(/^./, (c) => c.toUpperCase());
 }
 
 /** Backend unit → valid CSS length unit for width/height */
@@ -327,10 +339,74 @@ export default function IdCardCanvasEditor({
   }, [selectedId]);
 
   const getFieldValue = useCallback((key) => {
-    const raw = normalizeValue((initialData || {})[key]);
+    const src = initialData || {};
+    let rawVal = src[key];
+    if (
+      rawVal == null &&
+      src.extraFields &&
+      typeof src.extraFields === 'object' &&
+      Object.prototype.hasOwnProperty.call(src.extraFields, key)
+    ) {
+      rawVal = src.extraFields[key];
+    }
+    const raw = normalizeValue(rawVal);
     if (key === 'dateOfBirth') return formatDateDMY(raw);
     return raw;
   }, [initialData]);
+
+  const extraFieldDefs = useMemo(() => {
+    const extra = initialData?.extraFields;
+    if (!extra || typeof extra !== 'object') return [];
+    const baseKeys = new Set(FIELD_DEFS.map((d) => d.key));
+    return Object.keys(extra)
+      .filter((k) => !baseKeys.has(k))
+      .map((k) => ({ key: k, label: String(k) }));
+  }, [initialData]);
+
+  const otherFieldDefs = useMemo(() => {
+    const src = initialData || {};
+    const baseKeys = new Set(FIELD_DEFS.map((d) => d.key));
+    const exclude = new Set([
+      'extraFields',
+      '_id',
+      '__v',
+      'id',
+      'template',
+      'photoUrl',
+      'dimension',
+      'dimensionUnit',
+      'schoolId',
+      'classId',
+      'createdAt',
+      'updatedAt',
+    ]);
+    const out = [];
+    for (const [k, v] of Object.entries(src)) {
+      if (exclude.has(k) || baseKeys.has(k)) continue;
+      if (HIDDEN_TEMPLATE_FIELD_KEYS.has(k)) continue;
+      if (v == null) continue;
+      if (v instanceof Date) {
+        out.push({ key: k, label: humanizeFieldLabel(k) || k });
+        continue;
+      }
+      const t = typeof v;
+      if (t === 'string' || t === 'number' || t === 'boolean') {
+        out.push({ key: k, label: humanizeFieldLabel(k) || k });
+      }
+    }
+    return out;
+  }, [initialData]);
+
+  const allFieldDefs = useMemo(() => {
+    const seen = new Set();
+    const merged = [];
+    for (const def of [...FIELD_DEFS, ...otherFieldDefs, ...extraFieldDefs]) {
+      if (!def?.key || seen.has(def.key)) continue;
+      seen.add(def.key);
+      merged.push(def);
+    }
+    return merged;
+  }, [extraFieldDefs, otherFieldDefs]);
 
   const elementHasField = useCallback((fieldKey) => {
     return elements.some((el) => el.type === 'text' && el.dataField === fieldKey);
@@ -375,11 +451,12 @@ export default function IdCardCanvasEditor({
   }, [elements]);
 
   const addAllFields = useCallback(() => {
-    FIELD_DEFS.forEach((f) => {
-      const val = getFieldValue(f.key);
+    allFieldDefs.forEach((f) => {
+      if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key)) return;
+      const val = String(getFieldValue(f.key) || '').trim();
       if (val) addFieldElement(f.key);
     });
-  }, [addFieldElement, getFieldValue]);
+  }, [addFieldElement, allFieldDefs, getFieldValue]);
 
   // Auto-add other fields with data when there is no initial layout; skip ID/class/school so defaults stay Name + DOB + Address.
   useEffect(() => {
@@ -525,6 +602,18 @@ export default function IdCardCanvasEditor({
   const isPhoto = selectedEl?.type === 'photo';
   const selectedTextBold = selectedEl?.type === 'text' ? isTextElementBold(selectedEl) : false;
   const physicalStageStyle = getPhysicalStageSizeStyle(effectiveDimension, effectiveDimensionUnit);
+
+  const bindFieldDefs = useMemo(() => {
+    const withValue = allFieldDefs.filter((f) => {
+      if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key)) return false;
+      return String(getFieldValue(f.key) || '').trim() !== '';
+    });
+    const selectedKey = selectedEl?.type === 'text' ? selectedEl.dataField : '';
+    if (selectedKey && !withValue.some((f) => f.key === selectedKey)) {
+      withValue.push({ key: selectedKey, label: selectedKey });
+    }
+    return withValue;
+  }, [allFieldDefs, getFieldValue, selectedEl?.dataField, selectedEl?.type]);
 
   const openDimensionForm = useCallback(() => {
     const h =
@@ -1073,7 +1162,7 @@ export default function IdCardCanvasEditor({
                       onChange={(e) => updateElementDataField(selectedEl.id, e.target.value)}
                     >
                       <option value="">Static text</option>
-                      {FIELD_DEFS.map((f) => (
+                      {bindFieldDefs.map((f) => (
                         <option key={f.key} value={f.key}>{f.label}</option>
                       ))}
                     </select>
@@ -1181,7 +1270,7 @@ export default function IdCardCanvasEditor({
           </div>
 
           <div style={{ marginBottom: 18 }}>
-            {FIELD_DEFS.map((f) => {
+            {allFieldDefs.map((f) => {
               const checked = elementHasField(f.key)
                 || (f.key === 'name' && elements.some((e) => e.id === 'name'))
                 || (f.key === 'studentId' && elements.some((e) => e.id === 'studentId'))
@@ -1189,7 +1278,10 @@ export default function IdCardCanvasEditor({
                 || (f.key === 'schoolName' && elements.some((e) => e.id === 'school'))
                 || (f.key === 'dateOfBirth' && elements.some((e) => e.id === 'dob'))
                 || (f.key === 'address' && elements.some((e) => e.id === 'address'));
+              if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key) && !checked) return null;
               const val = getFieldValue(f.key);
+              const hasValue = String(val || '').trim() !== '';
+              if (!hasValue && !checked) return null;
               return (
                 <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}>
                   <input
@@ -1204,7 +1296,7 @@ export default function IdCardCanvasEditor({
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <strong style={{ display: 'block', fontSize: '0.95rem' }}>{f.label}</strong>
                     <span className="text-muted" style={{ display: 'block', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {val ? val : '—'}
+                      {val}
                     </span>
                   </span>
                 </label>

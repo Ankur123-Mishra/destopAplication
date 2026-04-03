@@ -247,8 +247,8 @@ export default function IdCardFill() {
             allowedMobiles: school?.allowedMobiles || [],
           }}
           initialData={{
-            name: student?.name || '',
-            studentId: student?.studentId || '',
+            name: student?.name || student?.studentName || '',
+            studentId: student?.studentId || student?.admissionNo || student?.rollNo || student?.uniqueCode || '',
             admissionNo: student?.admissionNo || '',
             rollNo: student?.rollNo || '',
             uniqueCode: student?.uniqueCode || '',
@@ -258,6 +258,11 @@ export default function IdCardFill() {
             phone: student?.mobile || student?.phone || '',
             email: student?.email || '',
             dateOfBirth: student?.dateOfBirth || student?.dob || student?.birthDate || '',
+            fatherName: student?.fatherName || '',
+            photoNo: student?.photoNo || '',
+            status: student?.status || '',
+            uploadedVia: student?.uploadedVia || '',
+            extraFields: student?.extraFields || {},
           }}
           onSave={handleCanvasSave}
           onCancel={() => navigate(backTo)}
