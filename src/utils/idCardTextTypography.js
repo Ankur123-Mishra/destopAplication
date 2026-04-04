@@ -87,3 +87,75 @@ export function getTextTypographyStyle(el) {
     ...(fontFamily ? { fontFamily } : {}),
   };
 }
+
+/** Horizontal alignment of text inside the template text box (saved on text elements). */
+function normalizeTextAlignInBox(el) {
+  const a = el?.textAlign;
+  if (a === 'center' || a === 'right') return a;
+  return 'left';
+}
+
+/** Vertical alignment inside the box: top | center | bottom */
+function normalizeTextVerticalAlignInBox(el) {
+  const v = el?.textVerticalAlign;
+  if (v === 'center' || v === 'middle') return 'center';
+  if (v === 'bottom') return 'bottom';
+  return 'top';
+}
+
+/**
+ * Dropdown options: position of text inside its width/height box (editor + printed card).
+ * Each option sets {@link textAlign} and {@link textVerticalAlign} on the element.
+ */
+export const TEXT_IN_BOX_ALIGN_OPTIONS = [
+  { value: 'left-top', label: 'Top — Left', textAlign: 'left', textVerticalAlign: 'top' },
+  { value: 'center-top', label: 'Top — Center', textAlign: 'center', textVerticalAlign: 'top' },
+  { value: 'right-top', label: 'Top — Right', textAlign: 'right', textVerticalAlign: 'top' },
+  { value: 'left-center', label: 'Middle — Left', textAlign: 'left', textVerticalAlign: 'center' },
+  { value: 'center-center', label: 'Middle — Center', textAlign: 'center', textVerticalAlign: 'center' },
+  { value: 'right-center', label: 'Middle — Right', textAlign: 'right', textVerticalAlign: 'center' },
+  { value: 'left-bottom', label: 'Bottom — Left', textAlign: 'left', textVerticalAlign: 'bottom' },
+  { value: 'center-bottom', label: 'Bottom — Center', textAlign: 'center', textVerticalAlign: 'bottom' },
+  { value: 'right-bottom', label: 'Bottom — Right', textAlign: 'right', textVerticalAlign: 'bottom' },
+];
+
+export function getTextInBoxAlignKey(el) {
+  if (el?.type !== 'text') return 'left-top';
+  const h = normalizeTextAlignInBox(el);
+  const v = normalizeTextVerticalAlignInBox(el);
+  const opt = TEXT_IN_BOX_ALIGN_OPTIONS.find((o) => o.textAlign === h && o.textVerticalAlign === v);
+  return opt?.value ?? 'left-top';
+}
+
+function minHeightPercentForTextVerticalAlign(el) {
+  if (el?.type !== 'text') return undefined;
+  const v = normalizeTextVerticalAlignInBox(el);
+  if (v === 'top') return undefined;
+  if (typeof el.height === 'number' && el.height > 0) return el.height;
+  return 8;
+}
+
+/**
+ * Flex layout for the text box outer + full-width inner (horizontal alignment via text-align).
+ * Editor canvas and IdCardRenderer must pass both onto matching DOM nodes.
+ */
+export function getTextBoxLayoutStyles(el) {
+  if (el?.type !== 'text') return { container: {}, content: {} };
+  const v = normalizeTextVerticalAlignInBox(el);
+  const h = normalizeTextAlignInBox(el);
+  const justifyContent = v === 'center' ? 'center' : v === 'bottom' ? 'flex-end' : 'flex-start';
+  const minH = minHeightPercentForTextVerticalAlign(el);
+  return {
+    container: {
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent,
+      ...(minH != null ? { minHeight: `${minH}%` } : {}),
+    },
+    content: {
+      width: '100%',
+      minWidth: 0,
+      textAlign: h,
+    },
+  };
+}

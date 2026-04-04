@@ -3,6 +3,9 @@ import { updatePhotographerSchool } from '../api/dashboard';
 import {
   getCanvasTextEffectiveFontSizePx,
   getTextTypographyStyle,
+  getTextBoxLayoutStyles,
+  getTextInBoxAlignKey,
+  TEXT_IN_BOX_ALIGN_OPTIONS,
   ID_CARD_FONT_FAMILY_OPTIONS,
   isTextElementBold,
 } from '../utils/idCardTextTypography';
@@ -459,6 +462,7 @@ export default function IdCardCanvasEditor({
   }, [addFieldElement, allFieldDefs, getFieldValue]);
 
   // Auto-add other fields with data when there is no initial layout; skip ID/class/school so defaults stay Name + DOB + Address.
+  
   useEffect(() => {
     if (didInitAddAllRef.current) return;
     if (initialElements) return; // do not override a provided template layout
@@ -714,7 +718,7 @@ export default function IdCardCanvasEditor({
       address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
     });
   };
-
+ 
   return (
     <div className="idcard-canvas-editor">
       <div className="idcard-canvas-toolbar">
@@ -821,6 +825,7 @@ export default function IdCardCanvasEditor({
             const textBoxW = getTextBoxWidthPercentForRender(el);
             const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
             const fontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
+            const textBoxLayout = getTextBoxLayoutStyles(el);
             return (
               <div
                 key={el.id}
@@ -833,10 +838,13 @@ export default function IdCardCanvasEditor({
                   fontSize: `${fontSizePx}px`,
                   ...getTextTypographyStyle(el),
                   ...(el.color ? { color: el.color } : {}),
+                  ...textBoxLayout.container,
                 }}
                 onPointerDown={(e) => handlePointerDown(e, el.id, false)}
               >
-                {textToShow || <span className="placeholder">{el.label || el.dataField || el.id}</span>}
+                <span className="idcard-canvas-text-content" style={textBoxLayout.content}>
+                  {textToShow || <span className="placeholder">{el.label || el.dataField || el.id}</span>}
+                </span>
               </div>
             );
           })}
@@ -962,6 +970,40 @@ export default function IdCardCanvasEditor({
                     </span>
                     <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
                       Up to {Math.max(8, Math.floor(100 - selectedEl.x))}% (template width from this position)
+                    </p>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <label className="input-label" htmlFor="idcard-text-in-box-align">
+                      Text in box
+                    </label>
+                    <select
+                      id="idcard-text-in-box-align"
+                      className="input-field"
+                      value={getTextInBoxAlignKey(selectedEl)}
+                      onChange={(e) => {
+                        const key = e.target.value;
+                        const opt = TEXT_IN_BOX_ALIGN_OPTIONS.find((o) => o.value === key);
+                        if (!opt) return;
+                        setElements((prev) =>
+                          prev.map((x) => {
+                            if (x.id !== selectedEl.id || x.type !== 'text') return x;
+                            return {
+                              ...x,
+                              textAlign: opt.textAlign,
+                              textVerticalAlign: opt.textVerticalAlign,
+                            };
+                          })
+                        );
+                      }}
+                    >
+                      {TEXT_IN_BOX_ALIGN_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
+                      Left/center/right and top/middle/bottom inside the text box. Middle or bottom uses extra vertical space (default 8% if height is not set).
                     </p>
                   </div>
                   <div style={{ marginTop: 8 }}>

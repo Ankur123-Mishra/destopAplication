@@ -239,6 +239,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/saved-id-cards/school/:schoolId/all-students"
+          element={
+            <PrivateRoute>
+              <Layout><SavedIdCardsList /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/saved-id-cards/school/:schoolId/class/:classId"
           element={
             <PrivateRoute>
@@ -267,6 +275,14 @@ function AppRoutes() {
           element={
             <PrivateRoute>
               <Layout><SavedIdCardPreviewStandalone /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/view-template/school/:schoolId/all-students"
+          element={
+            <PrivateRoute>
+              <Layout><ViewTemplate /></Layout>
             </PrivateRoute>
           }
         />

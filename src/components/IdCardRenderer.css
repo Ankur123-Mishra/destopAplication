@@ -1500,16 +1500,20 @@
 .idcard-image-template-canvas .idcard-canvas-text {
   color: #111;
   text-shadow: none;
-  white-space: nowrap;
   max-width: 55%;
+  padding: 0 2px;
+}
+
+.idcard-image-template-canvas .idcard-canvas-text .idcard-canvas-text-content {
+  display: block;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 2px;
   line-height: 1.12;
 }
 
 /* Long address (and similar) wraps within the text box instead of clipping */
-.idcard-image-template-canvas .idcard-canvas-text.idcard-canvas-text--wrap {
+.idcard-image-template-canvas .idcard-canvas-text.idcard-canvas-text--wrap .idcard-canvas-text-content {
   white-space: normal;
   overflow: visible;
   text-overflow: clip;

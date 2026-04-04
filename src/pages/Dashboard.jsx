@@ -73,6 +73,18 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (!createModalOpen) return undefined;
+    const outer = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const modal = document.querySelector('.create-project-modal');
+        const projectNameInput = modal?.querySelector('input.input-field[type="text"]');
+        projectNameInput?.focus();
+      });
+    });
+    return () => cancelAnimationFrame(outer);
+  }, [createModalOpen]);
+
   const closeCreateProjectModal = () => {
     setCreateModalOpen(false);
     setPendingPhotoFiles([]);
@@ -169,6 +181,11 @@ export default function Dashboard() {
         ...prev,
         assignedSchools: Math.max(0, (prev.assignedSchools || 0) - 1),
       }));
+      // Row removal unmounts the focused Delete control; orphaned focus can break typing
+      // in the Create Project modal (Electron/WebKit) until focus moves to a live node.
+      requestAnimationFrame(() => {
+        document.getElementById('dashboard-create-project-btn')?.focus();
+      });
     } catch (err) {
       setError(err?.message || 'Failed to delete school');
     } finally {
@@ -193,6 +210,7 @@ export default function Dashboard() {
       <div className="dashboard-top-row">
         <h2 className="page-title">Dashboard</h2>
         <button
+          id="dashboard-create-project-btn"
           type="button"
           className="btn btn-primary create-project-btn"
           onClick={() => {
@@ -313,7 +331,7 @@ export default function Dashboard() {
         .dashboard-error { color: var(--danger, #e74c3c); margin-bottom: 16px; }
         .dashboard-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
         .dashboard-assigned-schools { margin-top: 24px; max-width: 800px; width: 100%; box-sizing: border-box; }
-        .create-project-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 24px; box-sizing: border-box; }
+        .create-project-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10050; padding: 24px; box-sizing: border-box; }
         .create-project-modal { background: var(--card-bg, #1e1e2e); border-radius: 12px; max-width: 600px; width: 100%; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
         .create-project-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; }
         .create-project-modal-header h3 { margin: 0; font-size: 1.25rem; }

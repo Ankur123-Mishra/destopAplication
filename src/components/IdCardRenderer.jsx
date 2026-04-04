@@ -1,7 +1,11 @@
 import React from 'react';
 import './IdCardRenderer.css';
 import { getTemplateById, getInternalTemplateId } from '../data/idCardTemplates';
-import { getCanvasTextEffectiveFontSizePx, getTextTypographyStyle } from '../utils/idCardTextTypography';
+import {
+  getCanvasTextEffectiveFontSizePx,
+  getTextTypographyStyle,
+  getTextBoxLayoutStyles,
+} from '../utils/idCardTextTypography';
 
 /**
  * Renders an ID card with given template and data.
@@ -64,6 +68,7 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
           const textBoxW = typeof el.width === 'number' && el.width > 0 ? el.width : 42;
           const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
           const fontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
+          const textBoxLayout = getTextBoxLayoutStyles(el);
           return (
             <div
               key={el.id}
@@ -76,9 +81,12 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
                 fontSize: `${fontSizePx}px`,
                 ...getTextTypographyStyle(el),
                 ...(el.color ? { color: el.color } : {}),
+                ...textBoxLayout.container,
               }}
             >
-              {textContent}
+              <span className="idcard-canvas-text-content" style={textBoxLayout.content}>
+                {textContent}
+              </span>
             </div>
           );
         })}

@@ -572,7 +572,11 @@ export default function ClassIdCardsWizard() {
         }
         addSavedIdCard(student.id, cardData, { schoolId: school.id, classId: cls.id });
       });
-      navigate('/saved-id-cards', { replace: true });
+      const viewTemplatePath =
+        cls.id === 'all'
+          ? `/view-template/school/${school.id}/all-students`
+          : `/view-template/school/${school.id}/class/${cls.id}`;
+      navigate(viewTemplatePath, { replace: true });
     } catch (err) {
       alert(err?.message || 'Failed to save ID cards. Please try again.');
     } finally {

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useMatch, useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import Header from "../components/Header";
 import IdCardRenderer from "../components/IdCardRenderer";
@@ -15,11 +15,14 @@ import {
   deductTemplateDownloadPoints,
   getAssignedSchools,
   getClassesBySchool,
+  getStudentsBySchool,
+  getStudentsBySchoolAndClass,
   getTemplatesStatus,
 } from "../api/dashboard";
 import { API_BASE_URL } from "../api/config";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { flushSync } from "react-dom";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 const A4_WIDTH_MM = 210;
@@ -34,6 +37,122 @@ function fullPhotoUrl(url) {
   if (url.startsWith("http")) return url;
   const base = API_BASE_URL.replace(/\/$/, "");
   return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
+}
+
+/** Strip erroneous trailing "– A" / "- A" from class labels (same as ClassIdCardsWizard). */
+function normalizeClassNameForDisplay(label) {
+  if (!label || typeof label !== "string") return label;
+  return label.replace(/\s*[–-]\s*A\s*$/i, "").trim();
+}
+
+/** Class + section for ID card preview without duplicating section or a stray leading " - …". */
+function formatStudentClassForIdCard(cls) {
+  if (!cls) return "";
+  const name = String(cls.className ?? "").trim();
+  const sec = String(cls.section ?? "").trim();
+  if (!name && !sec) return "";
+  let combined;
+  if (name && sec) {
+    const nl = name.toLowerCase();
+    const sl = sec.toLowerCase();
+    const alreadyHasSection =
+      nl.endsWith(`-${sl}`) ||
+      nl.endsWith(` - ${sl}`) ||
+      nl.endsWith(` ${sl}`);
+    combined = alreadyHasSection ? name : `${name} - ${sec}`;
+  } else {
+    combined = name || sec;
+  }
+  return normalizeClassNameForDisplay(combined);
+}
+
+function isFullApiCanvasTemplate(t) {
+  return Boolean(
+    t &&
+      typeof t === "object" &&
+      t.frontImage &&
+      Array.isArray(t.elements) &&
+      t.elements.length > 0,
+  );
+}
+
+/**
+ * GET /schools/:id/students often puts canvas layout on response.template; each student.template
+ * may only hold templateId/status. Merge so preview uses the same art + elements as class-wise APIs.
+ */
+function mergeSchoolRootTemplateIntoStudent(student, rootTemplate) {
+  const st = student?.template;
+  if (isFullApiCanvasTemplate(st)) return st;
+  if (isFullApiCanvasTemplate(rootTemplate)) {
+    return {
+      ...rootTemplate,
+      ...(st && typeof st === "object" ? st : {}),
+      frontImage: rootTemplate.frontImage,
+      backImage: rootTemplate.backImage,
+      elements: rootTemplate.elements,
+    };
+  }
+  return st ?? null;
+}
+
+/** Copy common API top-level fields into extraFields so canvas dataField bindings resolve (all-students vs class payloads differ). */
+function mergeExtraFieldsFromStudent(student) {
+  const ex = {
+    ...(student?.extraFields && typeof student.extraFields === "object"
+      ? student.extraFields
+      : {}),
+  };
+  const fill = (key, val) => {
+    if (val == null || val === "") return;
+    if (ex[key] != null && ex[key] !== "") return;
+    ex[key] = val;
+  };
+  fill("fatherName", student.fatherName);
+  fill("motherName", student.motherName);
+  fill("guardianName", student.guardianName);
+  fill("className", student.className);
+  fill("rollNo", student.rollNo);
+  fill("admissionNo", student.admissionNo);
+  fill("uniqueCode", student.uniqueCode);
+  fill("phone", student.phone ?? student.mobile);
+  fill("mobile", student.mobile ?? student.phone);
+  fill("dateOfBirth", student.dateOfBirth ?? student.dob ?? student.birthDate);
+  return ex;
+}
+
+function resolveClassNameForIdCard(student) {
+  if (
+    typeof student.className === "string" &&
+    student.className.trim() !== ""
+  ) {
+    return normalizeClassNameForDisplay(student.className.trim());
+  }
+  if (student.class && typeof student.class === "object") {
+    return formatStudentClassForIdCard(student.class);
+  }
+  if (student.classId && typeof student.classId === "object") {
+    return formatStudentClassForIdCard(student.classId);
+  }
+  return formatStudentClassForIdCard(student.class);
+}
+
+/** Saved ID card / template present — used for bulk preview and per-row preview. */
+function studentHasRenderableSavedCard(s, schoolListResponse = null) {
+  if (!s || typeof s !== "object") return false;
+  const t = s.template;
+  if (isFullApiCanvasTemplate(t)) return true;
+  const root = schoolListResponse?.template;
+  const rootOk = isFullApiCanvasTemplate(root);
+
+  if (schoolListResponse == null) {
+    if (s.hasTemplate === true) return true;
+    if (t && typeof t === "object" && t.templateId) return true;
+    return false;
+  }
+
+  if (s.hasTemplate === true && rootOk) return true;
+  if (t && typeof t === "object" && t.templateId && rootOk) return true;
+  return false;
 }
 
 function formatDateDMY(input) {
@@ -99,12 +218,22 @@ const DEFAULT_PREVIEW_PAGE_BG = "#ffffff";
 const PREVIEW_EXPORT_HTML2CANVAS_SCALE = 6;
 const PREVIEW_EXPORT_JPEG_QUALITY = 1;
 
-/** Scales try highest first; primary follows devicePixelRatio so Retina exports stay sharp. */
-function getHtml2CanvasExportScaleAttempts() {
+/**
+ * Scales try highest first; primary follows devicePixelRatio so Retina exports stay sharp.
+ * `bulk: true` (see-all school export): lower caps + fewer retries so many cards/pages finish much faster.
+ */
+function getHtml2CanvasExportScaleAttempts(options = {}) {
+  const bulk = Boolean(options.bulk);
   const dpr =
     typeof window !== "undefined" && Number.isFinite(window.devicePixelRatio)
       ? window.devicePixelRatio
       : 1;
+  if (bulk) {
+    const primary = Math.min(4, Math.max(2, Math.round(2 * dpr)));
+    return [...new Set([primary, 3, 2, 1])]
+      .filter((n) => n > 0)
+      .sort((a, b) => b - a);
+  }
   const primary = Math.min(
     10,
     Math.max(PREVIEW_EXPORT_HTML2CANVAS_SCALE, Math.round(4 * dpr)),
@@ -216,6 +345,40 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+class ExportCancelledError extends Error {
+  constructor() {
+    super("Export cancelled");
+    this.name = "ExportCancelledError";
+  }
+}
+
+function isExportCancelledError(e) {
+  return e instanceof ExportCancelledError || e?.name === "ExportCancelledError";
+}
+
+/** Resolves in `ms` but throws ExportCancelledError if `shouldAbort()` becomes true. */
+async function abortableDelay(ms, shouldAbort, chunkMs = 120) {
+  const fn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+  let left = Math.max(0, ms);
+  while (left > 0) {
+    if (fn()) throw new ExportCancelledError();
+    const step = Math.min(chunkMs, left);
+    await delay(step);
+    left -= step;
+  }
+}
+
+/**
+ * HashRouter-safe: same intent as `useMatch(…/school/:id/all-students)` but avoids
+ * missing bulk export optimizations if the match pattern ever fails to line up.
+ * Does not match `/school/…/class/…` (e.g. a class whose id is literally "all-students").
+ */
+function pathnameIsSchoolAllStudentsRoute(pathname, basePath) {
+  if (typeof pathname !== "string" || typeof basePath !== "string") return false;
+  const esc = basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`${esc}/school/[^/]+/all-students/?$`).test(pathname);
+}
+
 /**
  * html2canvas respects ancestor overflow:hidden; multiline canvas address would still clip in PDF/JPG.
  * Relax overflow on the clone only (from .idcard-canvas-text--wrap up toward the page).
@@ -245,6 +408,7 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
  * Clone-only hints so exported JPEG/PDF matches on-screen text and template art more closely.
  * Template art is rendered as a full-bleed <img> in IdCardRenderer (not CSS background-image).
  */
+
 function applyExportRenderHintsToClone(clonedDoc) {
   if (!clonedDoc?.head) return;
   const id = "idcard-export-capture-hints";
@@ -261,15 +425,15 @@ function applyExportRenderHintsToClone(clonedDoc) {
       shape-rendering: geometricPrecision;
     }
     /*
-      Some template art + absolute-positioned elements can end up a couple pixels
-      lower in the captured clone (percent-based positioning vs export layout).
-      Nudge overlay elements slightly up only for export so JPEG matches preview.
+      html2canvas often rasterizes absolute %‑positioned overlays a little lower than
+      the live preview (subpixel / flex vs capture). Nudge overlays up on the clone only
+      so JPEG/PDF export matches what you see on screen.
     */
     .print-card-cell .idcard-image-template-canvas .idcard-canvas-el {
-      transform: translateY(-0.25px) !important;
+      transform: translateY(-0.4px) !important;
     }
     .print-card-cell .idcard-image-template-overlay {
-      transform: translateY(-0.25px) !important;
+      transform: translateY(-0.4px) !important;
     }
   `;
   clonedDoc.head.appendChild(style);
@@ -279,6 +443,7 @@ function applyExportRenderHintsToClone(clonedDoc) {
  * Fabric.js cards: capture the backing-store canvas directly at width×height×scale.
  * html2canvas re-samples the CSS-downscaled <canvas> in the cell and looks soft/blurred.
  */
+
 function rasterizeFabricCanvasForExport(sourceCanvas, pageBackgroundColor, scale) {
   const bg = normalizeHexColor(pageBackgroundColor);
   const out = document.createElement("canvas");
@@ -420,10 +585,12 @@ async function saveJpegsToFolderWithFilePicker(
   files,
   onProgress,
   parentDirHandle,
+  shouldAbort = null,
 ) {
   if (!parentDirHandle?.getDirectoryHandle) {
     throw new Error("No folder was selected for saving.");
   }
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
   onProgress?.({
     label: "Saving JPEG files…",
     current: 0,
@@ -433,6 +600,7 @@ async function saveJpegsToFolderWithFilePicker(
     create: true,
   });
   for (let i = 0; i < files.length; i++) {
+    if (abortFn()) throw new ExportCancelledError();
     const f = files[i];
     onProgress?.({
       label: "Saving JPEG files…",
@@ -469,7 +637,13 @@ function makeHtml2CanvasOpts(pageBackgroundColor) {
  * High-DPI capture with scale fallback. Do not set `foreignObjectRendering: true` here:
  * in Electron/Chromium it often "succeeds" but rasterizes to a blank (solid black/white) image.
  */
-async function html2canvasForExport(element, pageBackgroundColor) {
+
+async function html2canvasForExport(
+  element,
+  pageBackgroundColor,
+  captureOpts = {},
+) {
+  const bulk = Boolean(captureOpts.bulk);
   const fabricSource = element?.querySelector?.(
     ".fabric-idcard-canvas-wrap canvas",
   );
@@ -480,7 +654,7 @@ async function html2canvasForExport(element, pageBackgroundColor) {
     typeof fabricSource.height === "number" &&
     fabricSource.height > 0
   ) {
-    const scales = getHtml2CanvasExportScaleAttempts();
+    const scales = getHtml2CanvasExportScaleAttempts({ bulk });
     let lastFabricErr;
     for (const scale of scales) {
       try {
@@ -504,7 +678,7 @@ async function html2canvasForExport(element, pageBackgroundColor) {
   }
 
   const base = makeHtml2CanvasOpts(pageBackgroundColor);
-  const scales = getHtml2CanvasExportScaleAttempts();
+  const scales = getHtml2CanvasExportScaleAttempts({ bulk });
   let lastErr;
   for (const scale of scales) {
     try {
@@ -521,8 +695,16 @@ async function html2canvasForExport(element, pageBackgroundColor) {
   throw lastErr || new Error("html2canvas failed");
 }
 
-async function html2canvasWithFallback(element, pageBackgroundColor) {
-  const canvas = await html2canvasForExport(element, pageBackgroundColor);
+async function html2canvasWithFallback(
+  element,
+  pageBackgroundColor,
+  captureOpts = {},
+) {
+  const canvas = await html2canvasForExport(
+    element,
+    pageBackgroundColor,
+    captureOpts,
+  );
   return canvas.toDataURL("image/jpeg", PREVIEW_EXPORT_JPEG_QUALITY);
 }
 
@@ -536,7 +718,17 @@ async function buildPreviewFrontAndBackJpegFiles(
   pageBackgroundColor,
   onProgress,
   cardsPerPage,
+  captureOpts = {},
 ) {
+  const bulk = Boolean(captureOpts.bulk);
+  const shouldAbort =
+    typeof captureOpts.shouldAbort === "function"
+      ? captureOpts.shouldAbort
+      : () => false;
+  const betweenMs = bulk ? 0 : 80;
+  const retryBaseMs = bulk ? 100 : 300;
+  const captureFlags = { bulk };
+
   const frontEls = getFrontCardCellElements(wrap);
   const backEls = getBackCardCellElements(wrap);
   const expectedBackCells = countExpectedBackDomCells(cards, cardsPerPage);
@@ -555,18 +747,26 @@ async function buildPreviewFrontAndBackJpegFiles(
   const files = [];
   const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
   const totalSteps = cards.length + backExportCount;
+  /** Parallel html2canvas for large school exports; keep low to limit memory spikes. */
+  const captureConcurrency = bulk ? 4 : 1;
 
   async function captureCell(el, label, index1) {
     let dataUrl;
     let lastErr;
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (shouldAbort()) throw new ExportCancelledError();
       try {
-        dataUrl = await html2canvasWithFallback(el, pageBackgroundColor);
+        dataUrl = await html2canvasWithFallback(
+          el,
+          pageBackgroundColor,
+          captureFlags,
+        );
         lastErr = undefined;
         break;
       } catch (e) {
         lastErr = e;
-        await delay(300 * (attempt + 1));
+        if (shouldAbort()) throw new ExportCancelledError();
+        await delay(retryBaseMs * (attempt + 1));
       }
     }
     if (!dataUrl) {
@@ -575,17 +775,31 @@ async function buildPreviewFrontAndBackJpegFiles(
     return dataUrl;
   }
   let step = 0;
-  for (let i = 0; i < cards.length; i++) {
-    step += 1;
-    onProgress?.({
-      label: "Capturing JPEGs (front)…",
-      current: step,
-      total: totalSteps,
-    });
-    const dataUrl = await captureCell(frontEls[i], "front", i + 1);
-    files.push({ filename: `${bases[i]}_front.jpg`, dataUrl });
-    await delay(80);
+  for (let start = 0; start < cards.length; start += captureConcurrency) {
+    if (shouldAbort()) throw new ExportCancelledError();
+    const end = Math.min(start + captureConcurrency, cards.length);
+    const dataUrls = await Promise.all(
+      Array.from({ length: end - start }, (_, k) => {
+        const i = start + k;
+        return captureCell(frontEls[i], "front", i + 1).then((dataUrl) => {
+          step += 1;
+          onProgress?.({
+            label: "Capturing JPEGs (front)…",
+            current: step,
+            total: totalSteps,
+          });
+          return dataUrl;
+        });
+      }),
+    );
+    for (let k = 0; k < dataUrls.length; k++) {
+      const i = start + k;
+      files.push({ filename: `${bases[i]}_front.jpg`, dataUrl: dataUrls[k] });
+    }
+    if (shouldAbort()) throw new ExportCancelledError();
+    if (betweenMs > 0) await delay(betweenMs);
   }
+  const backTasks = [];
   for (let i = 0; i < cards.length; i++) {
     if (!cardExportsBackJpeg(cards[i])) continue;
     const domIdx = backDomIndexForCard(cards, cardsPerPage, i);
@@ -594,15 +808,30 @@ async function buildPreviewFrontAndBackJpegFiles(
         `Back preview missing for card ${i + 1}. Wait and try again.`,
       );
     }
-    step += 1;
-    onProgress?.({
-      label: "Capturing JPEGs (back)…",
-      current: step,
-      total: totalSteps,
-    });
-    const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
-    files.push({ filename: `${bases[i]}_back.jpg`, dataUrl });
-    await delay(80);
+    backTasks.push({ i, domIdx });
+  }
+  for (let start = 0; start < backTasks.length; start += captureConcurrency) {
+    if (shouldAbort()) throw new ExportCancelledError();
+    const chunk = backTasks.slice(start, start + captureConcurrency);
+    const dataUrls = await Promise.all(
+      chunk.map(({ i, domIdx }) =>
+        captureCell(backEls[domIdx], "back", i + 1).then((dataUrl) => {
+          step += 1;
+          onProgress?.({
+            label: "Capturing JPEGs (back)…",
+            current: step,
+            total: totalSteps,
+          });
+          return dataUrl;
+        }),
+      ),
+    );
+    for (let k = 0; k < chunk.length; k++) {
+      const { i } = chunk[k];
+      files.push({ filename: `${bases[i]}_back.jpg`, dataUrl: dataUrls[k] });
+    }
+    if (shouldAbort()) throw new ExportCancelledError();
+    if (betweenMs > 0) await delay(betweenMs);
   }
   return files;
 }
@@ -612,20 +841,50 @@ async function buildPreviewFrontAndBackJpegFiles(
  * e.g. page-001.jpg, page-002.jpg... This avoids the "thin width" issue
  * of stitching all pages into a single long image.
  */
-async function buildPreviewPagesJpegFiles(pageNodes, pageBackgroundColor, onProgress) {
+async function buildPreviewPagesJpegFiles(
+  pageNodes,
+  pageBackgroundColor,
+  onProgress,
+  captureOpts = {},
+) {
+  const bulk = Boolean(captureOpts.bulk);
+  const shouldAbort =
+    typeof captureOpts.shouldAbort === "function"
+      ? captureOpts.shouldAbort
+      : () => false;
+  const betweenMs = bulk ? 16 : 120;
+  const captureFlags = { bulk };
+  const pageConcurrency = bulk ? 2 : 1;
   const nodes = Array.from(pageNodes || []);
   if (nodes.length === 0) return [];
   const files = [];
-  for (let i = 0; i < nodes.length; i++) {
-    onProgress?.({
-      label: "Capturing JPEG pages…",
-      current: i + 1,
-      total: nodes.length,
-    });
-    const dataUrl = await html2canvasWithFallback(nodes[i], pageBackgroundColor);
-    const idx = String(i + 1).padStart(3, "0");
-    files.push({ filename: `page-${idx}.jpg`, dataUrl });
-    await delay(120);
+  let pagesDone = 0;
+  for (let start = 0; start < nodes.length; start += pageConcurrency) {
+    if (shouldAbort()) throw new ExportCancelledError();
+    const end = Math.min(start + pageConcurrency, nodes.length);
+    const slice = nodes.slice(start, end);
+    const dataUrls = await Promise.all(
+      slice.map((node) =>
+        html2canvasWithFallback(node, pageBackgroundColor, captureFlags).then(
+          (dataUrl) => {
+            pagesDone += 1;
+            onProgress?.({
+              label: "Capturing JPEG pages…",
+              current: pagesDone,
+              total: nodes.length,
+            });
+            return dataUrl;
+          },
+        ),
+      ),
+    );
+    for (let k = 0; k < dataUrls.length; k++) {
+      const i = start + k;
+      const idx = String(i + 1).padStart(3, "0");
+      files.push({ filename: `page-${idx}.jpg`, dataUrl: dataUrls[k] });
+    }
+    if (shouldAbort()) throw new ExportCancelledError();
+    if (betweenMs > 0) await delay(betweenMs);
   }
   return files;
 }
@@ -634,12 +893,19 @@ async function buildPreviewPagesJpegFiles(pageNodes, pageBackgroundColor, onProg
  * Browser fallback: one .zip download containing a subfolder of all JPEGs.
  * (Multiple `<a download>` clicks are blocked after the first file in most browsers.)
  */
-async function downloadJpegsAsZipFolder(safeSub, files, onProgress) {
+async function downloadJpegsAsZipFolder(
+  safeSub,
+  files,
+  onProgress,
+  shouldAbort = null,
+) {
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const root = zip.folder(safeSub);
   if (!root) throw new Error("Could not build ZIP.");
   for (let i = 0; i < files.length; i++) {
+    if (abortFn()) throw new ExportCancelledError();
     const f = files[i];
     onProgress?.({
       label: "Packing JPEGs into ZIP…",
@@ -660,10 +926,14 @@ async function downloadJpegsAsZipFolder(safeSub, files, onProgress) {
     current: files.length,
     total: files.length,
   });
+  if (abortFn()) throw new ExportCancelledError();
+  // JPEGs are already compressed; DEFLATE on hundreds of files is very slow for little gain.
+  const useStore = files.length >= 20;
   const blob = await zip.generateAsync({
     type: "blob",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
+    ...(useStore
+      ? { compression: "STORE" }
+      : { compression: "DEFLATE", compressionOptions: { level: 6 } }),
   });
   const a = document.createElement("a");
   const url = URL.createObjectURL(blob);
@@ -683,7 +953,9 @@ async function saveJpegExportToFolder(
   files,
   onProgress,
   webParentDirHandle = null,
+  shouldAbort = null,
 ) {
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
   const safeSub =
     String(subfolderName)
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
@@ -692,8 +964,10 @@ async function saveJpegExportToFolder(
   if (typeof window !== "undefined" && window.electron?.selectOutputFolder) {
     const el = window.electron;
     onProgress?.({ label: "Choose folder to save JPEGs…", current: 0, total: 1 });
+    if (abortFn()) throw new ExportCancelledError();
     const pick = await el.selectOutputFolder();
     if (!pick.success) return { cancelled: true };
+    if (abortFn()) throw new ExportCancelledError();
 
     const runBatchSave = async () => {
       if (!el.saveJpegExportFolder) {
@@ -701,6 +975,7 @@ async function saveJpegExportToFolder(
           "JPEG save is not available. Fully quit the app and start it again so Electron loads the latest code.",
         );
       }
+      if (abortFn()) throw new ExportCancelledError();
       onProgress?.({
         label: "Writing JPEG files…",
         current: 0,
@@ -736,6 +1011,7 @@ async function saveJpegExportToFolder(
         }
         const dir = mkdirRes.folderPath;
         for (let i = 0; i < files.length; i++) {
+          if (abortFn()) throw new ExportCancelledError();
           onProgress?.({
             label: "Writing JPEG files…",
             current: i + 1,
@@ -784,6 +1060,7 @@ async function saveJpegExportToFolder(
         files,
         onProgress,
         webParentDirHandle,
+        shouldAbort,
       );
       return {};
     } catch (e) {
@@ -792,7 +1069,7 @@ async function saveJpegExportToFolder(
     }
   }
 
-  await downloadJpegsAsZipFolder(safeSub, files, onProgress);
+  await downloadJpegsAsZipFolder(safeSub, files, onProgress, shouldAbort);
   window.alert(
     `Downloaded "${safeSub}.zip". Extract it to get a folder with all ${files.length} JPEG file(s).`,
   );
@@ -807,8 +1084,10 @@ async function exportPreviewPagesAsFiles(
   pageHeightMm,
   fileBaseName,
   pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
+  shouldAbort = null,
 ) {
   if (!pageElements?.length) return;
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
 
   if (format === "pdf") {
     const pdf = new jsPDF({
@@ -817,6 +1096,7 @@ async function exportPreviewPagesAsFiles(
       orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
     });
     for (let i = 0; i < pageElements.length; i++) {
+      if (abortFn()) throw new ExportCancelledError();
       const canvas = await html2canvasForExport(
         pageElements[i],
         pageBackgroundColor,
@@ -834,6 +1114,7 @@ async function exportPreviewPagesAsFiles(
 
   const ext = format === "png" ? "png" : "jpg";
   for (let i = 0; i < pageElements.length; i++) {
+    if (abortFn()) throw new ExportCancelledError();
     const canvas = await html2canvasForExport(
       pageElements[i],
       pageBackgroundColor,
@@ -846,7 +1127,7 @@ async function exportPreviewPagesAsFiles(
     a.href = url;
     a.download = `${fileBaseName}-page-${i + 1}.${ext}`;
     a.click();
-    await delay(300);
+    await abortableDelay(300, abortFn, 80);
   }
 }
 
@@ -857,7 +1138,15 @@ export default function SavedIdCardsList({
   backTo = "/dashboard",
 } = {}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { schoolId, classId } = useParams();
+  const allStudentsMatch = useMatch({
+    path: `${basePath}/school/:schoolId/all-students`,
+    end: true,
+  });
+  const isAllSchoolStudents =
+    Boolean(allStudentsMatch) ||
+    pathnameIsSchoolAllStudentsRoute(location.pathname, basePath);
   useApp(); // auth/context available if needed
   const isViewTemplateFlow = basePath === "/view-template";
   const [showPrintView, setShowPrintView] = useState(false);
@@ -867,10 +1156,15 @@ export default function SavedIdCardsList({
   const previewPagesWrapRef = useRef(null);
   /** Browser JPEG export: DirectoryHandle from showDirectoryPicker (must be set during click). */
   const jpegWebParentDirHandleRef = useRef(null);
+  /** User clicked "Cancel download" while an export is running. */
+  const exportCancelRequestedRef = useRef(false);
 
   const [showDownloadMenuList, setShowDownloadMenuList] = useState(false);
   const [showDownloadMenuPreview, setShowDownloadMenuPreview] = useState(false);
   const [pendingExportFormat, setPendingExportFormat] = useState(null); // 'jpg' | 'png' | 'pdf'
+  /** JPEG only: 'both' (class preview) | 'single' | 'pages' (see-all preview); cleared after export */
+  const [jpegExportMode, setJpegExportMode] = useState(null);
+  const [seeAllJpegDialogOpen, setSeeAllJpegDialogOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   /** { label: string, current: number, total: number } | null */
   const [exportProgress, setExportProgress] = useState(null);
@@ -948,6 +1242,8 @@ export default function SavedIdCardsList({
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [errorStudents, setErrorStudents] = useState("");
   const [selectedClass, setSelectedClass] = useState(null);
+  /** GET /api/photographer/schools/:schoolId/students — full school roster */
+  const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
 
   // Fetch schools when on root saved-id-cards
   useEffect(() => {
@@ -1039,17 +1335,82 @@ export default function SavedIdCardsList({
     };
   }, [schoolId, classId]);
 
-  // Student data source:
-  // `studentsWithTemplates` comes from `getTemplatesStatus(schoolId, classId)`
-  // which calls API: GET `/api/photographer/templates/status?schoolId=...&classId=...`
-  // Response includes `students` with `hasTemplate: true` for saved ID cards
-  // (fallback to `summary.withTemplates` when available).
-  const studentsWithTemplates =
+  // Full-school student list (See all students)
+  useEffect(() => {
+    if (!schoolId || !isAllSchoolStudents) {
+      setSchoolAllStudentsData(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingStudents(true);
+    setErrorStudents("");
+    setTemplateStatus(null);
+    setSelectedClass({
+      _id: "all",
+      className: "All students",
+      section: "",
+    });
+    Promise.all([
+      getAssignedSchools(),
+      getStudentsBySchool(schoolId),
+      getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
+    ])
+      .then(async ([schoolsRes, studentsRes, classesRes]) => {
+        if (cancelled) return;
+        const school = (schoolsRes.schools ?? []).find((s) => s._id === schoolId);
+        setSelectedSchool(school || { _id: schoolId, schoolName: schoolId });
+
+        let payload = studentsRes;
+        const classes = classesRes.classes ?? [];
+        if (!isFullApiCanvasTemplate(studentsRes.template) && classes.length > 0) {
+          try {
+            const byClass = await getStudentsBySchoolAndClass(
+              schoolId,
+              classes[0]._id,
+            );
+            if (
+              !cancelled &&
+              isFullApiCanvasTemplate(byClass.template)
+            ) {
+              payload = { ...studentsRes, template: byClass.template };
+            }
+          } catch {
+            /* keep school payload */
+          }
+        }
+        if (!cancelled) {
+          setSchoolAllStudentsData(payload);
+          setLoadingStudents(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setErrorStudents(err?.message || "Failed to load students");
+          setLoadingStudents(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId, isAllSchoolStudents]);
+
+  // Class view: `getTemplatesStatus` → students with hasTemplate
+  const classStudentsWithTemplates =
     templateStatus?.students?.filter((s) => s.hasTemplate) ??
     templateStatus?.summary?.withTemplates ??
     [];
 
-  console.log("studentsWithTemplates", studentsWithTemplates);
+  const allSchoolStudentsRaw = schoolAllStudentsData?.students ?? [];
+
+  const studentsForList = isAllSchoolStudents
+    ? allSchoolStudentsRaw
+    : classStudentsWithTemplates;
+
+  const studentsForPreviewPrint = isAllSchoolStudents
+    ? allSchoolStudentsRaw.filter((s) =>
+        studentHasRenderableSavedCard(s, schoolAllStudentsData),
+      )
+    : classStudentsWithTemplates;
 
   const getTemplateName = (templateId, card = null) => {
     if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
@@ -1072,17 +1433,18 @@ export default function SavedIdCardsList({
   // Build card-like object from API student for preview/print
   // Include address, name, photoUrl, studentId, dimension (from school) so ID card preview shows full data and size
   const studentToCard = (student) => {
-    const apiTemplate = student?.template ?? null;
-    const isApiTemplateRenderable = Boolean(
-      apiTemplate?.frontImage && Array.isArray(apiTemplate?.elements),
-    );
+    const apiTemplate = isAllSchoolStudents
+      ? mergeSchoolRootTemplateIntoStudent(
+          student,
+          schoolAllStudentsData?.template,
+        )
+      : student?.template ?? null;
+    const isApiTemplateRenderable = isFullApiCanvasTemplate(apiTemplate);
 
-    // In "View Template" flow, render the template coming from API (frontImage/backImage/elements).
-    // We pass it as uploadedTemplate override so existing IdCardRenderer + back preview can render it.
-    const templateId =
-      isViewTemplateFlow && isApiTemplateRenderable
-        ? "uploaded-custom"
-        : apiTemplate?.templateId;
+    // API canvas templates must use uploadedTemplate override (same as View Template); DB templateIds are not in idCardTemplates.js.
+    const templateId = isApiTemplateRenderable
+      ? "uploaded-custom"
+      : apiTemplate?.templateId;
 
     return {
       _id: student._id,
@@ -1091,28 +1453,40 @@ export default function SavedIdCardsList({
         student.admissionNo ?? student.rollNo ?? student.uniqueCode ?? "",
       name: student.studentName ?? "",
       templateId,
-      uploadedTemplate:
-        isViewTemplateFlow && isApiTemplateRenderable
-          ? {
-              name: apiTemplate?.name || "Uploaded Template",
-              frontImage: fullPhotoUrl(apiTemplate.frontImage),
-              backImage: fullPhotoUrl(apiTemplate.backImage),
-              elements: apiTemplate.elements,
-            }
-          : null,
+      uploadedTemplate: isApiTemplateRenderable
+        ? {
+            name: apiTemplate?.name || "Uploaded Template",
+            frontImage: fullPhotoUrl(apiTemplate.frontImage),
+            backImage: fullPhotoUrl(apiTemplate.backImage),
+            elements: apiTemplate.elements,
+          }
+        : null,
       studentImage: fullPhotoUrl(student.photoUrl),
-      className: student.class
-        ? `${student.class.className}${student.class.section ? ` - ${student.class.section}` : ""}`
-        : "",
-      schoolName: student.school?.schoolName || "",
+      className: resolveClassNameForIdCard(student),
+      schoolName:
+        student.school?.schoolName ||
+        (typeof student.schoolId === "object" && student.schoolId?.schoolName
+          ? student.schoolId.schoolName
+          : "") ||
+        "",
       address: student.address ?? "",
       dateOfBirth:
         student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
       phone: student.mobile ?? student.phone ?? undefined,
       email: student.email ?? undefined,
-      extraFields: student.extraFields || {},
-      dimension: student.school?.dimension ?? null,
-      dimensionUnit: student.school?.dimensionUnit ?? "mm",
+      extraFields: mergeExtraFieldsFromStudent(student),
+      dimension:
+        student.school?.dimension ??
+        (typeof student.schoolId === "object"
+          ? student.schoolId.dimension
+          : null) ??
+        null,
+      dimensionUnit:
+        student.school?.dimensionUnit ??
+        (typeof student.schoolId === "object"
+          ? student.schoolId.dimensionUnit
+          : null) ??
+        "mm",
     };
   };
 
@@ -1121,10 +1495,12 @@ export default function SavedIdCardsList({
     let base = `${previewBasePath}/${student._id}/${templateId}`;
     if (schoolId && classId)
       base += `?schoolId=${encodeURIComponent(schoolId)}&classId=${encodeURIComponent(classId)}`;
+    else if (schoolId && isAllSchoolStudents)
+      base += `?schoolId=${encodeURIComponent(schoolId)}&allStudents=1`;
     return base;
   };
 
-  const cardsToPrint = studentsWithTemplates.map(studentToCard);
+  const cardsToPrint = studentsForPreviewPrint.map(studentToCard);
   const cardsToPrintRef = useRef(cardsToPrint);
   cardsToPrintRef.current = cardsToPrint;
   const hasFabricCards = cardsToPrint.some((c) =>
@@ -1480,19 +1856,32 @@ export default function SavedIdCardsList({
     const format = pendingExportFormat;
     let cancelled = false;
     const run = async () => {
+      exportCancelRequestedRef.current = false;
+      const isAborted = () => cancelled || exportCancelRequestedRef.current;
       setExporting(true);
       setExportProgress({ label: "Preparing…", current: 0, total: 1 });
-      const fileBaseName = `id-cards-${classId || schoolId || "export"}-${Date.now()}`;
+      const fileBaseName = `id-cards-${
+        isAllSchoolStudents ? "all-students" : classId || schoolId || "export"
+      }-${Date.now()}`;
       let captured = false;
-      const maxAttempts = format === "jpg" ? 220 : 100;
-      const stepMs = format === "jpg" ? 120 : 100;
+      const jpegBulkSpeed = format === "jpg" && isAllSchoolStudents;
+      const jpegCaptureOpts = { bulk: jpegBulkSpeed, shouldAbort: isAborted };
+      const maxAttempts = format === "jpg" ? (jpegBulkSpeed ? 120 : 220) : 100;
+      const stepMs = format === "jpg" ? (jpegBulkSpeed ? 32 : 120) : 100;
       const onProg = (p) => {
-        if (!cancelled) setExportProgress(p);
+        if (isAborted()) return;
+        // Parallel JPEG capture fires several completions in one tick; React 18 batches
+        // those updates unless we flush so "See all" progress matches class (1-by-1).
+        if (jpegBulkSpeed) {
+          flushSync(() => setExportProgress(p));
+        } else {
+          setExportProgress(p);
+        }
       };
       try {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await delay(stepMs);
-          if (cancelled) return;
+          await abortableDelay(stepMs, isAborted);
+          if (isAborted()) throw new ExportCancelledError();
           const wrap = previewPagesWrapRef.current;
           if (!wrap) continue;
           const nodes = wrap.querySelectorAll(".print-page.preview-page");
@@ -1505,65 +1894,130 @@ export default function SavedIdCardsList({
             continue;
           }
           if (format === "jpg") {
+            const mode = jpegExportMode ?? "both";
+            const includePerCard = mode === "both" || mode === "single";
+            const includePages = mode === "both" || mode === "pages";
+
             const frontCells = getFrontCardCellElements(wrap);
             const backCells = getBackCardCellElements(wrap);
             const expectedBackCells = countExpectedBackDomCells(
               cards,
               cardsPerPage,
             );
-            if (
-              frontCells.length !== cards.length ||
-              backCells.length !== expectedBackCells ||
-              cards.length === 0
-            ) {
+
+            if (includePerCard) {
+              if (
+                frontCells.length !== cards.length ||
+                backCells.length !== expectedBackCells ||
+                cards.length === 0
+              ) {
+                continue;
+              }
+            } else if (includePages) {
+              if (nodes.length !== spreadPagesCount || spreadPagesCount <= 0) {
+                continue;
+              }
+            } else {
               continue;
             }
+
             setExportProgress({
               label: "Rendering cards…",
               current: 0,
               total: 1,
             });
-            await delay(hasFabricCards ? 2800 : 650);
-            if (cancelled) return;
+            const renderDelayMs = includePerCard
+              ? hasFabricCards
+                ? jpegBulkSpeed
+                  ? 1800
+                  : 2800
+                : jpegBulkSpeed
+                  ? 220
+                  : 650
+              : jpegBulkSpeed
+                ? 120
+                : 400;
+            await abortableDelay(renderDelayMs, isAborted);
+            if (isAborted()) throw new ExportCancelledError();
             await new Promise((r) =>
               requestAnimationFrame(() => requestAnimationFrame(r)),
             );
-            const cellsReadyFront = getFrontCardCellElements(wrap);
-            const cellsReadyBack = getBackCardCellElements(wrap);
-            if (
-              cellsReadyFront.length !== cards.length ||
-              cellsReadyBack.length !== expectedBackCells
-            ) {
-              continue;
-            }
-            const classLabel = selectedClass
-              ? `${selectedClass.className}`.trim()
-              : String(classId || schoolId || "Class").trim();
-            const subfolderName = `${classLabel}`;
-            const files = await buildPreviewFrontAndBackJpegFiles(
-              wrap,
-              cards,
-              previewPageBackgroundColor,
-              onProg,
-              cardsPerPage,
-            );
+            if (isAborted()) throw new ExportCancelledError();
 
-            // Additionally export one JPEG per preview page (page-sized, clearer than a stitched long image).
-            try {
-              const pageFiles = await buildPreviewPagesJpegFiles(
-                nodes,
+            if (includePerCard) {
+              const cellsReadyFront = getFrontCardCellElements(wrap);
+              const cellsReadyBack = getBackCardCellElements(wrap);
+              if (
+                cellsReadyFront.length !== cards.length ||
+                cellsReadyBack.length !== expectedBackCells
+              ) {
+                continue;
+              }
+            }
+
+            const subfolderName = isAllSchoolStudents
+              ? String(
+                  selectedSchool?.schoolName ||
+                    selectedSchool?.schoolCode ||
+                    schoolId ||
+                    "School",
+                ).trim() || "School"
+              : String(
+                  selectedClass
+                    ? [
+                        selectedClass.className,
+                        selectedClass.section,
+                      ]
+                        .filter(Boolean)
+                        .join(" ")
+                        .trim()
+                    : classId || schoolId || "Class",
+                ).trim() || "Class";
+
+            const files = [];
+            if (includePerCard) {
+              const cardFiles = await buildPreviewFrontAndBackJpegFiles(
+                wrap,
+                cards,
                 previewPageBackgroundColor,
                 onProg,
+                cardsPerPage,
+                jpegCaptureOpts,
               );
-              files.push(...pageFiles);
-            } catch (e) {
-              console.warn("Page JPEG export failed (keeping per-card JPEGs):", e);
+              files.push(...cardFiles);
             }
+            if (includePages) {
+              try {
+                const pageFiles = await buildPreviewPagesJpegFiles(
+                  nodes,
+                  previewPageBackgroundColor,
+                  onProg,
+                  jpegCaptureOpts,
+                );
+                files.push(...pageFiles);
+              } catch (e) {
+                if (isExportCancelledError(e)) throw e;
+                if (includePerCard) {
+                  console.warn(
+                    "Page JPEG export failed (keeping per-card JPEGs):",
+                    e,
+                  );
+                } else {
+                  throw e;
+                }
+              }
+            }
+
+            if (files.length === 0) {
+              continue;
+            }
+
             const saveResult = await saveJpegExportToFolder(
               subfolderName,
               files,
               onProg,
               jpegWebParentDirHandleRef.current,
+              isAborted,
             );
             if (saveResult?.cancelled) {
               captured = true;
@@ -1589,25 +2043,34 @@ export default function SavedIdCardsList({
             pageHeightMm,
             fileBaseName,
             previewPageBackgroundColor,
+            isAborted,
           );
           captured = true;
           break;
         }
-        if (!captured && !cancelled) {
+        if (
+          !captured &&
+          !cancelled &&
+          !exportCancelRequestedRef.current
+        ) {
           window.alert(
             "Could not capture the preview. Open Preview, wait for cards to load, then try Download again.",
           );
         }
       } catch (err) {
-        console.error(err);
-        window.alert(
-          (typeof err?.message === "string" && err.message.trim()) ||
-            "Download failed. Wait for the preview to finish loading, then try again.",
-        );
+        if (!isExportCancelledError(err) && !cancelled) {
+          console.error(err);
+          window.alert(
+            (typeof err?.message === "string" && err.message.trim()) ||
+              "Download failed. Wait for the preview to finish loading, then try again.",
+          );
+        }
       } finally {
         if (!cancelled) {
+          exportCancelRequestedRef.current = false;
           setExporting(false);
           setPendingExportFormat(null);
+          setJpegExportMode(null);
           setExportProgress(null);
           jpegWebParentDirHandleRef.current = null;
         }
@@ -1619,6 +2082,7 @@ export default function SavedIdCardsList({
     };
   }, [
     pendingExportFormat,
+    jpegExportMode,
     showPreviewView,
     spreadPagesCount,
     cardsPerPage,
@@ -1626,76 +2090,98 @@ export default function SavedIdCardsList({
     pageHeightMm,
     classId,
     schoolId,
+    isAllSchoolStudents,
+    selectedClass,
+    selectedSchool,
     previewPageBackgroundColor,
     hasFabricCards,
   ]);
+
+  const ensureViewTemplateDownloadCharge = async () => {
+    if (!isViewTemplateFlow) return true;
+    const studentIds = studentsForPreviewPrint
+      .map((student) => student?._id)
+      .filter((id) => typeof id === "string" && id.trim() !== "");
+
+    if (studentIds.length === 0) {
+      window.alert("No students found for template download.");
+      return false;
+    }
+
+    try {
+      setChargingDownloadPoints(true);
+      const chargeResult = await deductTemplateDownloadPoints(studentIds);
+      if (typeof chargeResult?.balanceAfter === "number") {
+        window.dispatchEvent(
+          new CustomEvent("photographer-points-updated", {
+            detail: {
+              pointsBalance: chargeResult.balanceAfter,
+              perStudentTemplateCost: chargeResult.rateApplied,
+            },
+          }),
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(
+        err?.message || "Unable to deduct points. Please try again.",
+      );
+      return false;
+    } finally {
+      setChargingDownloadPoints(false);
+    }
+    return true;
+  };
+
+  /** Browser: folder picker here (must run in click handler). Then starts JPEG export. */
+  const prepareAndStartJpegExport = async (mode) => {
+    const isElectronApp = Boolean(
+      typeof window !== "undefined" && window.electron?.selectOutputFolder,
+    );
+    const canTryFileSystemAccessPicker =
+      !isElectronApp &&
+      typeof window.showDirectoryPicker === "function" &&
+      window.isSecureContext !== false;
+
+    jpegWebParentDirHandleRef.current = null;
+    if (canTryFileSystemAccessPicker) {
+      try {
+        jpegWebParentDirHandleRef.current =
+          await window.showDirectoryPicker();
+      } catch (e) {
+        if (e?.name === "AbortError") return;
+        console.warn("Folder picker unavailable, using download fallback:", e);
+        jpegWebParentDirHandleRef.current = null;
+      }
+    }
+
+    const charged = await ensureViewTemplateDownloadCharge();
+    if (!charged) return;
+
+    setJpegExportMode(mode);
+    if (!showPreviewView) setShowPreviewView(true);
+    setPendingExportFormat("jpg");
+  };
 
   const triggerExport = async (fmt) => {
     if (exporting || chargingDownloadPoints) return;
     setShowDownloadMenuList(false);
     setShowDownloadMenuPreview(false);
 
-    // Desktop app: never use showDirectoryPicker — it is blocked in Electron / file:// and throws
-    // "The request is not allowed by the user agent or the platform in the current context."
-    const isElectronApp = Boolean(
-      typeof window !== "undefined" && window.electron?.selectOutputFolder,
-    );
-    const canTryFileSystemAccessPicker =
-      fmt === "jpg" &&
-      !isElectronApp &&
-      typeof window.showDirectoryPicker === "function" &&
-      window.isSecureContext !== false;
+    if (fmt === "jpg" && isAllSchoolStudents) {
+      setSeeAllJpegDialogOpen(true);
+      return;
+    }
 
     if (fmt === "jpg") {
-      jpegWebParentDirHandleRef.current = null;
-      if (canTryFileSystemAccessPicker) {
-        try {
-          jpegWebParentDirHandleRef.current =
-            await window.showDirectoryPicker();
-        } catch (e) {
-          if (e?.name === "AbortError") return;
-          // NotAllowedError, SecurityError, or platform block — continue without folder API
-          console.warn("Folder picker unavailable, using download fallback:", e);
-          jpegWebParentDirHandleRef.current = null;
-        }
-      }
-    } else {
-      jpegWebParentDirHandleRef.current = null;
+      await prepareAndStartJpegExport("both");
+      return;
     }
 
-    if (isViewTemplateFlow) {
-      const studentIds = studentsWithTemplates
-        .map((student) => student?._id)
-        .filter((id) => typeof id === "string" && id.trim() !== "");
+    jpegWebParentDirHandleRef.current = null;
 
-      if (studentIds.length === 0) {
-        window.alert("No students found for template download.");
-        return;
-      }
-
-      try {
-        setChargingDownloadPoints(true);
-        const chargeResult = await deductTemplateDownloadPoints(studentIds);
-        if (typeof chargeResult?.balanceAfter === "number") {
-          window.dispatchEvent(
-            new CustomEvent("photographer-points-updated", {
-              detail: {
-                pointsBalance: chargeResult.balanceAfter,
-                perStudentTemplateCost: chargeResult.rateApplied,
-              },
-            }),
-          );
-        }
-      } catch (err) {
-        console.error(err);
-        window.alert(
-          err?.message || "Unable to deduct points. Please try again.",
-        );
-        return;
-      } finally {
-        setChargingDownloadPoints(false);
-      }
-    }
+    const charged = await ensureViewTemplateDownloadCharge();
+    if (!charged) return;
 
     if (!showPreviewView) {
       setShowPreviewView(true);
@@ -1987,6 +2473,26 @@ export default function SavedIdCardsList({
           ? "Click on a class to see its students."
           : "Click on a class to see students who have saved ID cards."}
       </p>
+      <div style={{ marginBottom: 20 }}>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() =>
+            navigate(`${basePath}/school/${schoolId}/all-students`)
+          }
+          style={{ padding: "10px 16px" }}
+        >
+          See all students
+        </button>
+        <span
+          className="text-muted"
+          style={{ marginLeft: 12, fontSize: "0.9rem" }}
+        >
+          {isViewTemplateFlow
+            ? "Entire school roster in one list."
+            : "All students in this school; preview and print use saved ID cards only."}
+        </span>
+      </div>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
       {!loadingClasses && !errorClasses && classes.length === 0 && (
@@ -2037,7 +2543,9 @@ export default function SavedIdCardsList({
         <h3 style={{ margin: 0 }}>
           {selectedClass
             ? `${selectedClass.className}`
-            : classId}
+            : isAllSchoolStudents
+              ? "All students"
+              : classId}
           {isViewTemplateFlow ? " – Templates" : " – Saved ID cards"}
         </h3>
       </div>
@@ -2045,152 +2553,130 @@ export default function SavedIdCardsList({
         className="text-muted"
         style={{ marginBottom: 20, fontSize: "0.9rem" }}
       >
-        {isViewTemplateFlow
-          ? "Students with templates. Click to open preview."
-          : "Students with saved ID cards. Click to open preview."}
+        {isAllSchoolStudents
+          ? isViewTemplateFlow
+            ? "Full school list. Rows with a template can open preview; Preview / Print includes only students with templates."
+            : "Full school list. Rows with a saved ID card can open preview; Preview / Print includes only those students."
+          : isViewTemplateFlow
+            ? "Students with templates. Click to open preview."
+            : "Students with saved ID cards. Click to open preview."}
       </p>
       {loadingStudents && <p className="text-muted">Loading students…</p>}
       {errorStudents && <p className="text-danger">{errorStudents}</p>}
       {!loadingStudents &&
         !errorStudents &&
-        studentsWithTemplates.length === 0 && (
+        studentsForList.length === 0 && (
           <p className="text-muted">
-            {isViewTemplateFlow
-              ? "No templates in this class."
-              : "No saved ID cards in this class."}
+            {isAllSchoolStudents
+              ? "No students found for this school."
+              : isViewTemplateFlow
+                ? "No templates in this class."
+                : "No saved ID cards in this class."}
           </p>
         )}
       {!loadingStudents &&
         !errorStudents &&
-        studentsWithTemplates.length > 0 && (
-          <>
-            <div
-              style={{
-                marginBottom: 20,
-                display: "flex",
-                gap: 12,
-                flexWrap: "wrap",
-                alignItems: "center",
-              }}
+        studentsForList.length > 0 &&
+        studentsForPreviewPrint.length === 0 &&
+        isAllSchoolStudents && (
+          <p className="text-muted" style={{ marginBottom: 16 }}>
+            {isViewTemplateFlow
+              ? "None of these students have template data yet."
+              : "None of these students have a saved ID card yet (or template data is missing)."}
+          </p>
+        )}
+      {!loadingStudents &&
+        !errorStudents &&
+        studentsForList.length > 0 &&
+        studentsForPreviewPrint.length > 0 && (
+          <div
+            style={{
+              marginBottom: 20,
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowPreviewView(true)}
             >
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowPreviewView(true)}
-              >
-                👁️ Preview ID Cards
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => setShowPrintView(true)}
-              >
-                🖨️ Print Cards
-              </button>
-              {/* <div
-                className="download-dropdown-wrap"
-                style={{ position: "relative", display: "inline-block" }}
-              >
+              👁️ Preview ID Cards
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowPrintView(true)}
+            >
+              🖨️ Print Cards
+            </button>
+          </div>
+        )}
+      {!loadingStudents && !errorStudents && studentsForList.length > 0 && (
+        <ul className="saved-idcards-list">
+          {studentsForList.map((student) => {
+            const card = studentToCard(student);
+            const canOpenPreview = studentHasRenderableSavedCard(
+              student,
+              isAllSchoolStudents ? schoolAllStudentsData : null,
+            );
+            return (
+              <li key={student._id}>
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  disabled={exporting || chargingDownloadPoints}
-                  onClick={() => setShowDownloadMenuList((v) => !v)}
+                  className="saved-idcard-item"
+                  disabled={!canOpenPreview}
+                  title={
+                    !canOpenPreview
+                      ? isViewTemplateFlow
+                        ? "No template data for this student"
+                        : "No saved ID card for this student"
+                      : undefined
+                  }
+                  style={
+                    !canOpenPreview
+                      ? { opacity: 0.55, cursor: "not-allowed" }
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (!canOpenPreview) return;
+                    setSingleCardPreview(card);
+                  }}
                 >
-                  {chargingDownloadPoints
-                    ? "Checking balance…"
-                    : exporting
-                      ? "Downloading…"
-                      : "⬇ Download"}{" "}
-                  ▾
-                </button>
-                {showDownloadMenuList && (
-                  <div
-                    role="menu"
-                    style={{
-                      position: "absolute",
-                      top: "100%",
-                      left: 0,
-                      marginTop: 6,
-                      zIndex: 20,
-                      minWidth: 160,
-                      background: "#fff",
-                      border: "1px solid #ddd",
-                      borderRadius: 8,
-                      boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
-                      overflow: "hidden",
-                    }}
-                  >
-                    {["jpg", "png", "pdf"].map((fmt) => (
-                      <button
-                        key={fmt}
-                        type="button"
-                        role="menuitem"
-                        disabled={exporting || chargingDownloadPoints}
-                        onClick={() => triggerExport(fmt)}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "10px 14px",
-                          border: "none",
-                          background: "transparent",
-                          cursor:
-                            exporting || chargingDownloadPoints
-                              ? "not-allowed"
-                              : "pointer",
-                          fontSize: "0.95rem",
-                          textTransform: "uppercase",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!exporting && !chargingDownloadPoints)
-                            e.currentTarget.style.background = "#f3f4f6";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = "transparent";
-                        }}
-                      >
-                        {fmt}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div> */}
-            </div>
-            <ul className="saved-idcards-list">
-              {/* `student` yahan `studentsWithTemplates` se aa raha hai, jo `getTemplatesStatus` (templates/status API) se populate hota hai. */}
-              {studentsWithTemplates.map((student) => {
-
-                console.log('student', student);
-                const card = studentToCard(student);
-                return (
-                  <li key={student._id}>
-                    <button
-                      type="button"
-                      className="saved-idcard-item"
-                      onClick={() => setSingleCardPreview(card)}
-                    >
-                      <span className="saved-idcard-name">
-                        {student.studentName}
-                      </span>
-                      <span className="text-muted saved-idcard-meta">
+                  <span className="saved-idcard-name">
+                    {student.studentName}
+                  </span>
+                  <span className="text-muted saved-idcard-meta">
+                    {canOpenPreview ? (
+                      <>
                         {getTemplateName(card.templateId, card)} ·{" "}
                         {student.admissionNo || student.rollNo || ""} ·{" "}
                         {student.template?.status || ""}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        )}
+                      </>
+                    ) : (
+                      <>
+                        {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
+                        {student.admissionNo || student.rollNo || ""}
+                        {isAllSchoolStudents ? " · No saved card" : ""}
+                      </>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </>
   );
 
   const showSchools = schoolId == null;
-  const showClasses = schoolId != null && classId == null;
-  const showStudents = schoolId != null && classId != null;
+  const showClasses =
+    schoolId != null && classId == null && !isAllSchoolStudents;
+  const showStudents =
+    (schoolId != null && classId != null) || isAllSchoolStudents;
 
   return (
     <>
@@ -2426,6 +2912,105 @@ export default function SavedIdCardsList({
               })}
             </div>
           </div>
+          {seeAllJpegDialogOpen && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="see-all-jpeg-dialog-title"
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 10055,
+                background: "rgba(0,0,0,0.65)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+              }}
+              onClick={() => setSeeAllJpegDialogOpen(false)}
+            >
+              <div
+                style={{
+                  background: "#2a2a2a",
+                  borderRadius: 12,
+                  padding: "22px 24px",
+                  maxWidth: 440,
+                  width: "100%",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3
+                  id="see-all-jpeg-dialog-title"
+                  style={{ margin: "0 0 8px", color: "#fff", fontSize: "1.1rem" }}
+                >
+                  JPEG export
+                </h3>
+                <p
+                  style={{
+                    margin: "0 0 18px",
+                    color: "rgba(255,255,255,0.82)",
+                    fontSize: 14,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Choose how to save JPEGs: per-card front/back files, full
+                  preview pages, or both (same as class export).
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={exporting || chargingDownloadPoints}
+                    onClick={() => {
+                      setSeeAllJpegDialogOpen(false);
+                      void prepareAndStartJpegExport("both");
+                    }}
+                  >
+                    Both (per card + page-wise)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={exporting || chargingDownloadPoints}
+                    onClick={() => {
+                      setSeeAllJpegDialogOpen(false);
+                      void prepareAndStartJpegExport("single");
+                    }}
+                  >
+                    Single images (per card)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={exporting || chargingDownloadPoints}
+                    onClick={() => {
+                      setSeeAllJpegDialogOpen(false);
+                      void prepareAndStartJpegExport("pages");
+                    }}
+                  >
+                    Page-wise (full pages)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={exporting || chargingDownloadPoints}
+                    onClick={() => setSeeAllJpegDialogOpen(false)}
+                    style={{ color: "rgba(255,255,255,0.85)" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {exportProgress && (
             <div
               className="export-progress-overlay"
@@ -2437,14 +3022,13 @@ export default function SavedIdCardsList({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                pointerEvents: "none",
+                pointerEvents: "auto",
               }}
               aria-live="polite"
               aria-busy="true"
             >
               <div
                 style={{
-                  pointerEvents: "auto",
                   background: "#2a2a2a",
                   padding: "20px 24px",
                   borderRadius: 12,
@@ -2498,6 +3082,21 @@ export default function SavedIdCardsList({
                     ? `${exportProgress.current} / ${exportProgress.total}`
                     : ""}
                 </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{
+                    marginTop: 16,
+                    width: "100%",
+                    padding: "10px 14px",
+                    fontSize: 14,
+                  }}
+                  onClick={() => {
+                    exportCancelRequestedRef.current = true;
+                  }}
+                >
+                  Cancel download
+                </button>
               </div>
             </div>
           )}
