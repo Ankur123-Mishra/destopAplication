@@ -384,6 +384,7 @@ export default function ClassWiseUploadedPhotos() {
   }
 
   // —— View: Students list (Upload, View, Upload all, Create ID card) ——
+  
   return (
     <>
       <Header title="Uploaded Photos (Class-wise)" showBack backTo="/uploaded-photos" />
