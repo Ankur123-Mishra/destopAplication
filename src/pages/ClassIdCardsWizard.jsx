@@ -17,6 +17,7 @@ import {
   getStudentsBySchoolAndClass,
   uploadStudentPhoto,
   bulkSaveTemplates,
+  bulkSaveFullOfflineTemplates,
   uploadTemplate,
 } from '../api/dashboard';
 import { API_BASE_URL } from '../api/config';
@@ -111,6 +112,8 @@ function mergeUploadedTemplateWithDraft(base, schoolId, classId) {
 function fullPhotoUrl(url) {
   if (!url || typeof url !== 'string') return url;
   if (url.startsWith('http')) return url;
+  if (url.startsWith('data:')) return url;
+  if (url.startsWith('blob:')) return url;
   const base = API_BASE_URL.replace(/\/$/, '');
 
   return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
@@ -550,6 +553,9 @@ export default function ClassIdCardsWizard() {
         const apiTemplateId = getApiTemplateId(selectedTemplateId);
         await bulkSaveTemplates(apiTemplateId, studentIds);
       }
+      
+      const offlineUpdates = [];
+
       selectedStudents.forEach((student) => {
         const image = getImageForStudent(student);
         if (!image) return;
@@ -562,6 +568,9 @@ export default function ClassIdCardsWizard() {
           schoolName: school.name,
           address: school.address,
         };
+
+        let offlineTemplateObj = { templateId: selectedTemplateId, name: template?.name };
+
         if (isUploaded && effectiveUploadedTemplate) {
           cardData.uploadedTemplate = {
             frontImage: effectiveUploadedTemplate.frontImage,
@@ -569,9 +578,30 @@ export default function ClassIdCardsWizard() {
             elements: effectiveUploadedTemplate.elements,
             name: effectiveUploadedTemplate.name,
           };
+          offlineTemplateObj = {
+            templateId: selectedTemplateId,
+            name: effectiveUploadedTemplate.name,
+            frontImage: effectiveUploadedTemplate.frontImage,
+            backImage: effectiveUploadedTemplate.backImage,
+            elements: effectiveUploadedTemplate.elements,
+          };
+        } else if (template) {
+          // Fallback to storing raw full properties if it's a fabric API template
+          if (template.frontImage && Array.isArray(template.elements)) {
+            offlineTemplateObj.frontImage = template.frontImage;
+            offlineTemplateObj.backImage = template.backImage;
+            offlineTemplateObj.elements = template.elements;
+          }
         }
+        
+        offlineUpdates.push({ id: student.id, template: offlineTemplateObj });
+
         addSavedIdCard(student.id, cardData, { schoolId: school.id, classId: cls.id });
       });
+
+      if (offlineUpdates.length > 0) {
+        await bulkSaveFullOfflineTemplates(offlineUpdates);
+      }
       const viewTemplatePath =
         cls.id === 'all'
           ? `/view-template/school/${school.id}/all-students`

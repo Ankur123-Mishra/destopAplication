@@ -35,6 +35,8 @@ const DEFAULT_CARD_HEIGHT_MM = 57;
 function fullPhotoUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (url.startsWith("http")) return url;
+  if (url.startsWith("data:")) return url;
+  if (url.startsWith("blob:")) return url;
   const base = API_BASE_URL.replace(/\/$/, "");
   return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
 }

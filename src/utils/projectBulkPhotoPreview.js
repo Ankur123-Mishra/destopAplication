@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../api/config';
 function toFullPhotoUrl(url) {
   if (!url || typeof url !== 'string') return url;
   if (url.startsWith('http') || url.startsWith('blob:')) return url;
+  if (url.startsWith('data:')) return url;
   const base = API_BASE_URL.replace(/\/$/, '');
   return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
 }
