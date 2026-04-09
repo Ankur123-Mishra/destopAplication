@@ -233,6 +233,11 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             gender: getCol(row, "Gender"),
             bloodGroup: getCol(row, "BloodGroup"),
             fatherName: getCol(row, "Fathers Name", "FatherName", "Father's Name"),
+            fatherPrimaryContact: getCol(row, "Father Primary Contact", "FatherContact", "Father Mobile", "Father Phone"),
+            motherName: getCol(row, "Mother Name", "MotherName", "Mother's Name"),
+            motherPrimaryContact: getCol(row, "Mother Primary Contact", "MotherContact", "Mother Mobile", "Mother Phone"),
+            house: getCol(row, "House"),
+            marking: getCol(row, "Marking"),
             status: 'Active',
             photoUrl: null
           };

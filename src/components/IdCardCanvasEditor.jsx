@@ -19,11 +19,22 @@ const FIELD_DEFS = [
   { key: 'rollNo', label: 'Roll No' },
   { key: 'uniqueCode', label: 'Unique Code' },
   { key: 'className', label: 'Class' },
+  { key: 'section', label: 'Section' },
   { key: 'schoolName', label: 'School' },
   { key: 'dateOfBirth', label: 'DOB' },
   { key: 'phone', label: 'Mobile' },
   { key: 'email', label: 'Email' },
   { key: 'address', label: 'Address' },
+  { key: 'fatherName', label: 'Father Name' },
+  { key: 'fatherPrimaryContact', label: 'Father Contact' },
+  { key: 'motherName', label: 'Mother Name' },
+  { key: 'motherPrimaryContact', label: 'Mother Contact' },
+  { key: 'gender', label: 'Gender' },
+  { key: 'bloodGroup', label: 'Blood Group' },
+  { key: 'house', label: 'House' },
+  { key: 'marking', label: 'Marking' },
+  { key: 'photoNo', label: 'Photo No' },
+  { key: 'status', label: 'Status' },
 ];
 
 const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
@@ -1461,6 +1472,13 @@ export default function IdCardCanvasEditor({
 
           <div style={{ marginBottom: 18 }}>
             {allFieldDefs.map((f) => {
+              // Only show fields that have actual values in the student data
+              const val = getFieldValue(f.key);
+              const hasValue = String(val || '').trim() !== '';
+              
+              // Skip fields with no value (show only what exists in Excel/student data)
+              if (!hasValue) return null;
+              
               // By default, only Name should appear checked for new templates.
               // Other fields become checked only when they already have a bound element on the canvas.
               const hasBoundElement = elementHasField(f.key);
@@ -1469,10 +1487,7 @@ export default function IdCardCanvasEditor({
                 (f.key === 'name' &&
                   (hasBoundElement ||
                     elements.some((e) => e.id === 'name')));
-              if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key) && !checked) return null;
-              const val = getFieldValue(f.key);
-              const hasValue = String(val || '').trim() !== '';
-              if (!hasValue && !checked) return null;
+              
               return (
                 <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}>
                   <input
