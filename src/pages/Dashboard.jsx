@@ -42,13 +42,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createModalVersion, setCreateModalVersion] = useState(0);
   const [deletingSchoolId, setDeletingSchoolId] = useState(null);
+  const [deleteConfirmTargetId, setDeleteConfirmTargetId] = useState(null);
   const [viewMode, setViewMode] = useState('offline'); // online | offline
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState([]);
   const [projectFolderExcel, setProjectFolderExcel] = useState(null);
   const projectFolderInputRef = useRef(null);
   const pendingPhotoFilesRef = useRef([]);
   pendingPhotoFilesRef.current = pendingPhotoFiles;
+
+  const focusProjectNameInput = () => {
+    const modal = document.querySelector('.create-project-modal');
+    const projectNameInput = modal?.querySelector('input[data-project-name-input="true"]');
+    if (!projectNameInput) return;
+    projectNameInput.disabled = false;
+    projectNameInput.readOnly = false;
+    projectNameInput.focus();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -89,18 +100,34 @@ export default function Dashboard() {
     if (!createModalOpen) return undefined;
     const outer = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const modal = document.querySelector('.create-project-modal');
-        const projectNameInput = modal?.querySelector('input.input-field[type="text"]');
-        projectNameInput?.focus();
+        focusProjectNameInput();
       });
     });
-    return () => cancelAnimationFrame(outer);
+    const timer = window.setTimeout(() => {
+      focusProjectNameInput();
+    }, 120);
+    const onWindowFocus = () => {
+      focusProjectNameInput();
+    };
+    window.addEventListener('focus', onWindowFocus);
+    return () => {
+      cancelAnimationFrame(outer);
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', onWindowFocus);
+    };
   }, [createModalOpen]);
 
   const closeCreateProjectModal = () => {
     setCreateModalOpen(false);
     setPendingPhotoFiles([]);
     setProjectFolderExcel(null);
+  };
+
+  const openCreateProjectModal = () => {
+    setPendingPhotoFiles([]);
+    setProjectFolderExcel(null);
+    setCreateModalVersion((prev) => prev + 1);
+    setCreateModalOpen(true);
   };
 
   const finishCreateProject = () => {
@@ -129,6 +156,9 @@ export default function Dashboard() {
       setPendingPhotoFiles(imageFiles);
     }
     e.target.value = '';
+    requestAnimationFrame(() => {
+      focusProjectNameInput();
+    });
   };
 
   // Excel ke baad: students se files match karke local blob previews register karo, phir uploads background mein.
@@ -180,9 +210,19 @@ export default function Dashboard() {
     })();
   };
 
-  const handleDeleteSchool = async (id, e) => {
+  const handleDeleteSchool = (id, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this project?")) return;
+    setDeleteConfirmTargetId(id);
+  };
+
+  const cancelDeleteSchool = () => {
+    setDeleteConfirmTargetId(null);
+  };
+
+  const confirmDeleteSchool = async () => {
+    const id = deleteConfirmTargetId;
+    if (!id) return;
+    setDeleteConfirmTargetId(null);
     setError('');
     setDeletingSchoolId(id);
     try {
@@ -196,11 +236,6 @@ export default function Dashboard() {
         ...prev,
         assignedSchools: Math.max(0, (prev.assignedSchools || 0) - 1),
       }));
-      // Row removal unmounts the focused Delete control; orphaned focus can break typing
-      // in the Create Project modal (Electron/WebKit) until focus moves to a live node.
-      requestAnimationFrame(() => {
-        document.getElementById('dashboard-create-project-btn')?.focus();
-      });
     } catch (err) {
       setError(err?.message || 'Failed to delete school');
     } finally {
@@ -242,11 +277,7 @@ export default function Dashboard() {
             type="button"
             className="btn btn-primary create-project-btn"
             disabled={isSyncing}
-            onClick={() => {
-              setCreateModalOpen(true);
-              setPendingPhotoFiles([]);
-              setProjectFolderExcel(null);
-            }}
+            onClick={openCreateProjectModal}
           >
             Create Project
           </button>
@@ -341,6 +372,7 @@ export default function Dashboard() {
                   onChange={handleProjectFolderSelect}
                 />
                 <CreateSchoolForm
+                  key={createModalVersion}
                   labelAsProject
                   externalExcelFile={projectFolderExcel}
                   projectFolderField={
@@ -367,6 +399,30 @@ export default function Dashboard() {
                   showCancel
                 />
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteConfirmTargetId && (
+        <div className="delete-confirm-overlay" role="presentation" onClick={cancelDeleteSchool}>
+          <div
+            className="delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-project-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-project-title" style={{ margin: 0, marginBottom: 10 }}>Delete Project</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Are you sure you want to delete this project?
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button type="button" className="btn btn-secondary" onClick={cancelDeleteSchool}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={confirmDeleteSchool}>
+                Delete
+              </button>
             </div>
           </div>
         </div>
@@ -404,6 +460,26 @@ export default function Dashboard() {
           border-color: rgba(231, 76, 60, 0.8);
         }
         .create-project-photos-step { max-width: 100%; }
+        .delete-confirm-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10060;
+          padding: 24px;
+          box-sizing: border-box;
+        }
+        .delete-confirm-modal {
+          width: 100%;
+          max-width: 420px;
+          background: var(--card-bg, #1e1e2e);
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,0.08);
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+          padding: 18px;
+        }
         .bulk-upload-result {
           padding: 12px 16px;
           background: rgba(76, 175, 80, 0.12);

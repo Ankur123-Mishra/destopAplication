@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createSchool, bulkUploadStudentsXls } from '../api/dashboard';
 
 const MM_PER_UNIT = {
@@ -50,6 +50,39 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const xlsInputRef = useRef(null);
+  const projectNameInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!labelAsProject) return undefined;
+
+    const ensureInputReady = () => {
+      const input = projectNameInputRef.current;
+      if (!input) return;
+      input.disabled = false;
+      input.readOnly = false;
+    };
+
+    const focusInput = () => {
+      ensureInputReady();
+      const input = projectNameInputRef.current;
+      if (!input) return;
+      input.focus();
+    };
+
+    const rafId = requestAnimationFrame(() => {
+      focusInput();
+    });
+    const timer = window.setTimeout(() => {
+      focusInput();
+    }, 120);
+    window.addEventListener('focus', focusInput);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', focusInput);
+    };
+  }, [labelAsProject]);
 
   const allowedMobiles = allowedMobilesStr
     .split(/[\s,]+/)
@@ -208,11 +241,18 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
         <div style={{ marginBottom: 16 }}>
           <label className="input-label">{nameLabel} *</label>
           <input
+            ref={projectNameInputRef}
             type="text"
             className="input-field"
+            data-project-name-input="true"
             value={schoolName}
             onChange={(e) => setSchoolName(e.target.value)}
+            onFocus={(e) => {
+              e.currentTarget.disabled = false;
+              e.currentTarget.readOnly = false;
+            }}
             placeholder={labelAsProject ? 'e.g. My Project' : 'e.g. Green Valley School'}
+            autoFocus={labelAsProject}
             required
           />
         </div>
