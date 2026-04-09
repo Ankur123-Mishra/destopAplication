@@ -239,6 +239,38 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/view-template/wizard"
+          element={<Navigate to="/view-template" replace />}
+        />
+        <Route
+          path="/view-template/wizard/school/:schoolId"
+          element={<Navigate to="/view-template" replace />}
+        />
+        <Route
+          path="/view-template/wizard/students/:schoolId/:classId"
+          element={
+            <PrivateRoute>
+              <Layout><ClassIdCardsWizard basePath="/view-template/wizard" /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/view-template/wizard/template/:schoolId/:classId"
+          element={
+            <PrivateRoute>
+              <Layout><ClassIdCardsWizard basePath="/view-template/wizard" /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/view-template/wizard/review/:schoolId/:classId/:templateId"
+          element={
+            <PrivateRoute>
+              <Layout><ClassIdCardsWizard basePath="/view-template/wizard" /></Layout>
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/saved-id-cards/school/:schoolId/all-students"
           element={
             <PrivateRoute>

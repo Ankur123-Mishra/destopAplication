@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { updatePhotographerSchool } from '../api/dashboard';
+import IdCardRenderer from './IdCardRenderer';
 import {
   getCanvasTextEffectiveFontSizePx,
   getTextTypographyStyle,
@@ -29,9 +30,8 @@ const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
 
 const DEFAULT_ELEMENTS = () => [
   { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
-  { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 14, content: '', fontWeight: '700' },
-  { type: 'text', id: 'dob', dataField: 'dateOfBirth', x: 45, y: 36, fontSize: 11, content: '' },
-  { type: 'text', id: 'address', dataField: 'address', x: 45, y: 48, fontSize: 10, content: '' },
+  // Start with only Name bound by default; other fields are added explicitly via checkboxes.
+  { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 10, content: '', fontWeight: '700' },
 ];
 
 /**
@@ -268,6 +268,7 @@ function getPhysicalStageSizeStyle(dimension, dimensionUnit) {
 
 export default function IdCardCanvasEditor({
   templateImage,
+  previewSecondaryTemplateImage = null,
   studentImage,
   initialElements,
   initialData = {},
@@ -288,6 +289,7 @@ export default function IdCardCanvasEditor({
   const canvasRef = useRef(null);
   const [elements, setElements] = useState(() => initialElements || DEFAULT_ELEMENTS());
   const [selectedId, setSelectedId] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
   const [dragState, setDragState] = useState(null);
   const [resizeState, setResizeState] = useState(null);
   const [photoUrl, setPhotoUrl] = useState(studentImage);
@@ -461,15 +463,14 @@ export default function IdCardCanvasEditor({
     });
   }, [addFieldElement, allFieldDefs, getFieldValue]);
 
-  // Auto-add other fields with data when there is no initial layout; skip ID/class/school so defaults stay Name + DOB + Address.
-  
+  // First time open (no initialElements): auto-add only Name so that
+  // template fields sidebar starts with just Name checked by default.
   useEffect(() => {
     if (didInitAddAllRef.current) return;
     if (initialElements) return; // do not override a provided template layout
     didInitAddAllRef.current = true;
-    const skipKeys = new Set(['studentId', 'className', 'schoolName']);
     FIELD_DEFS.forEach((f) => {
-      if (skipKeys.has(f.key)) return;
+      if (f.key !== 'name') return;
       const val = getFieldValue(f.key);
       if (val) addFieldElement(f.key);
     });
@@ -481,6 +482,11 @@ export default function IdCardCanvasEditor({
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
+    // Preview mode should match the physical card dimensions exactly (no editor zoom).
+    if (showPreview) {
+      setEditorZoomPadBottom(0);
+      return;
+    }
     const updatePad = () => {
       const h = el.offsetHeight;
       if (!h) return;
@@ -490,7 +496,7 @@ export default function IdCardCanvasEditor({
     const ro = new ResizeObserver(updatePad);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [effectiveDimension?.width, effectiveDimension?.height, effectiveDimensionUnit, templateImage]);
+  }, [effectiveDimension?.width, effectiveDimension?.height, effectiveDimensionUnit, templateImage, showPreview]);
 
   const pxToPercent = useCallback((pxVal, isX) => {
     const rect = getCanvasRect();
@@ -499,19 +505,20 @@ export default function IdCardCanvasEditor({
   }, [getCanvasRect]);
 
   const handlePointerDown = (e, id, isResizeHandle) => {
+    e.stopPropagation();
     e.preventDefault();
     const rect = getCanvasRect();
     if (!rect) return;
     const el = elements.find((x) => x.id === id);
     if (!el) return;
     setSelectedId(id);
-    if (el.type === 'photo' && isResizeHandle) {
+    if (isResizeHandle) {
       setResizeState({
         id,
         startX: e.clientX,
         startY: e.clientY,
-        startWidth: el.width,
-        startHeight: el.height,
+        startWidth: el.type === 'text' ? getTextBoxWidthPercentForRender(el) : el.width,
+        startHeight: el.type === 'text' ? (typeof el.height === 'number' ? el.height : getTextElementNominalHeightPercentForBounds(el)) : el.height,
       });
     } else {
       setDragState({
@@ -534,12 +541,15 @@ export default function IdCardCanvasEditor({
         setElements((prev) =>
           prev.map((el) => {
             if (el.id !== resizeState.id) return el;
-            const maxW = Math.max(15, 100 - el.x);
-            const maxH = Math.max(20, 100 - el.y);
+            const isText = el.type === 'text';
+            const minW = isText ? 8 : 15;
+            const minH = isText ? 4 : 20;
+            const maxW = Math.max(minW, 100 - el.x);
+            const maxH = Math.max(minH, 100 - el.y);
             return {
               ...el,
-              width: Math.max(15, Math.min(maxW, resizeState.startWidth + dx)),
-              height: Math.max(20, Math.min(maxH, resizeState.startHeight + dy)),
+              width: Math.max(minW, Math.min(maxW, resizeState.startWidth + dx)),
+              height: Math.max(minH, Math.min(maxH, resizeState.startHeight + dy)),
             };
           })
         );
@@ -602,10 +612,66 @@ export default function IdCardCanvasEditor({
     setSelectedId(null);
   };
 
+  // Keyboard nudges: selected element ko Arrow keys se move karna (edit mode only).
+  useEffect(() => {
+    if (showPreview) return;
+    if (!selectedId) return;
+
+    const isTypingTarget = (t) => {
+      if (!t) return false;
+      if (typeof t !== 'object') return false;
+      // Avoid interfering while user is moving sliders/inputs.
+      const el = t instanceof Element ? t : null;
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const tag = el.tagName?.toLowerCase?.() || '';
+      if (['input', 'textarea', 'select', 'button'].includes(tag)) return true;
+      if (el.closest('input, textarea, select, [role="textbox"], button, a')) return true;
+      return false;
+    };
+
+    const onKeyDown = (e) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+
+      const step = e.altKey ? 0.2 : e.shiftKey ? 2 : 0.8; // percent of card
+      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+
+      if (!dx && !dy) return;
+
+      setElements((prev) =>
+        prev.map((el) => {
+          if (el.id !== selectedId) return el;
+          const wPct = getElementWidthPercentForBounds(el);
+          const hPct =
+            el.type === 'photo'
+              ? typeof el.height === 'number'
+                ? el.height
+                : 48
+              : getTextElementNominalHeightPercentForBounds(el);
+
+          const nextX = Math.max(0, Math.min(100 - wPct, el.x + dx));
+          const nextY = Math.max(0, Math.min(100 - hPct, el.y + dy));
+          return { ...el, x: nextX, y: nextY };
+        })
+      );
+    };
+
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [selectedId, showPreview]);
+
   const selectedEl = elements.find((e) => e.id === selectedId);
   const isPhoto = selectedEl?.type === 'photo';
   const selectedTextBold = selectedEl?.type === 'text' ? isTextElementBold(selectedEl) : false;
   const physicalStageStyle = getPhysicalStageSizeStyle(effectiveDimension, effectiveDimensionUnit);
+  const hasPreviewElements = Array.isArray(elements) && elements.length > 0;
+  const hasSecondaryPreview =
+    showPreview &&
+    previewSecondaryTemplateImage &&
+    previewSecondaryTemplateImage !== templateImage;
 
   const bindFieldDefs = useMemo(() => {
     const withValue = allFieldDefs.filter((f) => {
@@ -769,6 +835,9 @@ export default function IdCardCanvasEditor({
               {dimensionFormOpen ? 'Close dimension' : 'Edit dimension'}
             </button>
           )}
+          <button type="button" className="btn btn-secondary" onClick={() => setShowPreview(!showPreview)}>
+            {showPreview ? 'Edit Card' : 'Preview Card'}
+          </button>
           <button type="button" className="btn btn-secondary" onClick={onCancel}>{cancelLabel}</button>
           <button type="button" className="btn btn-primary" onClick={handleSaveClick}>{saveLabel}</button>
         </div>
@@ -780,17 +849,89 @@ export default function IdCardCanvasEditor({
             className="idcard-canvas-stage-zoom-wrap"
             style={{ paddingBottom: editorZoomPadBottom }}
           >
-            <div
-              ref={canvasRef}
-              className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
-              style={{
-                backgroundImage: templateImage ? `url(${templateImage})` : undefined,
-                ...physicalStageStyle,
-                transform: `scale(${EDITOR_PREVIEW_ZOOM})`,
-                transformOrigin: 'top center',
-              }}
-              onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
-            >
+            {showPreview ? (
+              <div
+                style={
+                  hasSecondaryPreview
+                    ? { display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'center' }
+                    : { display: 'grid', gap: 14, justifyItems: 'center' }
+                }
+              >
+                <div
+                  ref={canvasRef}
+                  className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
+                  style={{
+                    ...physicalStageStyle,
+                    border: 'none',
+                    background: 'transparent',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+                  }}
+                >
+                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
+                    {hasPreviewElements ? (
+                      <IdCardRenderer 
+                        template={{ image: templateImage, elements }}
+                        data={{
+                          ...initialData,
+                          studentImage: photoUrl,
+                          name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
+                          studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
+                          className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
+                          schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
+                          dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
+                          address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
+                          phone: (getFieldValue('phone') || (elements.find((e) => e.id === 'phone')?.content ?? '')),
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          backgroundImage: templateImage ? `url(${templateImage})` : undefined,
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center',
+                          backgroundRepeat: 'no-repeat',
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+                {hasSecondaryPreview ? (
+                  <div
+                    className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
+                    style={{
+                      ...physicalStageStyle,
+                      border: 'none',
+                      background: 'transparent',
+                      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        backgroundImage: `url(${previewSecondaryTemplateImage})`,
+                        backgroundSize: 'cover',
+                        backgroundPosition: 'center',
+                        backgroundRepeat: 'no-repeat',
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div
+                ref={canvasRef}
+                className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
+                style={{
+                  backgroundImage: templateImage ? `url(${templateImage})` : undefined,
+                  ...physicalStageStyle,
+                  transform: `scale(${EDITOR_PREVIEW_ZOOM})`,
+                  transformOrigin: 'top center',
+                }}
+                onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
+              >
           {elements.map((el) => {
             if (el.type === 'photo') {
               return (
@@ -845,10 +986,17 @@ export default function IdCardCanvasEditor({
                 <span className="idcard-canvas-text-content" style={textBoxLayout.content}>
                   {textToShow || <span className="placeholder">{el.label || el.dataField || el.id}</span>}
                 </span>
+                {selectedId === el.id && (
+                  <div
+                    className="idcard-canvas-resize-handle"
+                    onPointerDown={(e) => handlePointerDown(e, el.id, true)}
+                  />
+                )}
               </div>
             );
           })}
             </div>
+            )}
           </div>
         </div>
 
@@ -972,6 +1120,23 @@ export default function IdCardCanvasEditor({
                       Up to {Math.max(8, Math.floor(100 - selectedEl.x))}% (template width from this position)
                     </p>
                   </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label className="input-label">Font size</label>
+                    <input
+                      type="range"
+                      min="4"
+                      max="24"
+                      value={selectedEl.fontSize || 10}
+                      onChange={(e) =>
+                        setElements((prev) =>
+                          prev.map((x) =>
+                            x.id === selectedEl.id ? { ...x, fontSize: Number(e.target.value) } : x
+                          )
+                        )
+                      }
+                    />
+                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 10}px</span>
+                  </div>
                   <div style={{ marginTop: 10 }}>
                     <label className="input-label" htmlFor="idcard-text-in-box-align">
                       Text in box
@@ -1005,23 +1170,6 @@ export default function IdCardCanvasEditor({
                     <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
                       Left/center/right and top/middle/bottom inside the text box. Middle or bottom uses extra vertical space (default 8% if height is not set).
                     </p>
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <label className="input-label">Font size</label>
-                    <input
-                      type="range"
-                      min="4"
-                      max="24"
-                      value={selectedEl.fontSize || 12}
-                      onChange={(e) =>
-                        setElements((prev) =>
-                          prev.map((x) =>
-                            x.id === selectedEl.id ? { ...x, fontSize: Number(e.target.value) } : x
-                          )
-                        )
-                      }
-                    />
-                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 12}px</span>
                   </div>
                   <div style={{ marginTop: 12 }}>
                     <label className="input-label" htmlFor="idcard-font-family-select">
@@ -1313,13 +1461,14 @@ export default function IdCardCanvasEditor({
 
           <div style={{ marginBottom: 18 }}>
             {allFieldDefs.map((f) => {
-              const checked = elementHasField(f.key)
-                || (f.key === 'name' && elements.some((e) => e.id === 'name'))
-                || (f.key === 'studentId' && elements.some((e) => e.id === 'studentId'))
-                || (f.key === 'className' && elements.some((e) => e.id === 'class'))
-                || (f.key === 'schoolName' && elements.some((e) => e.id === 'school'))
-                || (f.key === 'dateOfBirth' && elements.some((e) => e.id === 'dob'))
-                || (f.key === 'address' && elements.some((e) => e.id === 'address'));
+              // By default, only Name should appear checked for new templates.
+              // Other fields become checked only when they already have a bound element on the canvas.
+              const hasBoundElement = elementHasField(f.key);
+              const checked =
+                hasBoundElement ||
+                (f.key === 'name' &&
+                  (hasBoundElement ||
+                    elements.some((e) => e.id === 'name')));
               if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key) && !checked) return null;
               const val = getFieldValue(f.key);
               const hasValue = String(val || '').trim() !== '';

@@ -11,14 +11,9 @@ import {
 } from "../data/idCardTemplates";
 import { getFabricTemplateById } from "../data/fabricTemplatesStorage";
 import { getUploadedTemplateById } from "../data/uploadedTemplatesStorage";
-import {
-  deductTemplateDownloadPoints,
-  getAssignedSchools,
-  getClassesBySchool,
-  getStudentsBySchool,
-  getStudentsBySchoolAndClass,
-  getTemplatesStatus,
-} from "../api/dashboard";
+import { deductTemplateDownloadPoints } from "../api/dashboard";
+import * as offlineApi from "../api/dashboard";
+import * as onlineApi from "../api/network_backend";
 import { API_BASE_URL } from "../api/config";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -71,10 +66,10 @@ function formatStudentClassForIdCard(cls) {
 function isFullApiCanvasTemplate(t) {
   return Boolean(
     t &&
-      typeof t === "object" &&
-      t.frontImage &&
-      Array.isArray(t.elements) &&
-      t.elements.length > 0,
+    typeof t === "object" &&
+    t.frontImage &&
+    Array.isArray(t.elements) &&
+    t.elements.length > 0,
   );
 }
 
@@ -138,6 +133,35 @@ function resolveClassNameForIdCard(student) {
   return formatStudentClassForIdCard(student.class);
 }
 
+function compareClassForDisplay(a, b) {
+  const aNameRaw = String(a?.className ?? "").trim();
+  const bNameRaw = String(b?.className ?? "").trim();
+  const aNameNum = Number.parseFloat(aNameRaw);
+  const bNameNum = Number.parseFloat(bNameRaw);
+  const aHasNum = Number.isFinite(aNameNum);
+  const bHasNum = Number.isFinite(bNameNum);
+
+  if (aHasNum && bHasNum && aNameNum !== bNameNum) return aNameNum - bNameNum;
+  if (aHasNum !== bHasNum) return aHasNum ? -1 : 1;
+
+  const nameCmp = aNameRaw.localeCompare(bNameRaw, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (nameCmp !== 0) return nameCmp;
+
+  const aSection = String(a?.section ?? "").trim();
+  const bSection = String(b?.section ?? "").trim();
+  return aSection.localeCompare(bSection, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function sortClassesForDisplay(list) {
+  return [...list].sort(compareClassForDisplay);
+}
+
 /** Saved ID card / template present — used for bulk preview and per-row preview. */
 function studentHasRenderableSavedCard(s, schoolListResponse = null) {
   if (!s || typeof s !== "object") return false;
@@ -175,6 +199,28 @@ function formatDateDMY(input) {
     const mm = String(m2[2]).padStart(2, "0");
     return `${dd}/${mm}/${m2[3]}`;
   }
+  return s;
+}
+
+function formatToDDMMYYYYDot(input) {
+  if (!input) return "";
+  if (input instanceof Date && !Number.isNaN(input.getTime())) {
+    const dd = String(input.getDate()).padStart(2, "0");
+    const mm = String(input.getMonth() + 1).padStart(2, "0");
+    const yy = String(input.getFullYear());
+    return `${dd}.${mm}.${yy}`;
+  }
+  const s = String(input).trim();
+  if (!s) return "";
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+  const m2 = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m2) {
+    const dd = String(m2[1]).padStart(2, "0");
+    const mm = String(m2[2]).padStart(2, "0");
+    return `${dd}.${mm}.${m2[3]}`;
+  }
+  if (s.includes("T")) return s.split("T")[0].replace(/-/g, ".");
   return s;
 }
 
@@ -1085,11 +1131,14 @@ async function exportPreviewPagesAsFiles(
   pageWidthMm,
   pageHeightMm,
   fileBaseName,
+  subfolderName,
   pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
+  onProgress = null,
   shouldAbort = null,
 ) {
   if (!pageElements?.length) return;
   const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+  const emitProgress = typeof onProgress === "function" ? onProgress : () => { };
 
   if (format === "pdf") {
     const pdf = new jsPDF({
@@ -1107,10 +1156,47 @@ async function exportPreviewPagesAsFiles(
         "image/jpeg",
         PREVIEW_EXPORT_JPEG_QUALITY,
       );
-      if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], "p");
+      if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], pageHeightMm >= pageWidthMm ? "p" : "l");
       pdf.addImage(imgData, "JPEG", 0, 0, pageWidthMm, pageHeightMm);
     }
-    pdf.save(`${fileBaseName}.pdf`);
+    const safeSub =
+      String(subfolderName)
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+        .trim()
+        .slice(0, 120) || "id-cards";
+    const el =
+      typeof window !== "undefined" && window.electron
+        ? window.electron
+        : null;
+    if (
+      el?.selectOutputFolder &&
+      el?.savePdfExportFile &&
+      typeof el.selectOutputFolder === "function" &&
+      typeof el.savePdfExportFile === "function"
+    ) {
+      emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
+      const pick = await el.selectOutputFolder();
+      if (!pick?.success || !pick?.folderPath) return;
+      emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
+      const pdfBytes = pdf.output("arraybuffer");
+      const bytes = new Uint8Array(pdfBytes);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      const result = await el.savePdfExportFile({
+        parentFolderPath: pick.folderPath,
+        subfolderName: safeSub,
+        filename: `${safeSub}.pdf`,
+        dataBase64: base64,
+      });
+      if (!result?.success) {
+        throw new Error(result?.error || "Could not save PDF file.");
+      }
+      // Match JPEG-style UX: open selected parent folder so user can open the generated subfolder.
+      if (el.openFolder) await el.openFolder(pick.folderPath);
+      return;
+    }
+    pdf.save(`${safeSub}.pdf`);
     return;
   }
 
@@ -1149,8 +1235,12 @@ export default function SavedIdCardsList({
   const isAllSchoolStudents =
     Boolean(allStudentsMatch) ||
     pathnameIsSchoolAllStudentsRoute(location.pathname, basePath);
-  useApp(); // auth/context available if needed
+  const { user } = useApp();
   const isViewTemplateFlow = basePath === "/view-template";
+  const [viewMode, setViewMode] = useState("offline"); // offline | online
+  const showOnlineProjects = user?.id !== "offline-user";
+  const isOnlineMode = viewMode === "online";
+  const activeApi = isOnlineMode ? onlineApi : offlineApi;
   const [showPrintView, setShowPrintView] = useState(false);
   const [showPreviewView, setShowPreviewView] = useState(false);
   const [singleCardPreview, setSingleCardPreview] = useState(null); // card object when viewing one student's card
@@ -1193,7 +1283,6 @@ export default function SavedIdCardsList({
     useState(PRINT_GAP_MM);
   const [previewGapVerticalMm, setPreviewGapVerticalMm] =
     useState(PRINT_GAP_MM);
-  const [centerPreviewCards, setCenterPreviewCards] = useState(false);
   const [previewPageBackgroundColor, setPreviewPageBackgroundColor] =
     useState(DEFAULT_PREVIEW_PAGE_BG);
 
@@ -1247,13 +1336,82 @@ export default function SavedIdCardsList({
   /** GET /api/photographer/schools/:schoolId/students — full school roster */
   const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
 
+  const [editStudentData, setEditStudentData] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editStudentData) return;
+    setSavingEdit(true);
+    try {
+      const studentId = editStudentData._id || editStudentData.id;
+      
+      // Clean populated fields before update so we don't corrupt the DB keys
+      const { school, _id, ...cleanData } = editStudentData;
+      if (typeof cleanData.schoolId === 'object') {
+        cleanData.schoolId = cleanData.schoolId.id || cleanData.schoolId._id;
+      }
+      if (typeof cleanData.classId === 'object') {
+        cleanData.classId = cleanData.classId.id || cleanData.classId._id;
+      }
+      
+      if (viewMode === "offline") {
+        await offlineApi.updateStudent(studentId, cleanData);
+      } else {
+        if (onlineApi.updateStudent) {
+          const onlinePayload = {
+            studentName: cleanData.studentName || cleanData.name || "",
+            classId: cleanData.classId || "",
+            admissionNo: cleanData.admissionNo || "",
+            rollNo: cleanData.rollNo || "",
+            fatherName: cleanData.fatherName || "",
+            dob: cleanData.dob || cleanData.dateOfBirth || "",
+            mobile: cleanData.mobile || cleanData.phone || "",
+            address: cleanData.address || "",
+            gender: cleanData.gender || "",
+            bloodGroup: cleanData.bloodGroup || "",
+            photoNo: cleanData.photoNo || "",
+            extraFields: cleanData.extraFields || {}
+          };
+          await onlineApi.updateStudent(studentId, onlinePayload);
+        }
+      }
+
+      const updater = (prevList) => {
+        if (!prevList) return prevList;
+        return prevList.map((s) => {
+          const sid = s._id || s.id;
+          if (sid === studentId) return { ...s, ...editStudentData };
+          return s;
+        });
+      };
+
+      if (isAllSchoolStudents) {
+         setSchoolAllStudentsData((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
+      } else {
+         setTemplateStatus((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
+      }
+      setEditStudentData(null);
+    } catch (err) {
+      alert("Failed to update student details: " + err.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showOnlineProjects) return;
+    if (viewMode === "online") setViewMode("offline");
+  }, [showOnlineProjects, viewMode]);
+
   // Fetch schools when on root saved-id-cards
   useEffect(() => {
     if (schoolId != null) return;
     let cancelled = false;
     setLoadingSchools(true);
     setErrorSchools("");
-    getAssignedSchools()
+    activeApi
+      .getAssignedSchools()
       .then((res) => {
         if (!cancelled) {
           console.log("res schools", res.schools);
@@ -1270,7 +1428,7 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [schoolId]);
+  }, [schoolId, activeApi]);
 
   // Fetch classes when schoolId is in URL
   useEffect(() => {
@@ -1279,17 +1437,19 @@ export default function SavedIdCardsList({
     setLoadingClasses(true);
     setErrorClasses("");
     setTemplateStatus(null);
-    getAssignedSchools()
+    activeApi
+      .getAssignedSchools()
       .then((res) => {
         const school = (res.schools ?? []).find((s) => s._id === schoolId);
         if (!cancelled)
           setSelectedSchool(school || { _id: schoolId, schoolName: schoolId });
       })
-      .catch(() => {});
-    getClassesBySchool(schoolId)
+      .catch(() => { });
+    activeApi
+      .getClassesBySchool(schoolId)
       .then((res) => {
         if (!cancelled) {
-          setClasses(res.classes ?? []);
+          setClasses(sortClassesForDisplay(res.classes ?? []));
           setLoadingClasses(false);
         }
       })
@@ -1302,7 +1462,7 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [schoolId]);
+  }, [schoolId, activeApi]);
 
   // Fetch students (template status) when both schoolId and classId are in URL
   useEffect(() => {
@@ -1310,7 +1470,8 @@ export default function SavedIdCardsList({
     let cancelled = false;
     setLoadingStudents(true);
     setErrorStudents("");
-    getClassesBySchool(schoolId)
+    activeApi
+      .getClassesBySchool(schoolId)
       .then((res) => {
         const cls = (res.classes ?? []).find((c) => c._id === classId);
         if (!cancelled)
@@ -1318,8 +1479,26 @@ export default function SavedIdCardsList({
             cls || { _id: classId, className: classId, section: "" },
           );
       })
-      .catch(() => {});
-    getTemplatesStatus(schoolId, classId)
+      .catch(() => { });
+    const fetchTemplateStatus = async () => {
+      if (typeof activeApi.getTemplatesStatus === "function") {
+        return activeApi.getTemplatesStatus(schoolId, classId);
+      }
+      const data = await activeApi.getStudentsBySchoolAndClass(schoolId, classId);
+      const students = data?.students ?? [];
+      const withTemplates = students.filter((s) =>
+        studentHasRenderableSavedCard(s, data),
+      ).length;
+      return {
+        ...data,
+        summary: {
+          ...(data?.summary || {}),
+          withTemplates,
+          withoutTemplates: Math.max(0, students.length - withTemplates),
+        },
+      };
+    };
+    fetchTemplateStatus()
       .then((data) => {
         if (!cancelled) {
           setTemplateStatus(data);
@@ -1335,7 +1514,7 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [schoolId, classId]);
+  }, [schoolId, classId, activeApi]);
 
   // Full-school student list (See all students)
   useEffect(() => {
@@ -1353,9 +1532,9 @@ export default function SavedIdCardsList({
       section: "",
     });
     Promise.all([
-      getAssignedSchools(),
-      getStudentsBySchool(schoolId),
-      getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
+      activeApi.getAssignedSchools(),
+      activeApi.getStudentsBySchool(schoolId),
+      activeApi.getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
     ])
       .then(async ([schoolsRes, studentsRes, classesRes]) => {
         if (cancelled) return;
@@ -1366,7 +1545,7 @@ export default function SavedIdCardsList({
         const classes = classesRes.classes ?? [];
         if (!isFullApiCanvasTemplate(studentsRes.template) && classes.length > 0) {
           try {
-            const byClass = await getStudentsBySchoolAndClass(
+            const byClass = await activeApi.getStudentsBySchoolAndClass(
               schoolId,
               classes[0]._id,
             );
@@ -1394,25 +1573,22 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [schoolId, isAllSchoolStudents]);
-
-  // Class view: `getTemplatesStatus` → students with hasTemplate
-  const classStudentsWithTemplates =
-    templateStatus?.students?.filter((s) => s.hasTemplate) ??
-    templateStatus?.summary?.withTemplates ??
-    [];
+  }, [schoolId, isAllSchoolStudents, activeApi]);
 
   const allSchoolStudentsRaw = schoolAllStudentsData?.students ?? [];
+  const classStudentsRaw = templateStatus?.students ?? [];
 
   const studentsForList = isAllSchoolStudents
     ? allSchoolStudentsRaw
-    : classStudentsWithTemplates;
+    : classStudentsRaw;
 
   const studentsForPreviewPrint = isAllSchoolStudents
     ? allSchoolStudentsRaw.filter((s) =>
-        studentHasRenderableSavedCard(s, schoolAllStudentsData),
-      )
-    : classStudentsWithTemplates;
+      studentHasRenderableSavedCard(s, schoolAllStudentsData),
+    )
+    : classStudentsRaw.filter((s) =>
+      studentHasRenderableSavedCard(s, templateStatus),
+    );
 
   const getTemplateName = (templateId, card = null) => {
     if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
@@ -1437,10 +1613,13 @@ export default function SavedIdCardsList({
   const studentToCard = (student) => {
     const apiTemplate = isAllSchoolStudents
       ? mergeSchoolRootTemplateIntoStudent(
-          student,
-          schoolAllStudentsData?.template,
-        )
-      : student?.template ?? null;
+        student,
+        schoolAllStudentsData?.template,
+      )
+      : mergeSchoolRootTemplateIntoStudent(
+        student,
+        templateStatus?.template,
+      );
     const isApiTemplateRenderable = isFullApiCanvasTemplate(apiTemplate);
 
     // API canvas templates must use uploadedTemplate override (same as View Template); DB templateIds are not in idCardTemplates.js.
@@ -1457,11 +1636,11 @@ export default function SavedIdCardsList({
       templateId,
       uploadedTemplate: isApiTemplateRenderable
         ? {
-            name: apiTemplate?.name || "Uploaded Template",
-            frontImage: fullPhotoUrl(apiTemplate.frontImage),
-            backImage: fullPhotoUrl(apiTemplate.backImage),
-            elements: apiTemplate.elements,
-          }
+          name: apiTemplate?.name || "Uploaded Template",
+          frontImage: fullPhotoUrl(apiTemplate.frontImage),
+          backImage: fullPhotoUrl(apiTemplate.backImage),
+          elements: apiTemplate.elements,
+        }
         : null,
       studentImage: fullPhotoUrl(student.photoUrl),
       className: resolveClassNameForIdCard(student),
@@ -1563,12 +1742,10 @@ export default function SavedIdCardsList({
 
   const pageSizeSummary =
     pageSizeMode === "a4"
-      ? `A4 (${mmToUnit(A4_WIDTH_MM, pageSizeUnit).toFixed(1)}×${mmToUnit(A4_HEIGHT_MM, pageSizeUnit).toFixed(1)} ${
-          pageSizeUnit === "px" ? "px" : pageSizeUnit
-        })`
-      : `Custom (${mmToUnit(pageWidthMm, pageSizeUnit).toFixed(1)}×${mmToUnit(pageHeightMm, pageSizeUnit).toFixed(1)} ${
-          pageSizeUnit === "px" ? "px" : pageSizeUnit
-        })`;
+      ? `A4 (${mmToUnit(A4_WIDTH_MM, pageSizeUnit).toFixed(1)}×${mmToUnit(A4_HEIGHT_MM, pageSizeUnit).toFixed(1)} ${pageSizeUnit === "px" ? "px" : pageSizeUnit
+      })`
+      : `Custom (${mmToUnit(pageWidthMm, pageSizeUnit).toFixed(1)}×${mmToUnit(pageHeightMm, pageSizeUnit).toFixed(1)} ${pageSizeUnit === "px" ? "px" : pageSizeUnit
+      })`;
 
   const pageSizeControlStyle = {
     background: "#2a2a2a",
@@ -1830,12 +2007,6 @@ export default function SavedIdCardsList({
   );
 
   useEffect(() => {
-    if (!showPrintView || !printContentRef.current) return;
-    const timer = setTimeout(() => window.print(), hasFabricCards ? 2200 : 800);
-    return () => clearTimeout(timer);
-  }, [showPrintView, hasFabricCards]);
-
-  useEffect(() => {
     const onAfterPrint = () => setShowPrintView(false);
     window.addEventListener("afterprint", onAfterPrint);
     return () => window.removeEventListener("afterprint", onAfterPrint);
@@ -1862,9 +2033,23 @@ export default function SavedIdCardsList({
       const isAborted = () => cancelled || exportCancelRequestedRef.current;
       setExporting(true);
       setExportProgress({ label: "Preparing…", current: 0, total: 1 });
-      const fileBaseName = `id-cards-${
-        isAllSchoolStudents ? "all-students" : classId || schoolId || "export"
-      }-${Date.now()}`;
+      const fileBaseName = `id-cards-${isAllSchoolStudents ? "all-students" : classId || schoolId || "export"
+        }-${Date.now()}`;
+      const subfolderName = isAllSchoolStudents
+        ? String(
+          selectedSchool?.schoolName ||
+          selectedSchool?.schoolCode ||
+          schoolId ||
+          "School",
+        ).trim() || "School"
+        : String(
+          selectedClass
+            ? [selectedClass.className, selectedClass.section]
+              .filter(Boolean)
+              .join(" ")
+              .trim()
+            : classId || schoolId || "Class",
+        ).trim() || "Class";
       let captured = false;
       const jpegBulkSpeed = format === "jpg" && isAllSchoolStudents;
       const jpegCaptureOpts = { bulk: jpegBulkSpeed, shouldAbort: isAborted };
@@ -1957,25 +2142,6 @@ export default function SavedIdCardsList({
               }
             }
 
-            const subfolderName = isAllSchoolStudents
-              ? String(
-                  selectedSchool?.schoolName ||
-                    selectedSchool?.schoolCode ||
-                    schoolId ||
-                    "School",
-                ).trim() || "School"
-              : String(
-                  selectedClass
-                    ? [
-                        selectedClass.className,
-                        selectedClass.section,
-                      ]
-                        .filter(Boolean)
-                        .join(" ")
-                        .trim()
-                    : classId || schoolId || "Class",
-                ).trim() || "Class";
-
             const files = [];
             if (includePerCard) {
               const cardFiles = await buildPreviewFrontAndBackJpegFiles(
@@ -2044,7 +2210,9 @@ export default function SavedIdCardsList({
             pageWidthMm,
             pageHeightMm,
             fileBaseName,
+            subfolderName,
             previewPageBackgroundColor,
+            onProg,
             isAborted,
           );
           captured = true;
@@ -2064,7 +2232,7 @@ export default function SavedIdCardsList({
           console.error(err);
           window.alert(
             (typeof err?.message === "string" && err.message.trim()) ||
-              "Download failed. Wait for the preview to finish loading, then try again.",
+            "Download failed. Wait for the preview to finish loading, then try again.",
           );
         }
       } finally {
@@ -2259,8 +2427,57 @@ export default function SavedIdCardsList({
       ["--card-h-mm"]: hMm,
     };
   };
+  const getCardCropMarks = (index, totalCards, cols, isBackPage) => {
+    const R = Math.floor((totalCards - 1) / cols);
+    const firstRowFirst = 0;
+    const firstRowLast = Math.min(cols - 1, totalCards - 1);
+    const lastRowFirst = R * cols;
+    const lastRowLast = totalCards - 1;
 
-  const renderCardForPrint = (card, useGridSize = false) => {
+    let isTopLeft = false;
+    let isTopRight = false;
+    let isBottomLeft = false;
+    let isBottomRight = false;
+
+    if (index === firstRowFirst) isTopLeft = true;
+    if (index === firstRowLast) isTopRight = true;
+    if (index === lastRowFirst) isBottomLeft = true;
+    if (index === lastRowLast) isBottomRight = true;
+
+    if (!isTopLeft && !isTopRight && !isBottomLeft && !isBottomRight) return null;
+
+    const renderDot = (pos, style) => (
+      <div
+        key={pos}
+        style={{
+          position: "absolute",
+          width: "2mm",
+          height: "2mm",
+          backgroundColor: "#000",
+          borderRadius: "50%",
+          zIndex: 100,
+          ...style
+        }}
+      />
+    );
+
+    const marks = [];
+    if (isBackPage) {
+      if (isTopLeft) marks.push(renderDot('tr', { top: 0, right: 0, transform: "translate(50%, -50%)" }));
+      if (isTopRight) marks.push(renderDot('tl', { top: 0, left: 0, transform: "translate(-50%, -50%)" }));
+      if (isBottomLeft) marks.push(renderDot('br', { bottom: 0, right: 0, transform: "translate(50%, 50%)" }));
+      if (isBottomRight) marks.push(renderDot('bl', { bottom: 0, left: 0, transform: "translate(-50%, 50%)" }));
+    } else {
+      if (isTopLeft) marks.push(renderDot('tl', { top: 0, left: 0, transform: "translate(-50%, -50%)" }));
+      if (isTopRight) marks.push(renderDot('tr', { top: 0, right: 0, transform: "translate(50%, -50%)" }));
+      if (isBottomLeft) marks.push(renderDot('bl', { bottom: 0, left: 0, transform: "translate(-50%, 50%)" }));
+      if (isBottomRight) marks.push(renderDot('br', { bottom: 0, right: 0, transform: "translate(50%, 50%)" }));
+    }
+
+    return marks.length > 0 ? <>{marks}</> : null;
+  };
+
+  const renderCardForPrint = (card, useGridSize = false, extraOverlay = null) => {
     const isFabric = card.templateId?.startsWith("fabric-");
     const fabricTemplate = isFabric
       ? getFabricTemplateById(card.templateId)
@@ -2280,13 +2497,14 @@ export default function SavedIdCardsList({
         <div
           key={`${card._id}-${card.id}`}
           className="print-card-cell fabric-card"
-          style={cellStyle}
+          style={{ ...cellStyle, position: "relative" }}
         >
           <FabricIdCardGenerator
             templateJson={fabricTemplate.json}
             backgroundDataUrl={fabricTemplate.backgroundDataUrl}
             studentData={studentData}
           />
+          {extraOverlay}
         </div>
       );
     }
@@ -2317,7 +2535,7 @@ export default function SavedIdCardsList({
       <div
         key={`${card._id}-${card.id}`}
         className="print-card-cell idcard-card"
-        style={cellStyle}
+        style={{ ...cellStyle, position: "relative" }}
       >
         <IdCardRenderer
           templateId={card.templateId}
@@ -2325,11 +2543,12 @@ export default function SavedIdCardsList({
           size="preview"
           template={templateOverride}
         />
+        {extraOverlay}
       </div>
     );
   };
 
-  const renderBackOnlyForPrint = (card, useGridSize = false) => {
+  const renderBackOnlyForPrint = (card, useGridSize = false, extraOverlay = null) => {
     const cellStyle = useGridSize ? undefined : cardCellStyle(card);
     const uploadedBack =
       card.uploadedTemplate?.backImage ??
@@ -2340,7 +2559,7 @@ export default function SavedIdCardsList({
       <div
         key={`back-${card._id}-${card.id}`}
         className="print-card-cell idcard-card"
-        style={cellStyle}
+        style={{ ...cellStyle, position: "relative" }}
       >
         <IdCardBackPreview
           schoolName={card.schoolName}
@@ -2349,6 +2568,7 @@ export default function SavedIdCardsList({
           size="preview"
           backImage={uploadedBack}
         />
+        {extraOverlay}
       </div>
     );
   };
@@ -2407,6 +2627,35 @@ export default function SavedIdCardsList({
   const renderSchoolsList = () => (
     <>
       <h3 style={{ marginBottom: 8 }}>Select school</h3>
+      {isViewTemplateFlow && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "8px",
+            marginBottom: 12,
+          }}
+        >
+          <button
+            type="button"
+            className={`btn ${viewMode === "offline" ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setViewMode("offline")}
+            style={{ padding: "6px 14px", fontSize: "13px" }}
+          >
+            Offline Projects
+          </button>
+          {showOnlineProjects && (
+            <button
+              type="button"
+              className={`btn ${viewMode === "online" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setViewMode("online")}
+              style={{ padding: "6px 14px", fontSize: "13px" }}
+            >
+              Online Projects
+            </button>
+          )}
+        </div>
+      )}
       <p
         className="text-muted"
         style={{ marginBottom: 20, fontSize: "0.9rem" }}
@@ -2475,7 +2724,7 @@ export default function SavedIdCardsList({
           ? "Click on a class to see its students."
           : "Click on a class to see students who have saved ID cards."}
       </p>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <button
           type="button"
           className="btn btn-secondary"
@@ -2486,12 +2735,24 @@ export default function SavedIdCardsList({
         >
           See all students
         </button>
+        {isViewTemplateFlow && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() =>
+              navigate(`/view-template/wizard/students/${schoolId}/all`)
+            }
+            style={{ padding: "10px 16px" }}
+          >
+            Create Template
+          </button>
+        )}
         <span
           className="text-muted"
-          style={{ marginLeft: 12, fontSize: "0.9rem" }}
+          style={{ fontSize: "0.9rem" }}
         >
           {isViewTemplateFlow
-            ? "Entire school roster in one list."
+            ? "Entire school roster in one list, or create template for all."
             : "All students in this school; preview and print use saved ID cards only."}
         </span>
       </div>
@@ -2542,7 +2803,7 @@ export default function SavedIdCardsList({
         >
           ← Back to classes
         </button>
-        <h3 style={{ margin: 0 }}>
+        <h3 style={{ margin: 0, flex: 1 }}>
           {selectedClass
             ? `${selectedClass.className}`
             : isAllSchoolStudents
@@ -2550,6 +2811,17 @@ export default function SavedIdCardsList({
               : classId}
           {isViewTemplateFlow ? " – Templates" : " – Saved ID cards"}
         </h3>
+        <span
+          style={{
+            fontSize: "0.95rem",
+            fontWeight: "500",
+            backgroundColor: "rgba(255, 255, 255, 0.1)",
+            padding: "4px 10px",
+            borderRadius: "6px",
+          }}
+        >
+          Total Students: {studentsForList.length}
+        </span>
       </div>
       <p
         className="text-muted"
@@ -2622,10 +2894,10 @@ export default function SavedIdCardsList({
             const card = studentToCard(student);
             const canOpenPreview = studentHasRenderableSavedCard(
               student,
-              isAllSchoolStudents ? schoolAllStudentsData : null,
+              isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
             );
             return (
-              <li key={student._id}>
+              <li key={student._id} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <button
                   type="button"
                   className="saved-idcard-item"
@@ -2637,11 +2909,12 @@ export default function SavedIdCardsList({
                         : "No saved ID card for this student"
                       : undefined
                   }
-                  style={
-                    !canOpenPreview
+                  style={{
+                    flex: 1,
+                    ...(!canOpenPreview
                       ? { opacity: 0.55, cursor: "not-allowed" }
-                      : undefined
-                  }
+                      : {})
+                  }}
                   onClick={() => {
                     if (!canOpenPreview) return;
                     setSingleCardPreview(card);
@@ -2666,6 +2939,24 @@ export default function SavedIdCardsList({
                     )}
                   </span>
                 </button>
+                {isOnlineMode && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: "6px 12px", fontSize: "0.85rem", height: "auto" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const dobVal = student.dateOfBirth || student.dob || "";
+                      setEditStudentData({
+                        ...student,
+                        dateOfBirth: formatToDDMMYYYYDot(dobVal),
+                        dob: formatToDDMMYYYYDot(dobVal),
+                      });
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
               </li>
             );
           })}
@@ -2701,7 +2992,7 @@ export default function SavedIdCardsList({
               maxWidth: "min(720px, calc(100vw - 120px))",
             }}
           >
-            
+
             {renderPageSizeControls("print")}
           </div>
           <div ref={printContentRef} className="print-pages-wrap">
@@ -2728,25 +3019,36 @@ export default function SavedIdCardsList({
                     style={{
                       gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
                       gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
+                      ...(isBackPage ? { direction: "rtl" } : {}),
                     }}
                   >
-                    {pageCards.map((card) =>
-                      isBackPage
-                        ? renderBackOnlyForPrint(card, true)
-                        : renderCardForPrint(card, true),
-                    )}
+                    {pageCards.map((card, index) => {
+                      const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
+                      return isBackPage
+                        ? renderBackOnlyForPrint(card, true, overlay)
+                        : renderCardForPrint(card, true, overlay);
+                    })}
                   </div>
                 </div>
               );
             })}
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary print-cancel-btn"
-            onClick={() => setShowPrintView(false)}
-          >
-            Cancel
-          </button>
+          <div className="print-btn-group">
+            <button
+              type="button"
+              className="btn btn-secondary print-hide-in-print"
+              onClick={() => setShowPrintView(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary print-hide-in-print"
+              onClick={() => window.print()}
+            >
+              Print Now
+            </button>
+          </div>
         </div>
       )}
 
@@ -2765,17 +3067,6 @@ export default function SavedIdCardsList({
               <div style={{ marginTop: 12 }}>
                 {renderPageSizeControls("preview")}
                 {renderPreviewGapControls("preview-gap")}
-                <div style={{ marginTop: 10 }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setCenterPreviewCards((v) => !v)}
-                  >
-                    {centerPreviewCards
-                      ? "Centered layout: ON"
-                      : "Center cards on page"}
-                  </button>
-                </div>
               </div>
             </div>
             <div
@@ -2880,7 +3171,7 @@ export default function SavedIdCardsList({
                 return (
                   <div
                     key={`preview-${batchIndex}-${side}`}
-                    className={`print-page preview-page print-page-spread ${centerPreviewCards ? "preview-page--center" : ""} ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
+                    className={`print-page preview-page print-page-spread preview-page--center ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
                     style={{
                       width: `${pageWidthMm}mm`,
                       height: `${pageHeightMm}mm`,
@@ -2901,13 +3192,15 @@ export default function SavedIdCardsList({
                         gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
                         columnGap: `${previewGapHorizontalMm}mm`,
                         rowGap: `${previewGapVerticalMm}mm`,
+                        ...(isBackPage ? { direction: "rtl" } : {}),
                       }}
                     >
-                      {pageCards.map((card) =>
-                        isBackPage
-                          ? renderBackOnlyForPrint(card, true)
-                          : renderCardForPrint(card, true),
-                      )}
+                      {pageCards.map((card, index) => {
+                        const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
+                        return isBackPage
+                          ? renderBackOnlyForPrint(card, true, overlay)
+                          : renderCardForPrint(card, true, overlay);
+                      })}
                     </div>
                   </div>
                 );
@@ -3065,7 +3358,7 @@ export default function SavedIdCardsList({
                         100,
                         (exportProgress.current /
                           Math.max(exportProgress.total, 1)) *
-                          100,
+                        100,
                       )}%`,
                       background: "#3b82f6",
                       transition: "width 0.2s ease-out",
@@ -3102,6 +3395,58 @@ export default function SavedIdCardsList({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {editStudentData && (
+        <div
+          className="single-card-preview-overlay"
+          aria-hidden="true"
+        >
+          <div
+            className="single-card-preview-content"
+            style={{ width: 440, maxWidth: "90vw", padding: 24, background: "#1a1a1a" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="single-card-preview-header" style={{ padding: "0 0 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+              <h3 style={{ margin: 0 }}>Edit Student</h3>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setEditStudentData(null)}
+              >
+                Close
+              </button>
+            </div>
+            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
+               <div>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Student Name</label>
+                  <input type="text" className="form-control" value={editStudentData.studentName || ""} onChange={e => setEditStudentData({...editStudentData, studentName: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
+               </div>
+               <div>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Roll No / Admission No</label>
+                  <input type="text" className="form-control" value={editStudentData.rollNo || editStudentData.admissionNo || ""} onChange={e => setEditStudentData({...editStudentData, rollNo: e.target.value, admissionNo: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
+               </div>
+
+               <div>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Father's Name</label>
+                  <input type="text" className="form-control" value={editStudentData.fatherName || ""} onChange={e => setEditStudentData({...editStudentData, fatherName: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
+               </div>
+               <div>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Mobile/Phone</label>
+                  <input type="text" className="form-control" value={editStudentData.phone || editStudentData.mobile || ""} onChange={e => setEditStudentData({...editStudentData, phone: e.target.value, mobile: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
+               </div>
+               <div>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Date of Birth</label>
+                  <input type="text" className="form-control" value={editStudentData.dateOfBirth || editStudentData.dob || ""} onChange={e => setEditStudentData({...editStudentData, dateOfBirth: e.target.value, dob: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
+               </div>
+               <div style={{ marginTop: 8 }}>
+                 <button type="submit" className="btn btn-primary" disabled={savingEdit} style={{ width: "100%", padding: "12px" }}>
+                    {savingEdit ? "Saving..." : "Save Changes"}
+                 </button>
+               </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -3143,11 +3488,13 @@ export default function SavedIdCardsList({
           overflow: auto;
           padding: 72px 20px 20px;
         }
-        .print-cancel-btn {
+        .print-btn-group {
           position: fixed;
           top: 16px;
           right: 16px;
           z-index: 10000;
+          display: flex;
+          gap: 8px;
         }
         .preview-overlay {
           position: fixed;
@@ -3367,6 +3714,7 @@ export default function SavedIdCardsList({
         .print-card-cell {
           break-inside: avoid;
           page-break-inside: avoid;
+          direction: ltr;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -3376,7 +3724,7 @@ export default function SavedIdCardsList({
           min-height: calc(var(--card-h-mm, 57) * 1mm);
           max-width: calc(var(--card-w-mm, 90) * 1mm);
           max-height: calc(var(--card-h-mm, 57) * 1mm);
-          overflow: hidden;
+          overflow: visible;
           box-sizing: border-box;
         }
         .print-card-cell.fabric-card {
@@ -3417,7 +3765,9 @@ export default function SavedIdCardsList({
             padding: 0;
             margin: 0;
           }
-          .print-cancel-btn { display: none !important; }
+          .print-hide-in-print { display: none !important; }
+          .print-btn-group { display: none !important; }
+          .print-overlay-toolbar { display: none !important; }
           .print-page {
             width: ${pageWidthMm}mm !important;
             height: ${pageHeightMm}mm !important;
@@ -3451,7 +3801,7 @@ export default function SavedIdCardsList({
             max-width: calc(var(--card-w-mm, 90) * 1mm);
             max-height: calc(var(--card-h-mm, 57) * 1mm);
             box-sizing: border-box;
-            overflow: hidden;
+            overflow: visible;
           }
           .print-card-cell.fabric-card .fabric-idcard-generator {
             transform: scale(0.178);

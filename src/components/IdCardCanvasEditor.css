@@ -143,11 +143,21 @@
   background-position: center;
   background-repeat: no-repeat;
   background-color: #e5e7eb;
-  border-radius: 12px;
+  border-radius: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   aspect-ratio: 1.586 / 1;
   max-width: 640px;
   min-height: 320px;
+}
+
+/* Preview-mode: IdCardRenderer's canvas template uses a min-height.
+   When embedded in the fixed editor stage, that min-height can make the card taller
+   than the stage and get clipped. Force it to match the editor stage size. */
+.idcard-canvas-editor .idcard-image-template {
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  box-shadow: none;
 }
 
 /* Explicit width/height from API (mm/cm/in/px) — overrides aspect-ratio and max-width */
@@ -157,28 +167,35 @@
   min-height: unset;
 }
 
-.idcard-canvas-el {
+.idcard-canvas-el:not(.idcard-render-only) {
   position: absolute;
   cursor: move;
   user-select: none;
   box-sizing: border-box;
+  outline: 1px dashed rgba(0, 0, 0, 0.25); /* Lightweight base box on all elements */
+}
+
+/* Base override for preview elements inside editor layout */
+.idcard-render-only {
+  outline: none !important;
 }
 
 .idcard-canvas-el.selected {
-  outline: 1px solid color-mix(in srgb, var(--accent) 82%, transparent);
-  outline-offset: 1px;
+  outline: 1px solid var(--accent, #2563eb); /* Slight accent when clicked/selected */
+  outline-offset: 0px;
   z-index: 2;
 }
 
-/* Text: selection hug tight to glyphs — no extra outline gap */
-.idcard-canvas-el.idcard-canvas-text.selected {
+/* Text & Photo: ensure selection hug tight */
+.idcard-canvas-el.idcard-canvas-text.selected,
+.idcard-canvas-el.idcard-canvas-photo.selected {
   outline-offset: 0;
 }
 
-/* Photo: no selection frame — corner handle still shows when selected */
+/* Do not show selection border for photo elements while editing templates. */
+.idcard-canvas-el.idcard-canvas-photo,
 .idcard-canvas-el.idcard-canvas-photo.selected {
   outline: none;
-  outline-offset: 0;
 }
 
 .idcard-canvas-photo {
@@ -215,8 +232,8 @@
   right: 0;
   bottom: 0;
   z-index: 1;
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid color-mix(in srgb, var(--accent) 75%, transparent);

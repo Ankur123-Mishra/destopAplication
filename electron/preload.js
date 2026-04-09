@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electron', {
   ensureJpegExportDir: (payload) =>
     ipcRenderer.invoke('ensure-jpeg-export-dir', payload),
   writeJpegFile: (payload) => ipcRenderer.invoke('write-jpeg-file', payload),
+  savePdfExportFile: (payload) =>
+    ipcRenderer.invoke('save-pdf-export-file', payload),
   createCropOutputFolder: (sourceFolderPath) => ipcRenderer.invoke('create-crop-output-folder', sourceFolderPath),
   cropImages: (data) => ipcRenderer.invoke('crop-images', data),
   cropImagesIndividually: (data) => ipcRenderer.invoke('crop-images-individually', data),

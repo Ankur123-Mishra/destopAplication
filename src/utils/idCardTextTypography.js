@@ -70,8 +70,8 @@ export const ID_CARD_TEXT_REF_WIDTH_PERCENT = 42;
  * @param {number} [_widthPercent] legacy argument from callers; ignored
  */
 export function getCanvasTextEffectiveFontSizePx(el, _widthPercent) {
-  if (el?.type !== 'text') return 12;
-  const base = typeof el.fontSize === 'number' && el.fontSize > 0 ? el.fontSize : 12;
+  if (el?.type !== 'text') return 10;
+  const base = typeof el.fontSize === 'number' && el.fontSize > 0 ? el.fontSize : 10;
   return Math.round(Math.max(4, base));
 }
 

@@ -10,16 +10,8 @@ import { getFabricTemplates } from '../data/fabricTemplatesStorage';
 import { getUploadedTemplates, saveUploadedTemplate, getUploadedTemplateById } from '../data/uploadedTemplatesStorage';
 import { getTemplateById, getApiTemplateId } from '../data/idCardTemplates';
 import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
-import {
-  getAssignedSchools,
-  getClassesBySchool,
-  getStudentsBySchool,
-  getStudentsBySchoolAndClass,
-  uploadStudentPhoto,
-  bulkSaveTemplates,
-  bulkSaveFullOfflineTemplates,
-  uploadTemplate,
-} from '../api/dashboard';
+import * as offlineApi from '../api/dashboard';
+import * as onlineApi from '../api/network_backend';
 import { API_BASE_URL } from '../api/config';
 import { compressImageForUpload } from '../utils/imageUpload';
 import {
@@ -31,13 +23,10 @@ import '../components/IdCardCanvasEditor.css';
 
 const STEPS = { SELECT_SCHOOL: 1, SELECT_CLASS: 2, STUDENTS_IMAGES: 3, SELECT_TEMPLATE: 4, REVIEW_SAVE: 5 };
 
-/** Default elements for uploaded template – with dataField so IdCardRenderer can fill from data */
-function uploadedTemplateDefaultElements(name = '', dateOfBirth = '', address = '') {
+/** Default elements for uploaded template – first time only photo on front */
+function uploadedTemplateDefaultElements() {
   return [
     { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
-    { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 14, content: name, fontWeight: '700' },
-    { type: 'text', id: 'dob', dataField: 'dateOfBirth', x: 45, y: 36, fontSize: 11, content: dateOfBirth },
-    { type: 'text', id: 'address', dataField: 'address', x: 45, y: 48, fontSize: 10, content: address },
   ];
 }
 
@@ -179,11 +168,11 @@ function mapApiStudent(s) {
  * 4) Save → ID cards for all students in the class are saved; you can preview them later
  * When opened from Uploaded Photos with URL /class-id-cards/students/:schoolId/:classId and state, uses API data.
  */
-export default function ClassIdCardsWizard() {
+export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
-  const { schools: contextSchools, classes: classList, getStudents, addSavedIdCard } = useApp();
+  const { user, schools: contextSchools, classes: classList, getStudents, addSavedIdCard, offlineMode, setOfflineMode } = useApp();
 
   const schoolIdFromUrl = params.schoolId;
   const classIdFromUrl = params.classId;
@@ -225,6 +214,8 @@ export default function ClassIdCardsWizard() {
   /** 'single' = front only (back mirrors front); 'both' = separate front + back uploads */
   const [templateUploadMode, setTemplateUploadMode] = useState('single');
   const [arrangingUploaded, setArrangingUploaded] = useState(false); // true when user clicked "Arrange elements" for uploaded template
+  const [arrangeEditSide, setArrangeEditSide] = useState('front'); // 'front' | 'back'
+  const [arrangeBackElements, setArrangeBackElements] = useState(null); // back-side edit draft
   /** Template object from GET /api/photographer/students (same response as students list) */
   const [apiClassTemplate, setApiClassTemplate] = useState(null);
   const [editorOpenedFromApiClassTemplate, setEditorOpenedFromApiClassTemplate] = useState(false);
@@ -250,7 +241,8 @@ export default function ClassIdCardsWizard() {
     let cancelled = false;
     setLoadingSchools(true);
     setErrorSchools('');
-    getAssignedSchools()
+    const apiCall = offlineMode ? offlineApi.getAssignedSchools() : onlineApi.getAssignedSchools();
+    apiCall
       .then((res) => {
         if (!cancelled) {
           setApiSchools(res.schools ?? []);
@@ -264,7 +256,7 @@ export default function ClassIdCardsWizard() {
         }
       });
     return () => { cancelled = true; };
-  }, [step]);
+  }, [step, offlineMode]);
 
   // Fetch classes when on SELECT_CLASS step (path is /class-id-cards/school/:schoolId)
   const schoolIdForClasses = schoolIdFromUrl || selectedSchoolId;
@@ -273,7 +265,8 @@ export default function ClassIdCardsWizard() {
     let cancelled = false;
     setLoadingClasses(true);
     setErrorClasses('');
-    getClassesBySchool(schoolIdForClasses)
+    const apiCall = offlineMode ? offlineApi.getClassesBySchool(schoolIdForClasses) : onlineApi.getClassesBySchool(schoolIdForClasses);
+    apiCall
       .then((res) => {
         if (!cancelled) {
           setApiClasses(res.classes ?? []);
@@ -287,7 +280,7 @@ export default function ClassIdCardsWizard() {
         }
       });
     return () => { cancelled = true; };
-  }, [step, schoolIdForClasses]);
+  }, [step, schoolIdForClasses, offlineMode]);
 
   const hasUrlIds = schoolIdFromUrl && classIdFromUrl;
   const hasStateData = fromUploadedPhotos && stateSchool && stateClass && stateStudents?.length;
@@ -346,9 +339,9 @@ export default function ClassIdCardsWizard() {
         t.elements.length > 0;
 
       Promise.all([
-        getAssignedSchools(),
-        getStudentsBySchool(schoolIdFromUrl),
-        getClassesBySchool(schoolIdFromUrl).catch(() => ({ classes: [] })),
+        offlineMode ? offlineApi.getAssignedSchools() : onlineApi.getAssignedSchools(),
+        offlineMode ? offlineApi.getStudentsBySchool(schoolIdFromUrl) : onlineApi.getStudentsBySchool(schoolIdFromUrl),
+        (offlineMode ? offlineApi.getClassesBySchool(schoolIdFromUrl) : onlineApi.getClassesBySchool(schoolIdFromUrl)).catch(() => ({ classes: [] })),
       ])
         .then(async ([schoolsRes, studentsRes, classesRes]) => {
           if (cancelled) return;
@@ -359,10 +352,7 @@ export default function ClassIdCardsWizard() {
           let payload = studentsRes;
           if (!isValidApiTemplate(studentsRes.template) && classesList.length > 0) {
             try {
-              const byClass = await getStudentsBySchoolAndClass(
-                schoolIdFromUrl,
-                classesList[0]._id,
-              );
+              const byClass = await (offlineMode ? offlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classesList[0]._id) : onlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classesList[0]._id));
               if (!cancelled && isValidApiTemplate(byClass.template)) {
                 payload = { ...studentsRes, template: byClass.template };
               }
@@ -378,9 +368,9 @@ export default function ClassIdCardsWizard() {
         });
     } else {
       Promise.all([
-        getAssignedSchools(),
-        getClassesBySchool(schoolIdFromUrl),
-        getStudentsBySchoolAndClass(schoolIdFromUrl, classIdFromUrl),
+        offlineMode ? offlineApi.getAssignedSchools() : onlineApi.getAssignedSchools(),
+        offlineMode ? offlineApi.getClassesBySchool(schoolIdFromUrl) : onlineApi.getClassesBySchool(schoolIdFromUrl),
+        offlineMode ? offlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classIdFromUrl) : onlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classIdFromUrl),
       ])
         .then(([schoolsRes, classesRes, studentsRes]) => {
           if (cancelled) return;
@@ -415,7 +405,7 @@ export default function ClassIdCardsWizard() {
         });
     }
     return () => { cancelled = true; };
-  }, [hasUrlIds, hasStateData, schoolIdFromUrl, classIdFromUrl, stateSchool, stateClass, stateStudents]);
+  }, [hasUrlIds, hasStateData, schoolIdFromUrl, classIdFromUrl, stateSchool, stateClass, stateStudents, offlineMode]);
 
   const effectiveSchoolId = selectedSchoolId || schoolIdFromUrl || contextSchools[0]?.id;
   const effectiveClassId = selectedClassId || classIdFromUrl;
@@ -551,7 +541,7 @@ export default function ClassIdCardsWizard() {
     try {
       if (!isUploaded) {
         const apiTemplateId = getApiTemplateId(selectedTemplateId);
-        await bulkSaveTemplates(apiTemplateId, studentIds);
+        await (offlineMode ? offlineApi.bulkSaveTemplates(apiTemplateId, studentIds) : onlineApi.bulkSaveTemplates(apiTemplateId, studentIds));
       }
       
       const offlineUpdates = [];
@@ -600,7 +590,7 @@ export default function ClassIdCardsWizard() {
       });
 
       if (offlineUpdates.length > 0) {
-        await bulkSaveFullOfflineTemplates(offlineUpdates);
+        await offlineApi.bulkSaveFullOfflineTemplates(offlineUpdates);
       }
       const viewTemplatePath =
         cls.id === 'all'
@@ -617,18 +607,18 @@ export default function ClassIdCardsWizard() {
   const selectSchool = (schoolId) => {
     setSelectedSchoolId(schoolId);
     setStep(STEPS.SELECT_CLASS);
-    navigate(`/class-id-cards/school/${schoolId}`, { replace: true });
+    navigate(`${basePath}/school/${schoolId}`, { replace: true });
   };
 
   const selectClass = (sid, cid) => {
     setSelectedSchoolId(sid);
     setSelectedClassId(cid);
     setStep(STEPS.STUDENTS_IMAGES);
-    navigate(`/class-id-cards/students/${sid}/${cid}`, { replace: true });
+    navigate(`${basePath}/students/${sid}/${cid}`, { replace: true });
   };
   const goToTemplate = () => {
     setStep(STEPS.SELECT_TEMPLATE);
-    navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+    navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
   };
 
   /** Open IdCardCanvasEditor with template + elements from getStudentsBySchoolAndClass response */
@@ -644,17 +634,20 @@ export default function ClassIdCardsWizard() {
       name: t.name || t.title || 'Uploaded Template',
       templateId: t.templateId,
     });
+    setTemplateUploadMode(t.backImage ? 'both' : 'single');
     setEditorOpenedFromApiClassTemplate(true);
+    setArrangeEditSide('front');
+    setArrangeBackElements(null);
     setArrangingUploaded(true);
     setStep(STEPS.SELECT_TEMPLATE);
-    navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+    navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
   }, [apiClassTemplate, effectiveSchoolId, effectiveClassId, navigate]);
 
   const selectTemplate = (tid) => {
     setSelectedTemplateId(tid);
     setUploadedTemplate(null);
     setStep(STEPS.REVIEW_SAVE);
-    navigate(`/class-id-cards/review/${effectiveSchoolId}/${effectiveClassId}/${tid}`, { replace: true });
+    navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${tid}`, { replace: true });
   };
 
   const handleTemplateUploadModeChange = (e) => {
@@ -684,8 +677,6 @@ export default function ClassIdCardsWizard() {
     reader.onload = () => {
       const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
       const name = previewStudent?.name ?? 'Student Name';
-      const dateOfBirth = previewStudent?.dateOfBirth ?? '';
-      const address = String(previewStudent?.address || school?.address || '').trim();
       setUploadedTemplate((prev) => {
         const result = reader.result;
         const next = mergeUploadedTemplateWithDraft(
@@ -693,7 +684,7 @@ export default function ClassIdCardsWizard() {
             ...prev,
             frontImage: result,
             name: 'Uploaded Template',
-            elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
+            elements: prev?.elements ?? uploadedTemplateDefaultElements(),
           },
           effectiveSchoolId,
           effectiveClassId,
@@ -715,14 +706,12 @@ export default function ClassIdCardsWizard() {
     reader.onload = () => {
       const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
       const name = previewStudent?.name ?? 'Student Name';
-      const dateOfBirth = previewStudent?.dateOfBirth ?? '';
-      const address = String(previewStudent?.address || school?.address || '').trim();
       setUploadedTemplate((prev) =>
         mergeUploadedTemplateWithDraft(
           {
             ...prev,
             backImage: reader.result,
-            elements: prev?.elements ?? uploadedTemplateDefaultElements(name, dateOfBirth, address),
+            elements: prev?.elements ?? uploadedTemplateDefaultElements(),
           },
           effectiveSchoolId,
           effectiveClassId,
@@ -743,25 +732,35 @@ export default function ClassIdCardsWizard() {
       templateUploadMode === 'single'
         ? uploadedTemplate?.backImage ?? null
         : uploadedTemplate?.backImage;
+    const frontElementsToSave =
+      arrangeEditSide === 'front'
+        ? payload.elements
+        : (uploadedTemplate?.elements || payload.elements);
     const toSave = {
       name: uploadedTemplate?.name || 'Uploaded Template',
       frontImage: front,
       backImage: back,
       schoolId: effectiveSchoolId,
-      elements: payload.elements,
+      elements: frontElementsToSave,
     };
     const savedId = saveUploadedTemplate(toSave);
 
     try {
       const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);
       const backData = await imageRefToDataUrlForUpload(toSave.backImage);
-      await uploadTemplate({
+      const templatePayload = {
         name: toSave.name,
         schoolId: effectiveSchoolId,
         frontImage: frontData,
         backImage: backData,
         elements: toSave.elements,
-      });
+      };
+      
+      if (offlineMode) {
+        await offlineApi.uploadTemplate(templatePayload);
+      } else {
+        await onlineApi.uploadTemplate(templatePayload);
+      }
     } catch (err) {
       console.error('Template upload to API failed:', err);
       alert(err?.message || 'Template saved locally but upload to server failed. You can still use it for ID cards.');
@@ -771,18 +770,20 @@ export default function ClassIdCardsWizard() {
     setArrangingUploaded(false);
     setSelectedTemplateId(savedId);
     setStep(STEPS.REVIEW_SAVE);
-    navigate(`/class-id-cards/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
+    navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
   };
 
   const handleCancelUploadedTemplate = () => {
     const backToStudents = editorOpenedFromApiClassTemplate;
     setEditorOpenedFromApiClassTemplate(false);
     setUploadedTemplate(null);
+    setArrangeEditSide('front');
+    setArrangeBackElements(null);
     setArrangingUploaded(false);
     setSelectedTemplateId(null);
     if (backToStudents) {
       setStep(STEPS.STUDENTS_IMAGES);
-      navigate(`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+      navigate(`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
     }
   };
 
@@ -798,7 +799,25 @@ export default function ClassIdCardsWizard() {
           Select a school. Then choose a class to create ID cards for all students in that class.
         </p>
         <div className="card" style={{ maxWidth: 720 }}>
-          <h3 style={{ marginBottom: 16 }}>Select school</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Select school</h3>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                className={`btn ${offlineMode ? 'btn-primary' : 'btn-secondary'}`} 
+                onClick={() => setOfflineMode(true)}
+                style={{ padding: '6px 14px', fontSize: '13px' }}>
+                Offline Projects
+              </button>
+              {user?.id !== 'offline-user' && (
+                <button 
+                  className={`btn ${!offlineMode ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setOfflineMode(false)}
+                  style={{ padding: '6px 14px', fontSize: '13px' }}>
+                  Online Sync'd
+                </button>
+              )}
+            </div>
+          </div>
           {errorSchools && <p className="text-danger" style={{ marginBottom: 16 }}>{errorSchools}</p>}
           {loadingSchools ? (
             <p className="text-muted">Loading schools…</p>
@@ -842,7 +861,7 @@ export default function ClassIdCardsWizard() {
         <Header
           title="Select class"
           showBack
-          backTo="/class-id-cards"
+          backTo={basePath}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
           {selectedSchoolForClassStep ? `Classes for ${selectedSchoolForClassStep.schoolName}` : 'Select a class'}
@@ -912,7 +931,7 @@ export default function ClassIdCardsWizard() {
           <Header
             title="Students & photos"
             showBack
-            backTo={effectiveSchoolId ? `/class-id-cards/school/${effectiveSchoolId}` : '/class-id-cards'}
+            backTo={effectiveSchoolId ? `${basePath}/school/${effectiveSchoolId}` : basePath}
           />
           <p className="text-muted">Loading students…</p>
         </>
@@ -921,8 +940,8 @@ export default function ClassIdCardsWizard() {
     if (!cls) {
       return (
         <>
-          <Header title="Class-wise ID Cards" showBack backTo="/class-id-cards" />
-          <p className="text-muted">Invalid step. <button type="button" className="btn btn-secondary" onClick={() => navigate('/class-id-cards')}>Start over</button></p>
+          <Header title="Class-wise ID Cards" showBack backTo={basePath} />
+          <p className="text-muted">Invalid step. <button type="button" className="btn btn-secondary" onClick={() => navigate(basePath)}>Start over</button></p>
         </>
       );
     }
@@ -937,7 +956,7 @@ export default function ClassIdCardsWizard() {
         <Header
           title={`Students & Photos – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
-          backTo={effectiveSchoolId ? `/class-id-cards/school/${effectiveSchoolId}` : '/class-id-cards'}
+          backTo={effectiveSchoolId ? `${basePath}/school/${effectiveSchoolId}` : basePath}
         />
         <div
           className={`class-idcards-students-step-body${showApiClassTemplateBar ? ' class-idcards-students-step-body--with-template-bar' : ''}`}
@@ -1000,7 +1019,7 @@ export default function ClassIdCardsWizard() {
                         setUploadingStudentId(student.id);
                         try {
                           const fileToUpload = await compressImageForUpload(file);
-                          const res = await uploadStudentPhoto(student.id, fileToUpload, 'Photographer Desktop App');
+                          const res = await (offlineMode ? offlineApi.uploadStudentPhoto(student.id, fileToUpload, 'Photographer Desktop App') : onlineApi.uploadStudentPhoto(student.id, fileToUpload, 'Photographer Desktop App'));
                           const photoUrl = res?.photoUrl;
                           const displayUrl = photoUrl
                             ? (photoUrl.startsWith('http') ? photoUrl : `${API_BASE_URL.replace(/\/$/, '')}${photoUrl.startsWith('/') ? photoUrl : '/' + photoUrl}`)
@@ -1164,27 +1183,67 @@ export default function ClassIdCardsWizard() {
         };
     const backFromArrange = () => {
       setEditorOpenedFromApiClassTemplate(false);
+      setArrangeEditSide('front');
+      setArrangeBackElements(null);
       setArrangingUploaded(false);
-      navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+      navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
     };
+    const canEditBack = templateUploadMode === 'both' && Boolean(uploadedTemplate?.backImage);
+    const activeTemplateImage =
+      arrangeEditSide === 'back' && canEditBack
+        ? uploadedTemplate.backImage
+        : uploadedTemplate.frontImage;
+    const activeInitialElements =
+      arrangeEditSide === 'back'
+        ? (arrangeBackElements ?? [])
+        : (arrangeEditorElements ?? uploadedTemplate.elements);
     return (
       <>
         <Header
           title={`Arrange elements – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
-          backTo={`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`}
+          backTo={`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`}
           onBackClick={backFromArrange}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
           Drag elements to position, resize photo from corner, and change font size in the sidebar. Then click &quot;Use this template&quot; to continue.
         </p>
+        {canEditBack ? (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+            <button
+              type="button"
+              className={`btn ${arrangeEditSide === 'front' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setArrangeEditSide('front')}
+            >
+              Edit Front
+            </button>
+            <button
+              type="button"
+              className={`btn ${arrangeEditSide === 'back' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setArrangeEditSide('back')}
+            >
+              Edit Back
+            </button>
+          </div>
+        ) : null}
         <IdCardCanvasEditor
-          key={`class-idcards-arrange-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(layoutDraftSubKey(uploadedTemplate) || 'draft')}`}
-          templateImage={uploadedTemplate.frontImage}
-          studentImage={getImageForStudent(previewStudent)}
-          initialElements={arrangeEditorElements ?? uploadedTemplate.elements}
+          key={`class-idcards-arrange-${arrangeEditSide}-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(layoutDraftSubKey(uploadedTemplate) || 'draft')}`}
+          templateImage={activeTemplateImage}
+          previewSecondaryTemplateImage={
+            templateUploadMode === 'both'
+              ? (arrangeEditSide === 'front' ? uploadedTemplate?.backImage : uploadedTemplate?.frontImage)
+              : null
+          }
+          studentImage={arrangeEditSide === 'front' ? getImageForStudent(previewStudent) : null}
+          initialElements={activeInitialElements}
           initialData={initialData}
-          onElementsChange={handleArrangeElementsPersist}
+          onElementsChange={(elements) => {
+            if (arrangeEditSide === 'back') {
+              setArrangeBackElements(elements);
+              return;
+            }
+            handleArrangeElementsPersist(elements);
+          }}
           dimension={previewStudent?.dimension}
           dimensionUnit={previewStudent?.dimensionUnit}
           schoolId={schoolIdFromUrl || effectiveSchoolId}
@@ -1215,7 +1274,7 @@ export default function ClassIdCardsWizard() {
         <Header
           title={`Select template – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
-          backTo={`/class-id-cards/students/${effectiveSchoolId}/${effectiveClassId}`}
+          backTo={`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
           Choose one template or upload your own (PNG/JPG/JPEG). Pick whether your design is single-sided (front only) or both sides. Uploaded templates are saved at school level, so once created they can be reused across all classes.
@@ -1305,7 +1364,15 @@ export default function ClassIdCardsWizard() {
               </div>
               {uploadedReadyForArrange && (
                 <div style={{ marginTop: 12 }}>
-                  <button type="button" className="btn btn-primary" onClick={() => setArrangingUploaded(true)}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setArrangeEditSide('front');
+                      setArrangeBackElements(null);
+                      setArrangingUploaded(true);
+                    }}
+                  >
                     Arrange elements (position, size, font)
                   </button>
                 </div>
@@ -1413,6 +1480,13 @@ export default function ClassIdCardsWizard() {
           .idcard-template-card-with-back .idcard-template-preview .idcard-template-preview-img {
             width: 200px; height: calc(200px / 1.72); max-width: 200px; max-height: calc(200px / 1.72); object-fit: contain;
           }
+          /* Do not force rounded corners on template previews; show native template shape only. */
+          .idcard-template-card-with-back .idcard-template-preview .idcard,
+          .idcard-template-preview-back .idcard-back-preview,
+          .idcard-template-upload-area,
+          .idcard-template-upload-area .idcard-template-preview-img {
+            border-radius: 0 !important;
+          }
           .idcard-template-card-with-back .idcard-template-preview-back {
             flex: 0 0 auto; padding: 0;
             width: 200px; min-width: 200px; height: calc(200px / 1.72); min-height: calc(200px / 1.72);
@@ -1435,7 +1509,7 @@ export default function ClassIdCardsWizard() {
           .idcard-template-upload-area {
             flex: 1; display: flex; align-items: center; justify-content: center;
             min-height: calc(200px / 1.72); border: 2px dashed rgba(255,255,255,0.25);
-            border-radius: 8px; cursor: pointer; overflow: hidden;
+            cursor: pointer; overflow: hidden;
             transition: border-color 0.2s, background 0.2s;
           }
           .idcard-template-upload-area:hover { border-color: var(--accent); background: rgba(52, 152, 219, 0.08); }
@@ -1461,7 +1535,7 @@ export default function ClassIdCardsWizard() {
         <Header
           title="Review & Save"
           showBack
-          backTo={`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`}
+          backTo={`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`}
         />
         <div className="card" style={{ maxWidth: 560 }}>
           <h3 style={{ marginBottom: 16 }}>Confirm</h3>
@@ -1483,7 +1557,7 @@ export default function ClassIdCardsWizard() {
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => navigate(`/class-id-cards/template/${effectiveSchoolId}/${effectiveClassId}`)}
+              onClick={() => navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`)}
             >
               Back to template
             </button>
@@ -1499,7 +1573,7 @@ export default function ClassIdCardsWizard() {
   return (
     <>
       <Header title="Class-wise ID Cards" showBack backTo={backTo} />
-      <p className="text-muted">Invalid step. <button type="button" className="btn btn-secondary" onClick={() => navigate('/class-id-cards')}>Start over</button></p>
+      <p className="text-muted">Invalid step. <button type="button" className="btn btn-secondary" onClick={() => navigate(basePath)}>Start over</button></p>
     </>
   );
 }

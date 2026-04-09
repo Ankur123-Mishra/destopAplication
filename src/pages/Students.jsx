@@ -67,7 +67,7 @@ export default function Students() {
         <p className="text-muted">Loading students...</p>
       ) : (
         <>
-          <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          {/* <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <button
               type="button"
               className="btn btn-secondary"
@@ -75,7 +75,7 @@ export default function Students() {
             >
               Correction List
             </button>
-          </div>
+          </div> */}
          
           <h3 style={{ marginBottom: 12 }}>All students</h3>
           <StudentTable

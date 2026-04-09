@@ -32,7 +32,8 @@ const CROP_FRAMES = [
     shape: 'rounded-rectangle',
     aspectRatio: 4 / 5,
     crop: { unit: '%', width: 45, height: 56, x: 27.5, y: 22 },
-    svgPath: 'M 16 10 H 84 Q 92 10 92 18 V 82 Q 92 90 84 90 H 16 Q 8 90 8 82 V 18 Q 8 10 16 10 Z'
+    // Keep frame boundary near crop-selection bounds so resize handles stay visually attached.
+    svgPath: 'M 12 0 H 88 Q 100 0 100 12 V 88 Q 100 100 88 100 H 12 Q 0 100 0 88 V 12 Q 0 0 12 0 Z'
   },
   {
     id: 'circle',

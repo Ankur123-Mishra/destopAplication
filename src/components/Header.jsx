@@ -24,7 +24,7 @@ export default function Header({ title, showBack, backTo, onBackClick }) {
   console.log('Header', title);
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useApp();
+  const { user, logout, isSyncing, syncMessage } = useApp();
   const [pointsBalance, setPointsBalance] = useState(null);
   const [perStudentTemplateCost, setPerStudentTemplateCost] = useState(null);
   const [pointsLoading, setPointsLoading] = useState(false);
@@ -108,7 +108,15 @@ export default function Header({ title, showBack, backTo, onBackClick }) {
       </div>
       {user && (
         <div className="header-right">
-          <div
+          {isSyncing && (
+            <div className="header-points" style={{ borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.2)' }}>
+              <span className="header-points-label" style={{ color: '#38bdf8' }}>Syncing</span>
+              <strong className="header-points-value" style={{ fontSize: '13px', whiteSpace: 'nowrap' }}>
+                {syncMessage}
+              </strong>
+            </div>
+          )}
+          {/* <div
             className="header-points"
             title="Available template download points"
           >
@@ -125,17 +133,17 @@ export default function Header({ title, showBack, backTo, onBackClick }) {
                 ({perStudentTemplateCost}/student)
               </span>
             )}
-          </div>
+          </div> */}
           <span className="header-user">
             {user.name || user.mobile || user.email}
           </span>
-          <button
+          {/* <button
             type="button"
             className="btn btn-secondary btn-sm"
             onClick={handleLogout}
           >
             Logout
-          </button>
+          </button> */}
         </div>
       )}
     </header>

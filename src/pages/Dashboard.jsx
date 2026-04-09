@@ -9,13 +9,21 @@ import {
   setProjectBulkPreviewServerUrl,
 } from '../utils/projectBulkPhotoPreview';
 import {
-  getDashboard,
-  getAssignedSchools,
+  getDashboard as getOfflineDashboard,
+  getAssignedSchools as getOfflineSchools,
   getClassesBySchool,
   getStudentsBySchoolAndClass,
   uploadStudentPhoto,
-  deletePhotographerSchool,
+  deletePhotographerSchool as deleteOfflineSchool,
+  createSchool,
+  bulkUploadStudentsXls,
 } from '../api/dashboard';
+
+import {
+  getDashboard as getOnlineDashboard,
+  getAssignedSchools as getOnlineSchools,
+  deletePhotographerSchool as deleteOnlineSchool,
+} from '../api/network_backend';
 
 const defaultStats = {
   assignedSchools: 0,
@@ -27,14 +35,15 @@ const defaultStats = {
 };
 
 export default function Dashboard() {
+  const { user, isSyncing, syncMessage, startGlobalSync } = useApp();
   const navigate = useNavigate();
-  const { user } = useApp();
   const [stats, setStats] = useState(defaultStats);
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deletingSchoolId, setDeletingSchoolId] = useState(null);
+  const [viewMode, setViewMode] = useState('offline'); // online | offline
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState([]);
   const [projectFolderExcel, setProjectFolderExcel] = useState(null);
   const projectFolderInputRef = useRef(null);
@@ -47,9 +56,12 @@ export default function Dashboard() {
       setLoading(true);
       setError('');
       try {
+        const fetchDash = viewMode === 'online' ? getOnlineDashboard() : getOfflineDashboard();
+        const fetchSchools = viewMode === 'online' ? getOnlineSchools() : getOfflineSchools();
+
         const [dashboardRes, schoolsRes] = await Promise.all([
-          getDashboard(),
-          getAssignedSchools(),
+          fetchDash,
+          fetchSchools,
         ]);
         console.log(dashboardRes);
 
@@ -64,14 +76,14 @@ export default function Dashboard() {
         });
         setSchools(schoolsRes.schools ?? []);
       } catch (err) {
-        if (!cancelled) setError(err?.message || 'Failed to load dashboard');
+        if (!cancelled) setError(err?.message || `Failed to load ${viewMode} dashboard`);
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [viewMode]);
 
   useEffect(() => {
     if (!createModalOpen) return undefined;
@@ -93,7 +105,7 @@ export default function Dashboard() {
 
   const finishCreateProject = () => {
     closeCreateProjectModal();
-    navigate('/class-id-cards', { replace: true });
+    navigate('/view-template', { replace: true });
   };
 
   const triggerProjectFolderSelect = () => {
@@ -168,15 +180,18 @@ export default function Dashboard() {
     })();
   };
 
-  const handleDeleteSchool = async (school) => {
-    const schoolName = school?.schoolName || school?.schoolCode || 'this school';
-    const ok = window.confirm(`Delete ${schoolName} from assigned schools?`);
-    if (!ok) return;
+  const handleDeleteSchool = async (id, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this project?")) return;
     setError('');
-    setDeletingSchoolId(school._id);
+    setDeletingSchoolId(id);
     try {
-      await deletePhotographerSchool(school._id);
-      setSchools((prev) => prev.filter((s) => s._id !== school._id));
+      if (viewMode === 'online') {
+        await deleteOnlineSchool(id);
+      } else {
+        await deleteOfflineSchool(id);
+      }
+      setSchools((prev) => prev.filter((s) => s._id !== id && s.id !== id));
       setStats((prev) => ({
         ...prev,
         assignedSchools: Math.max(0, (prev.assignedSchools || 0) - 1),
@@ -192,6 +207,7 @@ export default function Dashboard() {
       setDeletingSchoolId(null);
     }
   };
+
 
   const cards = [
     { label: 'Assigned Schools', value: stats.assignedSchools, icon: '🏫' },
@@ -209,18 +225,32 @@ export default function Dashboard() {
       <Header title={`Welcome, ${user?.name || 'Photographer'}`} />
       <div className="dashboard-top-row">
         <h2 className="page-title">Dashboard</h2>
-        <button
-          id="dashboard-create-project-btn"
-          type="button"
-          className="btn btn-primary create-project-btn"
-          onClick={() => {
-            setCreateModalOpen(true);
-            setPendingPhotoFiles([]);
-            setProjectFolderExcel(null);
-          }}
-        >
-          Create Project
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {/* isSyncing local display removed as it's now in the global Header, but keep button */}
+          {user?.id !== 'offline-user' && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={startGlobalSync}
+              disabled={isSyncing}
+            >
+              {isSyncing ? "Syncing in Background..." : "Sync Data"}
+            </button>
+          )}
+          <button
+            id="dashboard-create-project-btn"
+            type="button"
+            className="btn btn-primary create-project-btn"
+            disabled={isSyncing}
+            onClick={() => {
+              setCreateModalOpen(true);
+              setPendingPhotoFiles([]);
+              setProjectFolderExcel(null);
+            }}
+          >
+            Create Project
+          </button>
+        </div>
       </div>
       {error && <p className="dashboard-error">{error}</p>}
       {loading ? (
@@ -237,17 +267,35 @@ export default function Dashboard() {
             ))}
           </div>
           <div className="card dashboard-assigned-schools">
-            <h3 style={{ marginBottom: 16 }}>Assigned Schools</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0 }}>Assigned Projects</h3>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  className={`btn ${viewMode === 'offline' ? 'btn-primary' : 'btn-secondary'}`} 
+                  onClick={() => setViewMode('offline')}
+                  style={{ padding: '6px 14px', fontSize: '13px' }}>
+                  Offline Projects
+                </button>
+                {user?.id !== 'offline-user' && (
+                  <button 
+                    className={`btn ${viewMode === 'online' ? 'btn-primary' : 'btn-secondary'}`} 
+                    onClick={() => setViewMode('online')}
+                    style={{ padding: '6px 14px', fontSize: '13px' }}>
+                    Online Projects
+                  </button>
+                )}
+              </div>
+            </div>
             <div className="school-list">
               {schools.length === 0 ? (
                 <p className="text-muted" style={{ padding: 16 }}>No schools assigned yet.</p>
               ) : (
                 schools.map((school) => (
                   <div
-                    key={school._id}
+                    key={school._id || school.id}
                     className="school-item"
-                    onClick={() => navigate(`/schools/${school._id}/classes`)}
-                    onKeyDown={(e) => e.key === 'Enter' && navigate(`/schools/${school._id}/classes`)}
+                    onClick={() => navigate(`/schools/${school._id || school.id}/classes${viewMode==='online'? '?source=online':''}`)}
+                    onKeyDown={(e) => e.key === 'Enter' && navigate(`/schools/${school._id || school.id}/classes${viewMode==='online'? '?source=online':''}`)}
                     role="button"
                     tabIndex={0}
                   >
@@ -260,14 +308,12 @@ export default function Dashboard() {
                     </div>
                     <button
                       type="button"
-                      className="btn btn-secondary school-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSchool(school);
-                      }}
-                      disabled={deletingSchoolId === school._id}
+                      className="btn btn-secondary btn-sm school-delete-btn"
+                      disabled={deletingSchoolId === (school._id || school.id)}
+                      onClick={(e) => handleDeleteSchool(school._id || school.id, e)}
+                      title="Delete School"
                     >
-                      {deletingSchoolId === school._id ? 'Deleting...' : 'Delete'}
+                      {deletingSchoolId === (school._id || school.id) ? 'Deleting...' : 'Delete'}
                     </button>
                   </div>
                 ))
@@ -277,7 +323,7 @@ export default function Dashboard() {
         </>
       )}
       {createModalOpen && (
-        <div className="create-project-modal-overlay" onClick={closeCreateProjectModal} role="presentation">
+        <div className="create-project-modal-overlay" role="presentation">
           <div className="create-project-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="create-project-modal-title">
             <div className="create-project-modal-header">
               <h3 id="create-project-modal-title">Create Project</h3>

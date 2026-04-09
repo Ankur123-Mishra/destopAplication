@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { clearAuth, getToken, getStoredUser } from '../api/authStorage';
+import { syncAllBackgroundData } from '../utils/syncManager';
 
 const AppContext = createContext(null);
 
@@ -60,8 +61,30 @@ export function AppProvider({ children }) {
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
   const [studentsByClass, setStudentsByClass] = useState(MOCK_STUDENTS_BY_CLASS);
   const [pendingUploads, setPendingUploads] = useState([]);
-  const [offlineMode, setOfflineMode] = useState(false);
-  const [savedIdCards, setSavedIdCards] = useState({}); // { [studentId]: [{ id, templateId, studentImage, name, studentId, className, schoolName, savedAt }] }
+  const [offlineMode, setOfflineMode] = useState(true);
+  const [savedIdCards, setSavedIdCards] = useState({});
+
+  // Global Sync Tracker
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+
+  const startGlobalSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncMessage("Initializing sync...");
+    try {
+      await syncAllBackgroundData((msg) => {
+        setSyncMessage(msg);
+      });
+    } catch (err) {
+      setSyncMessage("Sync completed with errors");
+    } finally {
+      setTimeout(() => {
+        setIsSyncing(false);
+        setSyncMessage("");
+      }, 4000);
+    }
+  };
 
   const classes = useMemo(() => MOCK_CLASSES, []);
 
@@ -172,6 +195,9 @@ export function AppProvider({ children }) {
     addSavedIdCard,
     getSavedIdCard,
     getAllSavedIdCards,
+    isSyncing,
+    syncMessage,
+    startGlobalSync,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

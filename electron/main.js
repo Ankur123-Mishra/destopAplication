@@ -127,6 +127,9 @@ function registerJpegExportIpcHandlers() {
   try {
     ipcMain.removeHandler('write-jpeg-file');
   } catch (_) {}
+  try {
+    ipcMain.removeHandler('save-pdf-export-file');
+  } catch (_) {}
 
   ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
     try {
@@ -194,6 +197,31 @@ function registerJpegExportIpcHandlers() {
       return { success: true };
     } catch (error) {
       console.error('write-jpeg-file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-pdf-export-file', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName, filename, dataBase64 } = payload || {};
+      if (!parentFolderPath || !subfolderName || !dataBase64) {
+        return { success: false, error: 'Invalid PDF payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-pdf';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      let safeName = path
+        .basename(String(filename || `${safeSub}.pdf`))
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+      if (!safeName.toLowerCase().endsWith('.pdf')) {
+        safeName += '.pdf';
+      }
+      const buffer = Buffer.from(String(dataBase64), 'base64');
+      const filePath = path.join(dir, safeName);
+      await fs.writeFile(filePath, buffer);
+      return { success: true, folderPath: dir, filePath };
+    } catch (error) {
+      console.error('save-pdf-export-file:', error);
       return { success: false, error: error.message };
     }
   });

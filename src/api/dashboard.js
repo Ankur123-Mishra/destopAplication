@@ -62,6 +62,11 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
   return { students: studentsList.map(s => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })) };
 }
 
+export async function updateStudent(studentId, data) {
+  await db.students.update(studentId, data);
+  return { message: "Student updated locally", studentId };
+}
+
 export async function getStudentsBySchool(schoolId) {
   const studentsList = await db.students.where('schoolId').equals(schoolId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
@@ -144,6 +149,8 @@ export async function createSchool({
     dimension: { height: Number(dimensionHeight) || 57, width: Number(dimensionWidth) || 90 },
     dimensionUnit: dimensionUnit || "mm",
     allowedMobiles,
+    syncStatus: 'pending',
+    mongoId: null,
   };
   await db.schools.add(newSchool);
   return { message: "School created offline", schoolId: newSchool.id, school: newSchool };

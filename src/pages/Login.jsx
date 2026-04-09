@@ -113,6 +113,21 @@ export default function Login() {
     setOtp("");
     setError("");
   };
+
+  const handleSkipLogin = () => {
+    const mockUser = {
+      id: "offline-user",
+      name: "Offline User",
+      email: null,
+      mobile: "+910000000000",
+      pointsBalance: null,
+      perStudentTemplateCost: null,
+    };
+    setToken("offline-dummy-token");
+    setStoredUser(mockUser);
+    setUser(mockUser);
+    navigate("/dashboard", { replace: true });
+  };
   
   return (
     <div className="login-page">
@@ -210,6 +225,12 @@ export default function Login() {
             </button>
           </form>
         )}
+
+        <div style={{ textAlign: "center", marginTop: "24px", paddingTop: "16px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <button type="button" className="btn btn-secondary" onClick={handleSkipLogin} style={{ width: "100%", padding: 14 }}>
+            Skip Login
+          </button>
+        </div>
 
         <style>{`
           .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }

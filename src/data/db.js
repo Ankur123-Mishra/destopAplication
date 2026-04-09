@@ -8,3 +8,8 @@ db.version(1).stores({
   classes: 'id, schoolId, className',
   students: 'id, schoolId, classId, studentId, studentName',
 });
+
+// Upgrade database schema for syncing
+db.version(2).stores({
+  schools: 'id, schoolName, syncStatus',
+});
