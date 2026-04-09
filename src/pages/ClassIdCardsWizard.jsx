@@ -1169,7 +1169,18 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           email: previewStudent.email || '',
           address: previewStudent.address || '',
           className: previewStudent.className || cls?.name || '',
+          section: previewStudent.section || '',
           schoolName: school?.name || '',
+          fatherName: previewStudent.fatherName || '',
+          fatherPrimaryContact: previewStudent.fatherPrimaryContact || previewStudent.fatherPhone || '',
+          motherName: previewStudent.motherName || '',
+          motherPrimaryContact: previewStudent.motherPrimaryContact || previewStudent.motherPhone || '',
+          gender: previewStudent.gender || '',
+          bloodGroup: previewStudent.bloodGroup || '',
+          house: previewStudent.house || '',
+          marking: previewStudent.marking || '',
+          photoNo: previewStudent.photoNo || '',
+          status: previewStudent.status || '',
           extraFields: previewStudent.extraFields || {},
         }
       : {
