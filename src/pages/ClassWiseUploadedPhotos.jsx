@@ -16,6 +16,66 @@ import {
 
 function mapApiStudent(s) {
 // console.log("s Data", s);
+  const classNameFallback =
+    s.className ||
+    s.course ||
+    s.courseName ||
+    s.program ||
+    s.programName ||
+    s.stream ||
+    ((s.extraFields && typeof s.extraFields === 'object')
+      ? (s.extraFields.course || s.extraFields.courseName || s.extraFields.program || s.extraFields.programName || s.extraFields.stream)
+      : '');
+  const extraFields = {
+    ...((s.extraFields && typeof s.extraFields === 'object') ? s.extraFields : {}),
+  };
+  const reservedKeys = new Set([
+    'id',
+    '_id',
+    '__v',
+    'studentName',
+    'name',
+    'studentId',
+    'admissionNo',
+    'rollNo',
+    'uniqueCode',
+    'dateOfBirth',
+    'dob',
+    'phone',
+    'mobile',
+    'contactNo',
+    'email',
+    'address',
+    'className',
+    'section',
+    'fatherName',
+    'fatherPrimaryContact',
+    'fatherPhone',
+    'motherName',
+    'motherPrimaryContact',
+    'motherPhone',
+    'gender',
+    'bloodGroup',
+    'house',
+    'marking',
+    'photoNo',
+    'status',
+    'uploadedVia',
+    'photoUrl',
+    'schoolId',
+    'classId',
+    'createdAt',
+    'updatedAt',
+    'extraFields',
+  ]);
+  Object.entries(s || {}).forEach(([key, value]) => {
+    if (reservedKeys.has(key)) return;
+    if (value == null) return;
+    const t = typeof value;
+    if (t === 'string' || t === 'number' || t === 'boolean') {
+      extraFields[key] = value;
+    }
+  });
   return {
     id: s._id,
     name: s.studentName,
@@ -27,7 +87,19 @@ function mapApiStudent(s) {
     phone: s.phone || s.mobile || s.contactNo || '',
     email: s.email || '',
     address: s?.address || '',
+    fatherName: s.fatherName || '',
+    fatherPrimaryContact: s.fatherPrimaryContact || s.fatherPhone || '',
+    motherName: s.motherName || '',
+    motherPrimaryContact: s.motherPrimaryContact || s.motherPhone || '',
+    gender: s.gender || '',
+    bloodGroup: s.bloodGroup || '',
+    house: s.house || '',
+    marking: s.marking || '',
+    photoNo: s.photoNo || '',
+    section: s.section || '',
+    className: String(classNameFallback || '').trim(),
     status: s.status,
+    extraFields,
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: s.photoUrl,

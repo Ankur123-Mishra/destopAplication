@@ -134,9 +134,67 @@ async function imageRefToDataUrlForUpload(ref) {
 
 function mapApiStudent(s) {
   const popClass = s.classId && typeof s.classId === 'object' ? s.classId : null;
+  const classNameFallback =
+    s.className ||
+    s.course ||
+    s.courseName ||
+    s.program ||
+    s.programName ||
+    s.stream ||
+    ((s.extraFields && typeof s.extraFields === 'object')
+      ? (s.extraFields.course || s.extraFields.courseName || s.extraFields.program || s.extraFields.programName || s.extraFields.stream)
+      : '');
   const classLabel = popClass
     ? `${popClass.className || ''}${popClass.section ? ` – ${popClass.section}` : ''}`.trim()
-    : '';
+    : String(classNameFallback || '').trim();
+  const extraFields = {
+    ...((s.extraFields && typeof s.extraFields === 'object') ? s.extraFields : {}),
+  };
+  const reservedKeys = new Set([
+    '_id',
+    '__v',
+    'studentName',
+    'studentId',
+    'admissionNo',
+    'rollNo',
+    'uniqueCode',
+    'dateOfBirth',
+    'dob',
+    'phone',
+    'mobile',
+    'contactNo',
+    'email',
+    'address',
+    'className',
+    'section',
+    'fatherName',
+    'fatherPrimaryContact',
+    'fatherPhone',
+    'motherName',
+    'motherPrimaryContact',
+    'motherPhone',
+    'gender',
+    'bloodGroup',
+    'house',
+    'marking',
+    'photoNo',
+    'status',
+    'uploadedVia',
+    'schoolId',
+    'classId',
+    'photoUrl',
+    'extraFields',
+    'createdAt',
+    'updatedAt',
+  ]);
+  Object.entries(s || {}).forEach(([key, value]) => {
+    if (reservedKeys.has(key)) return;
+    if (value == null) return;
+    const t = typeof value;
+    if (t === 'string' || t === 'number' || t === 'boolean') {
+      extraFields[key] = value;
+    }
+  });
   return {
     id: s._id,
     name: s.studentName,
@@ -148,12 +206,20 @@ function mapApiStudent(s) {
     phone: s.phone || s.mobile || s.contactNo || '',
     email: s.email || '',
     address: s?.address || '',
-    className: s.className || classLabel || '',
+    className: String(classNameFallback || classLabel || '').trim(),
+    section: s.section || popClass?.section || '',
     fatherName: s.fatherName || '',
+    fatherPrimaryContact: s.fatherPrimaryContact || s.fatherPhone || '',
+    motherName: s.motherName || '',
+    motherPrimaryContact: s.motherPrimaryContact || s.motherPhone || '',
+    gender: s.gender || '',
+    bloodGroup: s.bloodGroup || '',
+    house: s.house || '',
+    marking: s.marking || '',
     photoNo: s.photoNo || '',
     status: s.status,
     uploadedVia: s.uploadedVia || '',
-    extraFields: (s.extraFields && typeof s.extraFields === 'object') ? s.extraFields : {},
+    extraFields,
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
@@ -1157,6 +1223,64 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     step === STEPS.SELECT_TEMPLATE && cls && arrangingUploaded && uploadedReadyForArrange;
   if (showArrangeUploaded) {
     const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
+    const previewStudentExtraFields = (() => {
+      if (!previewStudent || typeof previewStudent !== 'object') return {};
+      const merged = {
+        ...((previewStudent.extraFields && typeof previewStudent.extraFields === 'object') ? previewStudent.extraFields : {}),
+      };
+      const reserved = new Set([
+        'id',
+        '_id',
+        '__v',
+        'name',
+        'studentName',
+        'studentId',
+        'admissionNo',
+        'rollNo',
+        'uniqueCode',
+        'dateOfBirth',
+        'dob',
+        'phone',
+        'mobile',
+        'contactNo',
+        'email',
+        'address',
+        'className',
+        'section',
+        'schoolName',
+        'fatherName',
+        'fatherPrimaryContact',
+        'fatherPhone',
+        'motherName',
+        'motherPrimaryContact',
+        'motherPhone',
+        'gender',
+        'bloodGroup',
+        'house',
+        'marking',
+        'photoNo',
+        'status',
+        'uploadedVia',
+        'photoUrl',
+        'dimension',
+        'dimensionUnit',
+        'schoolId',
+        'classId',
+        'createdAt',
+        'updatedAt',
+        'template',
+        'extraFields',
+      ]);
+      Object.entries(previewStudent).forEach(([key, value]) => {
+        if (reserved.has(key)) return;
+        if (value == null) return;
+        const t = typeof value;
+        if (t === 'string' || t === 'number' || t === 'boolean') {
+          merged[key] = value;
+        }
+      });
+      return merged;
+    })();
     const initialData = previewStudent
       ? {
           name: previewStudent.name || '',
@@ -1181,7 +1305,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           marking: previewStudent.marking || '',
           photoNo: previewStudent.photoNo || '',
           status: previewStudent.status || '',
-          extraFields: previewStudent.extraFields || {},
+          extraFields: previewStudentExtraFields,
         }
       : {
           name: '',

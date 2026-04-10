@@ -357,13 +357,17 @@ export default function IdCardCanvasEditor({
   const getFieldValue = useCallback((key) => {
     const src = initialData || {};
     let rawVal = src[key];
+    const extra = src.extraFields;
+    if (rawVal == null && extra instanceof Map && extra.has(key)) {
+      rawVal = extra.get(key);
+    }
     if (
       rawVal == null &&
-      src.extraFields &&
-      typeof src.extraFields === 'object' &&
-      Object.prototype.hasOwnProperty.call(src.extraFields, key)
+      extra &&
+      typeof extra === 'object' &&
+      Object.prototype.hasOwnProperty.call(extra, key)
     ) {
-      rawVal = src.extraFields[key];
+      rawVal = extra[key];
     }
     const raw = normalizeValue(rawVal);
     if (key === 'dateOfBirth') return formatDateDMY(raw);
@@ -376,7 +380,7 @@ export default function IdCardCanvasEditor({
     const baseKeys = new Set(FIELD_DEFS.map((d) => d.key));
     return Object.keys(extra)
       .filter((k) => !baseKeys.has(k))
-      .map((k) => ({ key: k, label: String(k) }));
+      .map((k) => ({ key: k, label: humanizeFieldLabel(k) || String(k) }));
   }, [initialData]);
 
   const otherFieldDefs = useMemo(() => {
@@ -436,8 +440,8 @@ export default function IdCardCanvasEditor({
   }, [elements]);
 
   const addFieldElement = useCallback((fieldKey) => {
-    const def = FIELD_DEFS.find((d) => d.key === fieldKey);
-    const label = def?.label || fieldKey;
+    const def = allFieldDefs.find((d) => d.key === fieldKey);
+    const label = def?.label || humanizeFieldLabel(fieldKey) || fieldKey;
     const { x, y } = nextAutoPosition();
     setElements((prev) => {
       const existing = prev.find((el) => el.type === 'text' && el.dataField === fieldKey);
@@ -455,7 +459,7 @@ export default function IdCardCanvasEditor({
         { type: 'text', id, dataField: fieldKey, x, y, fontSize: 10, content: '', fontWeight: fieldKey === 'name' ? '700' : '400', label },
       ];
     });
-  }, [nextAutoPosition]);
+  }, [allFieldDefs, nextAutoPosition]);
 
   const removeFieldElement = useCallback((fieldKey) => {
     setElements((prev) => prev.filter((el) => !(el.type === 'text' && el.dataField === fieldKey)));
@@ -469,7 +473,7 @@ export default function IdCardCanvasEditor({
   const addAllFields = useCallback(() => {
     allFieldDefs.forEach((f) => {
       if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key)) return;
-      const val = String(getFieldValue(f.key) || '').trim();
+      const val = normalizeValue(getFieldValue(f.key)).trim();
       if (val) addFieldElement(f.key);
     });
   }, [addFieldElement, allFieldDefs, getFieldValue]);
@@ -1474,7 +1478,7 @@ export default function IdCardCanvasEditor({
             {allFieldDefs.map((f) => {
               // Only show fields that have actual values in the student data
               const val = getFieldValue(f.key);
-              const hasValue = String(val || '').trim() !== '';
+              const hasValue = normalizeValue(val).trim() !== '';
               
               // Skip fields with no value (show only what exists in Excel/student data)
               if (!hasValue) return null;

@@ -160,6 +160,17 @@ export async function createSchool({
 export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
   const { onUploadProgress } = options;
   if (typeof onUploadProgress === 'function') onUploadProgress(10);
+  const toExtraFieldKey = (header) => {
+    const raw = String(header || '').trim();
+    if (!raw) return '';
+    const cleaned = raw.replace(/[^a-zA-Z0-9]+/g, ' ').trim();
+    if (!cleaned) return '';
+    const parts = cleaned.split(/\s+/);
+    if (parts.length === 0) return '';
+    const first = parts[0].toLowerCase();
+    const rest = parts.slice(1).map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
+    return `${first}${rest.join('')}`;
+  };
   
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -175,7 +186,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
         if (typeof onUploadProgress === 'function') onUploadProgress(60);
 
         // Map parsed rows to classes and students
-        // Expected Xls Columns: SrNo, Photo, StudentName, Gender, BirthDate, STD, Division, RegNo, BloodGroup, Address, Mobile
+        // Supports both Class/STD and Course-based sheets.
         const classMap = {}; // key: "STD_Division" -> class object
         const newClasses = [];
         const newStudents = [];
@@ -192,9 +203,56 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
           }
           return "";
         };
+        const knownColumnNorms = new Set([
+          'srno',
+          'sr.no',
+          'sirial',
+          'serial',
+          'photo',
+          'photo.no',
+          'photono',
+          'studentname',
+          'student name',
+          'gender',
+          'birthdate',
+          'dob',
+          'class',
+          'std',
+          'course',
+          'coursename',
+          'program',
+          'programname',
+          'stream',
+          'division',
+          'section',
+          'regno',
+          'admissionno',
+          'rollno',
+          'bloodgroup',
+          'address',
+          'mobil.no',
+          'mobile',
+          'mobileno',
+          'phone',
+          'fathersname',
+          "father'sname",
+          'fathername',
+          'fatherprimarycontact',
+          'fathercontact',
+          'fathermobile',
+          'fatherphone',
+          'mothername',
+          "mother'sname",
+          'motherprimarycontact',
+          'mothercontact',
+          'mothermobile',
+          'motherphone',
+          'house',
+          'marking',
+        ].map((x) => String(x).replace(/[\s.]+/g, '').toLowerCase()));
 
         for (const row of json) {
-          const clsStr = String(getCol(row, "Class", "STD")).trim();
+          const clsStr = String(getCol(row, "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
           const divStr = String(getCol(row, "Division", "Section")).trim();
           
           if (!clsStr && !divStr && !getCol(row, "Student Name")) continue; // Skip empty rows
@@ -218,10 +276,23 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
           }
 
           const photoNo = String(getCol(row, "Photo.No", "PhotoNo", "Photo")).trim();
+          const extraFields = {};
+          Object.entries(row).forEach(([header, value]) => {
+            const norm = String(header || '').replace(/[\s.]+/g, '').toLowerCase();
+            if (!norm || knownColumnNorms.has(norm)) return;
+            if (value == null) return;
+            const stringValue = String(value).trim();
+            if (!stringValue) return;
+            const fieldKey = toExtraFieldKey(header);
+            if (!fieldKey) return;
+            extraFields[fieldKey] = value;
+          });
           const student = {
             id: nanoid(),
             schoolId,
             classId: classRecord.id,
+            className,
+            section,
             studentName: getCol(row, "Student Name", "StudentName"),
             admissionNo: String(getCol(row, "RegNo", "AdmissionNo", "Sr.No")),
             rollNo: String(getCol(row, "RollNo", "SrNo", "Sirial", "Serial")),
@@ -238,6 +309,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             motherPrimaryContact: getCol(row, "Mother Primary Contact", "MotherContact", "Mother Mobile", "Mother Phone"),
             house: getCol(row, "House"),
             marking: getCol(row, "Marking"),
+            extraFields,
             status: 'Active',
             photoUrl: null
           };
