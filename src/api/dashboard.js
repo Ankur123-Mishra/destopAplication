@@ -1,11 +1,97 @@
 import { db } from '../data/db';
 import * as XLSX from 'xlsx';
 import { nanoid } from 'nanoid';
+import { getUploadedTemplates } from '../data/uploadedTemplatesStorage';
+
+function isValidPhotographerTemplateShape(t) {
+  return (
+    t &&
+    typeof t === 'object' &&
+    t.frontImage &&
+    Array.isArray(t.elements) &&
+    t.elements.length > 0
+  );
+}
+
+/** Template from a student row after bulk save (full front/back/elements). */
+function templateFromStudentRecord(st) {
+  const t = st?.template;
+  if (!isValidPhotographerTemplateShape(t)) return null;
+  return {
+    frontImage: t.frontImage,
+    backImage: t.backImage ?? null,
+    elements: t.elements,
+    ...(Array.isArray(t.backElements) ? { backElements: t.backElements } : {}),
+    name: t.name || 'Template',
+    templateId: t.templateId,
+  };
+}
+
+/**
+ * Uploaded templates from localStorage (wizard "Use this template"), keyed by school when available.
+ * Legacy entries may omit schoolId — if none match by school, the last valid legacy template is used.
+ */
+function templateFromUploadedStorage(schoolId) {
+  const { templates } = getUploadedTemplates();
+  const forSchool = templates.filter((t) => t.schoolId === schoolId && isValidPhotographerTemplateShape(t));
+  if (forSchool.length > 0) {
+    const t = forSchool[forSchool.length - 1];
+    return {
+      frontImage: t.frontImage,
+      backImage: t.backImage ?? null,
+      elements: t.elements,
+      ...(Array.isArray(t.backElements) ? { backElements: t.backElements } : {}),
+      name: t.name || 'Uploaded Template',
+      templateId: t.id,
+    };
+  }
+  const legacy = templates.filter(
+    (t) => (t.schoolId == null || t.schoolId === '') && isValidPhotographerTemplateShape(t),
+  );
+  if (legacy.length > 0) {
+    const t = legacy[legacy.length - 1];
+    return {
+      frontImage: t.frontImage,
+      backImage: t.backImage ?? null,
+      elements: t.elements,
+      ...(Array.isArray(t.backElements) ? { backElements: t.backElements } : {}),
+      name: t.name || 'Uploaded Template',
+      templateId: t.id,
+    };
+  }
+  return null;
+}
+
+/** Same shape as online GET /students `template` field — used by ClassIdCardsWizard (Edit template). */
+export function resolveOfflinePhotographerTemplate(schoolId, studentsRaw, schoolDoc = null) {
+  if (!schoolId) return null;
+  for (const st of studentsRaw) {
+    const tpl = templateFromStudentRecord(st);
+    if (tpl) return tpl;
+  }
+  const fromSchool = schoolDoc?.offlineIdCardTemplate;
+  if (isValidPhotographerTemplateShape(fromSchool)) {
+    return {
+      frontImage: fromSchool.frontImage,
+      backImage: fromSchool.backImage ?? null,
+      elements: fromSchool.elements,
+      ...(Array.isArray(fromSchool.backElements) ? { backElements: fromSchool.backElements } : {}),
+      name: fromSchool.name || 'Uploaded Template',
+      templateId: fromSchool.templateId ?? 'offline-school-template',
+    };
+  }
+  return templateFromUploadedStorage(schoolId);
+}
 
 // --- Mocks to replace the previous API tokens ---
 export async function getDashboard() {
-  const assignedSchools = await db.schools.count();
-  const totalStudents = await db.students.count();
+  const schoolsList = await db.schools.toArray();
+  const assignedSchools = schoolsList.length;
+  const schoolIds = schoolsList.map((s) => s.id);
+  const totalStudents =
+    schoolIds.length === 0
+      ? 0
+      : await db.students.where('schoolId').anyOf(schoolIds).count();
 
   return {
     assignedSchools,
@@ -59,7 +145,11 @@ export async function getTemplatesStatus(schoolId, classId) {
 export async function getStudentsBySchoolAndClass(schoolId, classId) {
   const studentsList = await db.students.where({ schoolId, classId }).toArray();
   const schoolDoc = await db.schools.get(schoolId);
-  return { students: studentsList.map(s => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })) };
+  const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
+  return {
+    students: studentsList.map((s) => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })),
+    ...(template ? { template } : {}),
+  };
 }
 
 export async function updateStudent(studentId, data) {
@@ -70,7 +160,11 @@ export async function updateStudent(studentId, data) {
 export async function getStudentsBySchool(schoolId) {
   const studentsList = await db.students.where('schoolId').equals(schoolId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
-  return { students: studentsList.map(s => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })) };
+  const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
+  return {
+    students: studentsList.map((s) => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })),
+    ...(template ? { template } : {}),
+  };
 }
 
 export async function bulkSaveTemplates(templateId, studentIds) {
@@ -107,6 +201,19 @@ export async function getPhotographerPointsBalance() {
 }
 
 export async function uploadTemplate(data) {
+  const schoolId = data?.schoolId;
+  if (schoolId) {
+    await db.schools.update(schoolId, {
+      offlineIdCardTemplate: {
+        frontImage: data.frontImage,
+        backImage: data.backImage ?? null,
+        elements: data.elements,
+        ...(Array.isArray(data.backElements) ? { backElements: data.backElements } : {}),
+        name: data.name || 'Uploaded Template',
+        templateId: data.templateId,
+      },
+    });
+  }
   return { message: "Uploaded successfully (mock)", templateId: "mock-template" };
 }
 

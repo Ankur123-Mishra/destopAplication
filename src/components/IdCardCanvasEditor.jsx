@@ -39,8 +39,28 @@ const FIELD_DEFS = [
 
 const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
 
+function hasTextFieldBinding(els, fieldKey) {
+  if (!Array.isArray(els)) return false;
+  return els.some(
+    (el) =>
+      el.type === 'text' &&
+      (el.dataField === fieldKey || (fieldKey === 'name' && el.id === 'name'))
+  );
+}
+
+/** Default photo box size (% of card) when no saved layout provides dimensions */
+export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = 40;
+export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT = 48;
+
 const DEFAULT_ELEMENTS = () => [
-  { type: 'photo', id: 'photo', x: 8, y: 22, width: 30, height: 48 },
+  {
+    type: 'photo',
+    id: 'photo',
+    x: 8,
+    y: 22,
+    width: DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
+    height: DEFAULT_PHOTO_BOX_HEIGHT_PERCENT,
+  },
   // Start with only Name bound by default; other fields are added explicitly via checkboxes.
   { type: 'text', id: 'name', dataField: 'name', x: 45, y: 24, fontSize: 10, content: '', fontWeight: '700' },
 ];
@@ -146,6 +166,8 @@ function toHexColorForInput(value) {
 
 /** Editor-only display scale; saved element x/y/width/height remain % of the real card size */
 const EDITOR_PREVIEW_ZOOM = 1.9;
+/** Preview mode: scale up on screen so the card is easier to see (layout % still matches saved dimensions) */
+const PREVIEW_DISPLAY_ZOOM = 1.55;
 
 const TEXT_COLOR_PRESETS = [
   { label: 'Black', value: '#111111' },
@@ -179,8 +201,8 @@ function getTextElementNominalHeightPercentForBounds(el) {
 function getElementBoxPercentForAlign(el) {
   if (el.type === 'photo') {
     return {
-      w: typeof el.width === 'number' ? el.width : 30,
-      h: typeof el.height === 'number' ? el.height : 48,
+      w: typeof el.width === 'number' ? el.width : DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
+      h: typeof el.height === 'number' ? el.height : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT,
     };
   }
   return {
@@ -191,11 +213,11 @@ function getElementBoxPercentForAlign(el) {
 
 /** Width % used for bounds (drag) — must match box width on template. */
 function getElementWidthPercentForBounds(el) {
-  if (el.type === 'photo') return typeof el.width === 'number' ? el.width : 30;
+  if (el.type === 'photo') return typeof el.width === 'number' ? el.width : DEFAULT_PHOTO_BOX_WIDTH_PERCENT;
   if (el.type === 'text') {
     return typeof el.width === 'number' && el.width > 0 ? el.width : 42;
   }
-  return 30;
+  return DEFAULT_PHOTO_BOX_WIDTH_PERCENT;
 }
 
 function getTextBoxWidthPercentForRender(el) {
@@ -280,6 +302,11 @@ function getPhysicalStageSizeStyle(dimension, dimensionUnit) {
 export default function IdCardCanvasEditor({
   templateImage,
   previewSecondaryTemplateImage = null,
+  /** When both sides exist, layout elements for the other side (shown next to the active side in Preview). */
+  previewSecondaryElements = null,
+  /** Restore selection when remounting (e.g. switching front/back in parent). */
+  initialSelectedId = null,
+  onSelectedIdChange,
   studentImage,
   initialElements,
   initialData = {},
@@ -292,6 +319,10 @@ export default function IdCardCanvasEditor({
   onDimensionUpdated,
   /** Called ~300ms after element positions/size/fonts change (e.g. persist draft layout) */
   onElementsChange,
+  /** Front/back wizard: other side’s elements — template field checkboxes use union of both sides. */
+  otherSideElements = null,
+  /** When unchecking a field that still exists on the other side, parent removes it there too. */
+  onPurgeFieldFromOppositeSide,
   onSave,
   onCancel,
   saveLabel = 'Save ID Card',
@@ -299,7 +330,7 @@ export default function IdCardCanvasEditor({
 }) {
   const canvasRef = useRef(null);
   const [elements, setElements] = useState(() => initialElements || DEFAULT_ELEMENTS());
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(() => initialSelectedId ?? null);
   const [showPreview, setShowPreview] = useState(false);
   const [dragState, setDragState] = useState(null);
   const [resizeState, setResizeState] = useState(null);
@@ -321,12 +352,35 @@ export default function IdCardCanvasEditor({
 
   const onElementsChangeRef = useRef(onElementsChange);
   onElementsChangeRef.current = onElementsChange;
+  const elementsRef = useRef(elements);
+  elementsRef.current = elements;
+
+  const onSelectedIdChangeRef = useRef(onSelectedIdChange);
+  onSelectedIdChangeRef.current = onSelectedIdChange;
+  useEffect(() => {
+    onSelectedIdChangeRef.current?.(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (!elements.some((e) => e.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [elements, selectedId]);
 
   useEffect(() => {
     if (!onElementsChangeRef.current) return;
-    const t = setTimeout(() => onElementsChangeRef.current(elements), 300);
+    const t = setTimeout(() => onElementsChangeRef.current(elementsRef.current), 300);
     return () => clearTimeout(t);
   }, [elements]);
+
+  useEffect(() => {
+    return () => {
+      if (onElementsChangeRef.current) {
+        onElementsChangeRef.current(elementsRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setDimensionLocal(null);
@@ -429,8 +483,20 @@ export default function IdCardCanvasEditor({
   }, [extraFieldDefs, otherFieldDefs]);
 
   const elementHasField = useCallback((fieldKey) => {
-    return elements.some((el) => el.type === 'text' && el.dataField === fieldKey);
+    return hasTextFieldBinding(elements, fieldKey);
   }, [elements]);
+
+  const templateFieldChecked = useCallback(
+    (fieldKey) => {
+      const here = hasTextFieldBinding(elements, fieldKey);
+      const there =
+        otherSideElements != null && Array.isArray(otherSideElements)
+          ? hasTextFieldBinding(otherSideElements, fieldKey)
+          : false;
+      return here || there;
+    },
+    [elements, otherSideElements],
+  );
 
   const nextAutoPosition = useCallback(() => {
     const textEls = elements.filter((e) => e.type === 'text');
@@ -444,7 +510,11 @@ export default function IdCardCanvasEditor({
     const label = def?.label || humanizeFieldLabel(fieldKey) || fieldKey;
     const { x, y } = nextAutoPosition();
     setElements((prev) => {
-      const existing = prev.find((el) => el.type === 'text' && el.dataField === fieldKey);
+      const existing = prev.find(
+        (el) =>
+          el.type === 'text' &&
+          (el.dataField === fieldKey || (fieldKey === 'name' && el.id === 'name'))
+      );
       if (existing) return prev;
       // ensure unique id
       const baseId = `field-${fieldKey}`;
@@ -461,14 +531,32 @@ export default function IdCardCanvasEditor({
     });
   }, [allFieldDefs, nextAutoPosition]);
 
-  const removeFieldElement = useCallback((fieldKey) => {
-    setElements((prev) => prev.filter((el) => !(el.type === 'text' && el.dataField === fieldKey)));
-    setSelectedId((cur) => {
-      const curEl = elements.find((e) => e.id === cur);
-      if (curEl?.type === 'text' && curEl.dataField === fieldKey) return null;
-      return cur;
-    });
-  }, [elements]);
+  const removeFieldElement = useCallback(
+    (fieldKey) => {
+      setElements((prev) =>
+        prev.filter((el) => {
+          if (el.type !== 'text') return true;
+          if (el.dataField === fieldKey) return false;
+          if (fieldKey === 'name' && el.id === 'name') return false;
+          return true;
+        })
+      );
+      setSelectedId((cur) => {
+        const curEl = elements.find((e) => e.id === cur);
+        if (curEl?.type === 'text' && (curEl.dataField === fieldKey || (fieldKey === 'name' && curEl.id === 'name')))
+          return null;
+        return cur;
+      });
+      const stillOnOther =
+        otherSideElements != null &&
+        Array.isArray(otherSideElements) &&
+        hasTextFieldBinding(otherSideElements, fieldKey);
+      if (stillOnOther && typeof onPurgeFieldFromOppositeSide === 'function') {
+        onPurgeFieldFromOppositeSide(fieldKey);
+      }
+    },
+    [elements, otherSideElements, onPurgeFieldFromOppositeSide],
+  );
 
   const addAllFields = useCallback(() => {
     allFieldDefs.forEach((f) => {
@@ -497,15 +585,11 @@ export default function IdCardCanvasEditor({
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    // Preview mode should match the physical card dimensions exactly (no editor zoom).
-    if (showPreview) {
-      setEditorZoomPadBottom(0);
-      return;
-    }
+    const zoom = showPreview ? PREVIEW_DISPLAY_ZOOM : EDITOR_PREVIEW_ZOOM;
     const updatePad = () => {
       const h = el.offsetHeight;
       if (!h) return;
-      setEditorZoomPadBottom(Math.ceil((EDITOR_PREVIEW_ZOOM - 1) * h));
+      setEditorZoomPadBottom(Math.ceil((zoom - 1) * h));
     };
     updatePad();
     const ro = new ResizeObserver(updatePad);
@@ -532,8 +616,18 @@ export default function IdCardCanvasEditor({
         id,
         startX: e.clientX,
         startY: e.clientY,
-        startWidth: el.type === 'text' ? getTextBoxWidthPercentForRender(el) : el.width,
-        startHeight: el.type === 'text' ? (typeof el.height === 'number' ? el.height : getTextElementNominalHeightPercentForBounds(el)) : el.height,
+        startWidth:
+          el.type === 'text' ? getTextBoxWidthPercentForRender(el) : el.type === 'photo' ? getElementWidthPercentForBounds(el) : el.width,
+        startHeight:
+          el.type === 'text'
+            ? typeof el.height === 'number'
+              ? el.height
+              : getTextElementNominalHeightPercentForBounds(el)
+            : el.type === 'photo'
+              ? typeof el.height === 'number'
+                ? el.height
+                : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT
+              : el.height,
       });
     } else {
       setDragState({
@@ -579,7 +673,7 @@ export default function IdCardCanvasEditor({
               el.type === 'photo'
                 ? typeof el.height === 'number'
                   ? el.height
-                  : 48
+                  : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT
                 : getTextElementNominalHeightPercentForBounds(el);
             return {
               ...el,
@@ -687,6 +781,10 @@ export default function IdCardCanvasEditor({
     showPreview &&
     previewSecondaryTemplateImage &&
     previewSecondaryTemplateImage !== templateImage;
+  const hasSecondaryPreviewElements =
+    hasSecondaryPreview &&
+    Array.isArray(previewSecondaryElements) &&
+    previewSecondaryElements.length > 0;
 
   const bindFieldDefs = useMemo(() => {
     const withValue = allFieldDefs.filter((f) => {
@@ -866,11 +964,13 @@ export default function IdCardCanvasEditor({
           >
             {showPreview ? (
               <div
-                style={
-                  hasSecondaryPreview
+                style={{
+                  transform: `scale(${PREVIEW_DISPLAY_ZOOM})`,
+                  transformOrigin: 'top center',
+                  ...(hasSecondaryPreview
                     ? { display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'center' }
-                    : { display: 'grid', gap: 14, justifyItems: 'center' }
-                }
+                    : { display: 'grid', gap: 14, justifyItems: 'center' }),
+                }}
               >
                 <div
                   ref={canvasRef}
@@ -922,16 +1022,35 @@ export default function IdCardCanvasEditor({
                       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
                     }}
                   >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        backgroundImage: `url(${previewSecondaryTemplateImage})`,
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                        backgroundRepeat: 'no-repeat',
-                      }}
-                    />
+                    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
+                      {hasSecondaryPreviewElements ? (
+                        <IdCardRenderer
+                          template={{ image: previewSecondaryTemplateImage, elements: previewSecondaryElements }}
+                          data={{
+                            ...initialData,
+                            studentImage: photoUrl,
+                            name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
+                            studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
+                            className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
+                            schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
+                            dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
+                            address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
+                            phone: (getFieldValue('phone') || (elements.find((e) => e.id === 'phone')?.content ?? '')),
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            backgroundImage: `url(${previewSecondaryTemplateImage})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            backgroundRepeat: 'no-repeat',
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -1406,7 +1525,7 @@ export default function IdCardCanvasEditor({
                       min={15}
                       max={Math.max(15, Math.min(100, Math.floor(100 - selectedEl.x)))}
                       value={Math.min(
-                        selectedEl.width ?? 30,
+                        selectedEl.width ?? DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
                         Math.max(15, 100 - selectedEl.x)
                       )}
                       onChange={(e) => {
@@ -1419,7 +1538,13 @@ export default function IdCardCanvasEditor({
                       }}
                     />
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
-                      {Math.round(Math.min(selectedEl.width ?? 30, Math.max(15, 100 - selectedEl.x)))}%
+                      {Math.round(
+                        Math.min(
+                          selectedEl.width ?? DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
+                          Math.max(15, 100 - selectedEl.x)
+                        )
+                      )}
+                      %
                     </span>
                     <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
                       Max {Math.max(15, Math.floor(100 - selectedEl.x))}% (template width from left edge)
@@ -1483,14 +1608,8 @@ export default function IdCardCanvasEditor({
               // Skip fields with no value (show only what exists in Excel/student data)
               if (!hasValue) return null;
               
-              // By default, only Name should appear checked for new templates.
-              // Other fields become checked only when they already have a bound element on the canvas.
-              const hasBoundElement = elementHasField(f.key);
-              const checked =
-                hasBoundElement ||
-                (f.key === 'name' &&
-                  (hasBoundElement ||
-                    elements.some((e) => e.id === 'name')));
+              // Checked if this field is on the current canvas or (front/back mode) on the other side.
+              const checked = templateFieldChecked(f.key);
               
               return (
                 <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}>

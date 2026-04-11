@@ -77,7 +77,8 @@ const CROP_FRAMES = [
   }
 ];
 
-const PX_PER_INCH_REF = 96;
+/** Pixels per inch for physical units (mm / cm / inch) ↔ export pixel size. Print / ID photo target: 300 DPI. */
+const PX_PER_INCH_REF = 300;
 
 const FRAME_SIZE_UNITS = [
   { value: 'mm', label: 'mm' },

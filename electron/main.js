@@ -16,18 +16,66 @@ const placeholderJpegBuffer = (() => {
   return canvas.toBuffer('image/jpeg', { quality: 0.8, progressive: false, chromaSubsampling: false });
 })();
 
-function getImageOutputMeta(shape, inputExt) {
-  const lowerExt = String(inputExt || '').toLowerCase();
-  if (shape !== 'rectangle') {
-    return { ext: '.png', mime: 'image/png' };
-  }
-  if (lowerExt === '.png') return { ext: '.png', mime: 'image/png' };
-  if (lowerExt === '.webp') return { ext: '.jpg', mime: 'image/jpeg' };
-  return { ext: lowerExt || '.jpg', mime: 'image/jpeg' };
+/**
+ * Batch / folder crop always saves as JPEG so file size stays predictable (PNG + level-0 was 1–2 MB).
+ * Shape masks are baked into opaque pixels; no need for PNG.
+ */
+function getCropExportMeta() {
+  return { ext: '.jpg', mime: 'image/jpeg' };
 }
 
-/** JPEG export: no chroma subsampling keeps edges/colour cleaner at a modest size cost vs default 4:2:0. */
-const CROP_JPEG_QUALITY = 0.98;
+/** Target band ~150–200 KB; hard cap 200 KB. */
+const MAX_CROP_JPEG_BYTES = 200 * 1024;
+
+/**
+ * JPEG ≤ maxBytes: binary search on quality, then optional downscale if still too large (huge pixel dimensions).
+ */
+function canvasToJpegUnderMaxBytes(canvas, maxBytes = MAX_CROP_JPEG_BYTES) {
+  const encode = (quality, c) =>
+    c.toBuffer('image/jpeg', {
+      quality: Math.min(0.98, Math.max(0.05, quality)),
+      progressive: true,
+      chromaSubsampling: true
+    });
+
+  function bestBufferUnderMax(c) {
+    let buf = encode(0.95, c);
+    if (buf.length <= maxBytes) return buf;
+    let lo = 0.05;
+    let hi = 0.95;
+    let bestUnder = null;
+    for (let i = 0; i < 28; i += 1) {
+      const mid = (lo + hi) / 2;
+      buf = encode(mid, c);
+      if (buf.length <= maxBytes) {
+        bestUnder = buf;
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    if (bestUnder) return bestUnder;
+    return encode(0.05, c);
+  }
+
+  let c = canvas;
+  let buf = bestBufferUnderMax(c);
+  if (buf.length <= maxBytes) return buf;
+
+  const MIN_EDGE = 160;
+  while (buf.length > maxBytes && Math.max(c.width, c.height) > MIN_EDGE) {
+    const factor = 0.88;
+    const w = Math.max(MIN_EDGE, Math.floor(c.width * factor));
+    const h = Math.max(MIN_EDGE, Math.floor(c.height * factor));
+    const scaled = createCanvas(w, h);
+    const ctx = scaled.getContext('2d');
+    configureHighQualityRasterContext(ctx);
+    ctx.drawImage(c, 0, 0, w, h);
+    c = scaled;
+    buf = bestBufferUnderMax(c);
+  }
+  return buf;
+}
 
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
@@ -35,11 +83,7 @@ function canvasBufferFast(canvas, mime) {
     return canvas.toBuffer('image/png', { compressionLevel: 0 });
   }
 
-  return canvas.toBuffer('image/jpeg', {
-    quality: CROP_JPEG_QUALITY,
-    progressive: false,
-    chromaSubsampling: false
-  });
+  return canvasToJpegUnderMaxBytes(canvas, MAX_CROP_JPEG_BYTES);
 }
 
 /**
@@ -332,7 +376,7 @@ ipcMain.handle('crop-images', async (event, data) => {
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
       const normalizedFileName = fileName.replace(/_cropped$/i, '');
-      const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
+      const { ext: outputExt, mime: outputMime } = getCropExportMeta();
       const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
       const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
       if (legacyOutputPath !== outputPath) {
@@ -407,7 +451,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
       const normalizedFileName = fileName.replace(/_cropped$/i, '');
-      const { ext: outputExt, mime: outputMime } = getImageOutputMeta(shape, inputExt);
+      const { ext: outputExt, mime: outputMime } = getCropExportMeta();
       const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
       const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
       if (legacyOutputPath !== outputPath) {

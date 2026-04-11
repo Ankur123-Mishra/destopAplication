@@ -76,10 +76,13 @@ function isFullApiCanvasTemplate(t) {
 /**
  * GET /schools/:id/students often puts canvas layout on response.template; each student.template
  * may only hold templateId/status. Merge so preview uses the same art + elements as class-wise APIs.
+ *
+ * student.template may still pass isFullApiCanvasTemplate with a partial elements[] while the
+ * class/school root template has the full layout from Edit template. Prefer root layout when
+ * the root is a full canvas template so preview shows every saved front element.
  */
 function mergeSchoolRootTemplateIntoStudent(student, rootTemplate) {
   const st = student?.template;
-  if (isFullApiCanvasTemplate(st)) return st;
   if (isFullApiCanvasTemplate(rootTemplate)) {
     return {
       ...rootTemplate,
@@ -87,8 +90,10 @@ function mergeSchoolRootTemplateIntoStudent(student, rootTemplate) {
       frontImage: rootTemplate.frontImage,
       backImage: rootTemplate.backImage,
       elements: rootTemplate.elements,
+      ...(rootTemplate.backElements != null ? { backElements: rootTemplate.backElements } : {}),
     };
   }
+  if (isFullApiCanvasTemplate(st)) return st;
   return st ?? null;
 }
 
@@ -108,12 +113,23 @@ function mergeExtraFieldsFromStudent(student) {
   fill("motherName", student.motherName);
   fill("guardianName", student.guardianName);
   fill("className", student.className);
+  fill("section", student.section);
   fill("rollNo", student.rollNo);
   fill("admissionNo", student.admissionNo);
   fill("uniqueCode", student.uniqueCode);
   fill("phone", student.phone ?? student.mobile);
   fill("mobile", student.mobile ?? student.phone);
+  fill("email", student.email);
   fill("dateOfBirth", student.dateOfBirth ?? student.dob ?? student.birthDate);
+  fill("gender", student.gender);
+  fill("bloodGroup", student.bloodGroup);
+  fill("house", student.house);
+  fill("marking", student.marking);
+  fill("status", student.status);
+  fill("fatherPrimaryContact", student.fatherPrimaryContact);
+  fill("motherPrimaryContact", student.motherPrimaryContact);
+  fill("photoNo", student.photoNo ?? student.studentId);
+  fill("studentName", student.studentName);
   return ex;
 }
 
@@ -1640,6 +1656,7 @@ export default function SavedIdCardsList({
           frontImage: fullPhotoUrl(apiTemplate.frontImage),
           backImage: fullPhotoUrl(apiTemplate.backImage),
           elements: apiTemplate.elements,
+          ...(apiTemplate.backElements != null ? { backElements: apiTemplate.backElements } : {}),
         }
         : null,
       studentImage: fullPhotoUrl(student.photoUrl),
@@ -2550,24 +2567,55 @@ export default function SavedIdCardsList({
 
   const renderBackOnlyForPrint = (card, useGridSize = false, extraOverlay = null) => {
     const cellStyle = useGridSize ? undefined : cardCellStyle(card);
+    const uploadedT =
+      card.uploadedTemplate ||
+      (card.templateId?.startsWith("uploaded-")
+        ? getUploadedTemplateById(card.templateId)
+        : null);
     const uploadedBack =
-      card.uploadedTemplate?.backImage ??
+      uploadedT?.backImage ??
       (card.templateId?.startsWith("uploaded-")
         ? getUploadedTemplateById(card.templateId)?.backImage
         : undefined);
+    const backEls = uploadedT?.backElements;
+    const useCanvasBack = Array.isArray(backEls) && backEls.length > 0;
+    const backData = {
+      studentImage: card.studentImage,
+      name: card.name,
+      studentId: card.studentId,
+      className: card.className,
+      schoolName: card.schoolName,
+      extraFields: card.extraFields || {},
+      ...(card.address != null &&
+        card.address !== "" && { address: card.address }),
+      ...(card.dateOfBirth && { dateOfBirth: formatDateDMY(card.dateOfBirth) }),
+      ...(card.phone && { phone: card.phone }),
+      ...(card.email && { email: card.email }),
+      ...(card.schoolLogo && { schoolLogo: card.schoolLogo }),
+      ...(card.signature && { signature: card.signature }),
+    };
     return (
       <div
         key={`back-${card._id}-${card.id}`}
         className="print-card-cell idcard-card"
         style={{ ...cellStyle, position: "relative" }}
       >
-        <IdCardBackPreview
-          schoolName={card.schoolName}
-          address={card.address}
-          templateId={card.templateId}
-          size="preview"
-          backImage={uploadedBack}
-        />
+        {useCanvasBack && uploadedBack ? (
+          <IdCardRenderer
+            templateId={card.templateId}
+            data={backData}
+            size="preview"
+            template={{ image: uploadedBack, elements: backEls }}
+          />
+        ) : (
+          <IdCardBackPreview
+            schoolName={card.schoolName}
+            address={card.address}
+            templateId={card.templateId}
+            size="preview"
+            backImage={uploadedBack}
+          />
+        )}
         {extraOverlay}
       </div>
     );
@@ -2605,18 +2653,54 @@ export default function SavedIdCardsList({
             className="print-card-cell idcard-card"
             style={{ width: "100%", height: "100%" }}
           >
-            <IdCardBackPreview
-              schoolName={card.schoolName}
-              address={card.address}
-              templateId={card.templateId}
-              size="preview"
-              backImage={
-                card.uploadedTemplate?.backImage ??
+            {(() => {
+              const uploadedT =
+                card.uploadedTemplate ||
+                (card.templateId?.startsWith("uploaded-")
+                  ? getUploadedTemplateById(card.templateId)
+                  : null);
+              const uploadedBack =
+                uploadedT?.backImage ??
                 (card.templateId?.startsWith("uploaded-")
                   ? getUploadedTemplateById(card.templateId)?.backImage
-                  : undefined)
-              }
-            />
+                  : undefined);
+              const backEls = uploadedT?.backElements;
+              const useCanvasBack =
+                Array.isArray(backEls) && backEls.length > 0 && uploadedBack;
+              const backData = {
+                studentImage: card.studentImage,
+                name: card.name,
+                studentId: card.studentId,
+                className: card.className,
+                schoolName: card.schoolName,
+                extraFields: card.extraFields || {},
+                ...(card.address != null &&
+                  card.address !== "" && { address: card.address }),
+                ...(card.dateOfBirth && {
+                  dateOfBirth: formatDateDMY(card.dateOfBirth),
+                }),
+                ...(card.phone && { phone: card.phone }),
+                ...(card.email && { email: card.email }),
+                ...(card.schoolLogo && { schoolLogo: card.schoolLogo }),
+                ...(card.signature && { signature: card.signature }),
+              };
+              return useCanvasBack ? (
+                <IdCardRenderer
+                  templateId={card.templateId}
+                  data={backData}
+                  size="preview"
+                  template={{ image: uploadedBack, elements: backEls }}
+                />
+              ) : (
+                <IdCardBackPreview
+                  schoolName={card.schoolName}
+                  address={card.address}
+                  templateId={card.templateId}
+                  size="preview"
+                  backImage={uploadedBack}
+                />
+              );
+            })()}
           </div>
         </div>
       </div>

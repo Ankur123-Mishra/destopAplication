@@ -11,7 +11,16 @@ export function getUploadedTemplates() {
   }
 }
 
-export function saveUploadedTemplate({ id = null, name, frontImage, backImage, elements }) {
+export function saveUploadedTemplate({
+  id = null,
+  name,
+  frontImage,
+  backImage,
+  elements,
+  /** Layout for back face when front/back are separate (same shape as `elements`). */
+  backElements,
+  schoolId = null,
+}) {
   const data = getUploadedTemplates();
   const template = {
     id: id ?? `uploaded-${data.nextId}`,
@@ -19,6 +28,8 @@ export function saveUploadedTemplate({ id = null, name, frontImage, backImage, e
     frontImage: frontImage || null,
     backImage: backImage || null,
     elements: elements || [],
+    ...(Array.isArray(backElements) ? { backElements } : {}),
+    ...(schoolId != null && schoolId !== '' ? { schoolId } : {}),
   };
   if (id) {
     const idx = data.templates.findIndex((t) => t.id === id);

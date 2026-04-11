@@ -206,7 +206,7 @@ function dataURLtoBlob(dataURL) {
   return new Blob([u8arr], { type: mime });
 }
 
-export async function uploadTemplate({ name, schoolId, classId, frontImage, backImage, elements }) {
+export async function uploadTemplate({ name, schoolId, classId, frontImage, backImage, elements, backElements }) {
   const form = new FormData();
   form.append("name", String(name || "Uploaded Template").trim());
   if (schoolId) form.append("schoolId", String(schoolId).trim());
@@ -217,6 +217,9 @@ export async function uploadTemplate({ name, schoolId, classId, frontImage, back
   if (frontBlob) form.append("frontImage", frontBlob, "front.png");
   if (backBlob) form.append("backImage", backBlob, "back.png");
   form.append("elements", JSON.stringify(Array.isArray(elements) ? elements : []));
+  if (backElements != null) {
+    form.append("backElements", JSON.stringify(Array.isArray(backElements) ? backElements : []));
+  }
 
   const res = await fetch(`${API_BASE_URL}/api/photographer/templates/upload`, {
     method: "POST",

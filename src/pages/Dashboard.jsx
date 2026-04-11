@@ -232,10 +232,16 @@ export default function Dashboard() {
         await deleteOfflineSchool(id);
       }
       setSchools((prev) => prev.filter((s) => s._id !== id && s.id !== id));
-      setStats((prev) => ({
-        ...prev,
-        assignedSchools: Math.max(0, (prev.assignedSchools || 0) - 1),
-      }));
+      const dash =
+        viewMode === 'online' ? await getOnlineDashboard() : await getOfflineDashboard();
+      setStats({
+        assignedSchools: dash.assignedSchools ?? 0,
+        totalStudents: dash.totalStudents ?? 0,
+        photoPending: dash.photoPending ?? 0,
+        photoUploaded: dash.photoUploaded ?? 0,
+        correctionRequired: dash.correctionsFromSchool ?? 0,
+        deliveryPending: dash.deliveryPending ?? 0,
+      });
     } catch (err) {
       setError(err?.message || 'Failed to delete school');
     } finally {
@@ -325,10 +331,6 @@ export default function Dashboard() {
                   <div
                     key={school._id || school.id}
                     className="school-item"
-                    onClick={() => navigate(`/schools/${school._id || school.id}/classes${viewMode==='online'? '?source=online':''}`)}
-                    onKeyDown={(e) => e.key === 'Enter' && navigate(`/schools/${school._id || school.id}/classes${viewMode==='online'? '?source=online':''}`)}
-                    role="button"
-                    tabIndex={0}
                   >
                     <div>
                       <strong>{school.schoolName}</strong>
@@ -445,8 +447,7 @@ export default function Dashboard() {
         .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--accent); }
         .stat-label { font-size: 0.9rem; color: var(--text-muted); text-align: center; }
         .school-list { display: flex; flex-direction: column; gap: 0; }
-        .school-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: pointer; transition: background 0.2s; }
-        .school-item:hover { background: rgba(255,255,255,0.04); }
+        .school-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: default; }
         .school-item:last-child { border-bottom: none; }
         .school-delete-btn {
           margin-left: 12px;

@@ -7,6 +7,71 @@ import {
   getTextBoxLayoutStyles,
 } from '../utils/idCardTextTypography';
 
+/** Empty string / null — try next alias (API + template dataField names differ). */
+function isMissingFieldValue(v) {
+  return v == null || v === '';
+}
+
+function getCanvasRawValue(data, key) {
+  if (!key || !data) return undefined;
+  if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
+  const ex = data.extraFields;
+  if (ex instanceof Map && ex.has(key)) return ex.get(key);
+  if (ex && typeof ex === 'object' && Object.prototype.hasOwnProperty.call(ex, key)) {
+    return ex[key];
+  }
+  return undefined;
+}
+
+/**
+ * Resolve template dataField to student data. Supports phone/mobile aliases, Map extraFields,
+ * and common API key variants so canvas preview matches the editor.
+ */
+function resolveCanvasDataField(data, fieldKey) {
+  if (!fieldKey || !data) return null;
+  const tryKeys = (keys) => {
+    for (const k of keys) {
+      const v = getCanvasRawValue(data, k);
+      if (!isMissingFieldValue(v)) return v;
+    }
+    return null;
+  };
+
+  const aliasGroups = {
+    phone: ['phone', 'mobile', 'studentMobile', 'contact', 'whatsapp'],
+    mobile: ['mobile', 'phone', 'studentMobile', 'contact', 'whatsapp'],
+    email: ['email', 'studentEmail'],
+    studentId: ['studentId', 'admissionNo', 'rollNo', 'uniqueCode', 'regNo'],
+    admissionNo: ['admissionNo', 'regNo', 'studentId'],
+    rollNo: ['rollNo', 'studentId'],
+    className: ['className', 'class'],
+    name: ['name', 'studentName'],
+    dateOfBirth: ['dateOfBirth', 'dob', 'birthDate'],
+    address: ['address', 'residentialAddress'],
+    fatherName: ['fatherName', 'fathersName'],
+    motherName: ['motherName', 'mothersName'],
+    house: ['house', 'houseName', 'transport', 'route'],
+    fatherPrimaryContact: [
+      'fatherPrimaryContact',
+      'fatherMobile',
+      'fatherPhone',
+      'fatherphone',
+      'fathermobile',
+    ],
+    motherPrimaryContact: [
+      'motherPrimaryContact',
+      'motherMobile',
+      'motherPhone',
+      'motherphone',
+    ],
+    section: ['section', 'division'],
+    schoolName: ['schoolName', 'school'],
+  };
+
+  const keys = aliasGroups[fieldKey] || [fieldKey];
+  return tryKeys(keys);
+}
+
 /**
  * Renders an ID card with given template and data.
  * data: { studentImage, name, studentId, className, schoolName, dateOfBirth, address, email, phone, academyName, schoolLogo, signature }
@@ -46,24 +111,11 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
               </div>
             );
           }
-          const resolveDataField = (fieldKey) => {
-            if (!fieldKey) return null;
-            const direct = data?.[fieldKey];
-            if (direct != null) return direct;
-            const extras = data?.extraFields;
-            if (
-              extras &&
-              typeof extras === 'object' &&
-              Object.prototype.hasOwnProperty.call(extras, fieldKey)
-            ) {
-              return extras[fieldKey];
-            }
-            return null;
-          };
-
-          const resolved = el.dataField ? resolveDataField(el.dataField) : null;
+          const resolved = el.dataField ? resolveCanvasDataField(data, el.dataField) : null;
           const textContent =
-            resolved != null ? String(resolved) : (el.content ?? '');
+            resolved != null && !isMissingFieldValue(resolved)
+              ? String(resolved)
+              : (el.content ?? '');
           const wrapMultiline = el.dataField === 'address';
           const textBoxW = typeof el.width === 'number' && el.width > 0 ? el.width : 42;
           const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
