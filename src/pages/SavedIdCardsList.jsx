@@ -22,6 +22,28 @@ import { flushSync } from "react-dom";
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
+
+/** Preview/print paper presets (dimensions match product UI labels; inches × 25.4 → mm). */
+const INCH_TO_MM = 25.4;
+const PAGE_PRESET_MM = {
+  c1: { w: 8 * INCH_TO_MM, h: 12 * INCH_TO_MM },
+  c2: { w: 12 * INCH_TO_MM, h: 18 * INCH_TO_MM },
+  c3: { w: 4 * INCH_TO_MM, h: 6 * INCH_TO_MM },
+  a3: { w: 11.7 * INCH_TO_MM, h: 16.5 * INCH_TO_MM },
+  a4: { w: A4_WIDTH_MM, h: A4_HEIGHT_MM },
+  a5: { w: 5.8 * INCH_TO_MM, h: 8.3 * INCH_TO_MM },
+  p1: { w: 8.5 * INCH_TO_MM, h: 14 * INCH_TO_MM },
+};
+
+const PAGE_PRESET_DISPLAY_NAME = {
+  c1: "C1",
+  c2: "C2",
+  c3: "C3",
+  a3: "A3",
+  a4: "A4",
+  a5: "A5",
+  p1: "P1",
+};
 const PRINT_PAGE_MARGIN_MM = 4;
 const PRINT_GAP_MM = 4;
 const DEFAULT_CARD_WIDTH_MM = 90;
@@ -71,6 +93,61 @@ function isFullApiCanvasTemplate(t) {
     Array.isArray(t.elements) &&
     t.elements.length > 0,
   );
+}
+
+/** Same localStorage key as ClassIdCardsWizard — "saved ID cards" flag per school. */
+const SAVED_ID_CARDS_FLAG_PREFIX = "classIdCardsWizard.savedIdCardsSchool:";
+
+function readSavedIdCardsFlagForSchool(schoolId) {
+  if (!schoolId || typeof localStorage === "undefined") return false;
+  try {
+    return localStorage.getItem(`${SAVED_ID_CARDS_FLAG_PREFIX}${schoolId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rawStudentsIndicateSavedIdCards(rawStudents) {
+  if (!Array.isArray(rawStudents)) return false;
+  return rawStudents.some((s) => {
+    if (!s || typeof s !== "object") return false;
+    if (s.hasTemplate === true) return true;
+    const t = s.template;
+    return isFullApiCanvasTemplate(t);
+  });
+}
+
+function computeSchoolHasSavedIdCards(schoolId, rawStudents) {
+  return readSavedIdCardsFlagForSchool(schoolId) || rawStudentsIndicateSavedIdCards(rawStudents);
+}
+
+/**
+ * Same logic as ClassIdCardsWizard pickSchoolLevelTemplate — school-level uploaded layout for Edit template.
+ */
+function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, isOnlineMode) {
+  const raw = studentsRes?.students ?? [];
+  let schoolDoc = null;
+  const first = raw[0];
+  if (
+    first &&
+    typeof first.schoolId === "object" &&
+    first.schoolId != null &&
+    !Array.isArray(first.schoolId)
+  ) {
+    schoolDoc = first.schoolId;
+  } else if (first && typeof first.school === "object" && first.school != null) {
+    schoolDoc = first.school;
+  }
+  if (!schoolDoc && Array.isArray(schoolsList) && schoolId) {
+    const s = schoolsList.find((x) => x._id === schoolId);
+    if (s) schoolDoc = s;
+  }
+
+  if (isOnlineMode && isFullApiCanvasTemplate(studentsRes?.template)) {
+    return studentsRes.template;
+  }
+
+  return offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
 }
 
 /**
@@ -192,8 +269,9 @@ function studentHasRenderableSavedCard(s, schoolListResponse = null) {
     return false;
   }
 
-  if (s.hasTemplate === true && rootOk) return true;
-  if (t && typeof t === "object" && t.templateId && rootOk) return true;
+  // School/class API often omits per-student flags when photo is missing (hasTemplate false),
+  // but the shared root template still applies — preview with an empty photo slot.
+  if (rootOk) return true;
   return false;
 }
 
@@ -281,6 +359,18 @@ const DEFAULT_PREVIEW_PAGE_BG = "#ffffff";
 /** Preview download: high-res capture + max JPEG quality (per-card, page ZIP, PDF raster). */
 const PREVIEW_EXPORT_HTML2CANVAS_SCALE = 6;
 const PREVIEW_EXPORT_JPEG_QUALITY = 1;
+/** Bulk ZIP / many cards: still sharp, faster `toDataURL` than 1.0. */
+const PREVIEW_EXPORT_JPEG_QUALITY_BULK = 0.94;
+
+/** Use faster html2canvas settings + parallel capture when preview has many pages/cards (not only all-school). */
+const FAST_PREVIEW_EXPORT_THRESHOLD_PAGES = 6;
+const FAST_PREVIEW_EXPORT_THRESHOLD_CARDS = 15;
+/** Parallel capture finishes many cards per tick; throttle progress UI so the counter moves ~this many steps per second. */
+const FAST_EXPORT_PROGRESS_UPDATES_PER_SEC = 3;
+/** Full-page JPEG/PDF raster: above this, use lower scale + higher parallelism (full A4 at scale 4 is extremely slow). */
+const MEGA_BULK_PAGE_THRESHOLD = 35;
+/** Slightly lower quality for huge page-only exports — much faster encode, still fine for print preview. */
+const PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA = 0.88;
 
 /**
  * Scales try highest first; primary follows devicePixelRatio so Retina exports stay sharp.
@@ -288,13 +378,22 @@ const PREVIEW_EXPORT_JPEG_QUALITY = 1;
  */
 function getHtml2CanvasExportScaleAttempts(options = {}) {
   const bulk = Boolean(options.bulk);
+  const megaBulkPage = Boolean(options.megaBulkPage);
   const dpr =
     typeof window !== "undefined" && Number.isFinite(window.devicePixelRatio)
       ? window.devicePixelRatio
       : 1;
+  /* Entire preview pages (A4 etc.): scale 3–4 multiplies pixels massively; keep 1–2 for speed. */
+  if (bulk && megaBulkPage) {
+    const primary = Math.min(2, Math.max(1, Math.round(dpr)));
+    return [...new Set([primary, 2, 1])]
+      .filter((n) => n > 0)
+      .sort((a, b) => b - a);
+  }
   if (bulk) {
-    const primary = Math.min(4, Math.max(2, Math.round(2 * dpr)));
-    return [...new Set([primary, 3, 2, 1])]
+    /* Cap at 3 (was 4): noticeably fewer pixels per capture with little visible loss at ID size. */
+    const primary = Math.min(3, Math.max(2, Math.round(1.75 * dpr)));
+    return [...new Set([primary, 2, 1])]
       .filter((n) => n > 0)
       .sort((a, b) => b - a);
   }
@@ -409,6 +508,51 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Coalesces rapid progress callbacks (e.g. parallel html2canvas) to at most one UI update per interval,
+ * always keeping the latest `{ current, total, label }`. Call `flush()` when a phase ends so the bar catches up.
+ */
+function createProgressThrottle(intervalMs, emitFn) {
+  let pending = null;
+  let lastEmit = 0;
+  let timeoutId = null;
+  const flushPending = () => {
+    timeoutId = null;
+    if (pending !== null) {
+      emitFn(pending);
+      pending = null;
+      lastEmit = Date.now();
+    }
+  };
+  return {
+    emit(p) {
+      pending = p;
+      const now = Date.now();
+      const elapsed = now - lastEmit;
+      if (elapsed >= intervalMs) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        flushPending();
+      } else if (!timeoutId) {
+        timeoutId = setTimeout(flushPending, intervalMs - elapsed);
+      }
+    },
+    flush() {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (pending !== null) {
+        emitFn(pending);
+        pending = null;
+        lastEmit = Date.now();
+      }
+    },
+  };
+}
+
 class ExportCancelledError extends Error {
   constructor() {
     super("Export cancelled");
@@ -430,6 +574,32 @@ async function abortableDelay(ms, shouldAbort, chunkMs = 120) {
     await delay(step);
     left -= step;
   }
+}
+
+/**
+ * Like batched `Promise.all`, but keeps `concurrency` tasks in flight: the next item
+ * starts as soon as any slot finishes (avoids long gaps waiting on the slowest in a batch).
+ */
+async function mapWithConcurrency(items, concurrency, mapper, shouldAbort) {
+  const n = items?.length ?? 0;
+  if (!n) return [];
+  const limit = Math.max(1, Math.min(concurrency, n));
+  const results = new Array(n);
+  let next = 0;
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+
+  async function worker() {
+    while (true) {
+      if (abortFn()) throw new ExportCancelledError();
+      const i = next;
+      next += 1;
+      if (i >= n) return;
+      results[i] = await mapper(items[i], i);
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
 }
 
 /**
@@ -708,6 +878,8 @@ async function html2canvasForExport(
   captureOpts = {},
 ) {
   const bulk = Boolean(captureOpts.bulk);
+  const megaBulkPage = Boolean(captureOpts.megaBulkPage);
+  const scaleOpts = { bulk, megaBulkPage };
   const fabricSource = element?.querySelector?.(
     ".fabric-idcard-canvas-wrap canvas",
   );
@@ -718,7 +890,7 @@ async function html2canvasForExport(
     typeof fabricSource.height === "number" &&
     fabricSource.height > 0
   ) {
-    const scales = getHtml2CanvasExportScaleAttempts({ bulk });
+    const scales = getHtml2CanvasExportScaleAttempts(scaleOpts);
     let lastFabricErr;
     for (const scale of scales) {
       try {
@@ -742,7 +914,7 @@ async function html2canvasForExport(
   }
 
   const base = makeHtml2CanvasOpts(pageBackgroundColor);
-  const scales = getHtml2CanvasExportScaleAttempts({ bulk });
+  const scales = getHtml2CanvasExportScaleAttempts(scaleOpts);
   let lastErr;
   for (const scale of scales) {
     try {
@@ -763,13 +935,21 @@ async function html2canvasWithFallback(
   element,
   pageBackgroundColor,
   captureOpts = {},
+  outputFormat = "jpeg",
 ) {
   const canvas = await html2canvasForExport(
     element,
     pageBackgroundColor,
     captureOpts,
   );
-  return canvas.toDataURL("image/jpeg", PREVIEW_EXPORT_JPEG_QUALITY);
+  if (outputFormat === "png") {
+    return canvas.toDataURL("image/png");
+  }
+  const q =
+    typeof captureOpts.jpegQuality === "number"
+      ? captureOpts.jpegQuality
+      : PREVIEW_EXPORT_JPEG_QUALITY;
+  return canvas.toDataURL("image/jpeg", q);
 }
 
 /**
@@ -777,6 +957,208 @@ async function html2canvasWithFallback(
  * onProgress: ({ label, current, total }) => void.
  */
 async function buildPreviewFrontAndBackJpegFiles(
+  wrap,
+  cards,
+  pageBackgroundColor,
+  onProgress,
+  cardsPerPage,
+  captureOpts = {},
+) {
+  const bulk = Boolean(captureOpts.bulk);
+  const shouldAbort =
+    typeof captureOpts.shouldAbort === "function"
+      ? captureOpts.shouldAbort
+      : () => false;
+  const betweenMs = bulk ? 0 : 80;
+  const retryBaseMs = bulk ? 100 : 300;
+  const captureFlags = {
+    bulk,
+    ...(bulk ? { jpegQuality: PREVIEW_EXPORT_JPEG_QUALITY_BULK } : {}),
+  };
+
+  const frontEls = getFrontCardCellElements(wrap);
+  const backEls = getBackCardCellElements(wrap);
+  const expectedBackCells = countExpectedBackDomCells(cards, cardsPerPage);
+  if (!cards.length || frontEls.length !== cards.length) {
+    throw new Error(
+      `Preview not ready (front ${frontEls.length}, students ${cards.length}). Wait and try again.`,
+    );
+  }
+  if (backEls.length !== expectedBackCells) {
+    throw new Error(
+      `Preview not ready (front ${frontEls.length}, back ${backEls.length}, expected back slots ${expectedBackCells}). Wait and try again.`,
+    );
+  }
+  const used = new Set();
+  const bases = cards.map((card, i) => jpegBaseNameForCard(card, i, used));
+  const files = [];
+  const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
+  const totalSteps = cards.length + backExportCount;
+  /** Parallel html2canvas for large exports; cap concurrency to limit memory spikes.
+   * Non-bulk: 2 in flight so progress (~1 card/s serial) moves roughly twice as fast. */
+  const captureConcurrency = bulk
+    ? cards.length > 200
+      ? 8
+      : cards.length > 60
+        ? 6
+        : 5
+    : 2;
+
+  async function captureCell(el, label, index1) {
+    let dataUrl;
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (shouldAbort()) throw new ExportCancelledError();
+      try {
+        dataUrl = await html2canvasWithFallback(
+          el,
+          pageBackgroundColor,
+          captureFlags,
+        );
+        lastErr = undefined;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (shouldAbort()) throw new ExportCancelledError();
+        await delay(retryBaseMs * (attempt + 1));
+      }
+    }
+    if (!dataUrl) {
+      throw lastErr || new Error(`Failed to capture ${label} card ${index1}`);
+    }
+    return dataUrl;
+  }
+  let step = 0;
+  const frontDataUrls = await mapWithConcurrency(
+    frontEls,
+    captureConcurrency,
+    async (el, i) => {
+      const dataUrl = await captureCell(el, "front", i + 1);
+      step += 1;
+      onProgress?.({
+        label: "Capturing JPEGs (front)…",
+        current: step,
+        total: totalSteps,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let i = 0; i < cards.length; i++) {
+    files.push({ filename: `${bases[i]}_front.jpg`, dataUrl: frontDataUrls[i] });
+  }
+  if (shouldAbort()) throw new ExportCancelledError();
+  const backTasks = [];
+  for (let i = 0; i < cards.length; i++) {
+    if (!cardExportsBackJpeg(cards[i])) continue;
+    const domIdx = backDomIndexForCard(cards, cardsPerPage, i);
+    if (domIdx < 0 || !backEls[domIdx]) {
+      throw new Error(
+        `Back preview missing for card ${i + 1}. Wait and try again.`,
+      );
+    }
+    backTasks.push({ i, domIdx });
+  }
+  const backDataUrls = await mapWithConcurrency(
+    backTasks,
+    captureConcurrency,
+    async ({ i, domIdx }) => {
+      const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
+      step += 1;
+      onProgress?.({
+        label: "Capturing JPEGs (back)…",
+        current: step,
+        total: totalSteps,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let t = 0; t < backTasks.length; t++) {
+    const { i } = backTasks[t];
+    files.push({ filename: `${bases[i]}_back.jpg`, dataUrl: backDataUrls[t] });
+  }
+  if (shouldAbort()) throw new ExportCancelledError();
+  return files;
+}
+
+/**
+ * Builds one JPEG per preview page (same page size as the preview),
+ * e.g. page-001.jpg, page-002.jpg... This avoids the "thin width" issue
+ * of stitching all pages into a single long image.
+ */
+async function buildPreviewPagesJpegFiles(
+  pageNodes,
+  pageBackgroundColor,
+  onProgress,
+  captureOpts = {},
+) {
+  const bulk = Boolean(captureOpts.bulk);
+  const shouldAbort =
+    typeof captureOpts.shouldAbort === "function"
+      ? captureOpts.shouldAbort
+      : () => false;
+  const betweenMs = bulk ? 0 : 120;
+  const nodes = Array.from(pageNodes || []);
+  const megaBulkPage =
+    bulk && nodes.length >= MEGA_BULK_PAGE_THRESHOLD;
+  const captureFlags = {
+    bulk,
+    megaBulkPage,
+    ...(megaBulkPage
+      ? { jpegQuality: PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA }
+      : bulk
+        ? { jpegQuality: PREVIEW_EXPORT_JPEG_QUALITY_BULK }
+        : {}),
+  };
+  const n = nodes.length;
+  const pageConcurrency = !bulk
+    ? 2
+    : n > 150
+      ? 7
+      : n > 80
+        ? 6
+        : n > 40
+          ? 5
+          : 4;
+  if (nodes.length === 0) return [];
+  const files = [];
+  let pagesDone = 0;
+  const pageDataUrls = await mapWithConcurrency(
+    nodes,
+    pageConcurrency,
+    async (node) => {
+      if (shouldAbort()) throw new ExportCancelledError();
+      const dataUrl = await html2canvasWithFallback(
+        node,
+        pageBackgroundColor,
+        captureFlags,
+      );
+      pagesDone += 1;
+      onProgress?.({
+        label: "Capturing JPEG pages…",
+        current: pagesDone,
+        total: nodes.length,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let i = 0; i < nodes.length; i++) {
+    const idx = String(i + 1).padStart(3, "0");
+    files.push({ filename: `page-${idx}.jpg`, dataUrl: pageDataUrls[i] });
+  }
+  if (shouldAbort()) throw new ExportCancelledError();
+  return files;
+}
+
+/**
+ * PNG parity with JPEG export: front + optional back PNG per student.
+ */
+async function buildPreviewFrontAndBackPngFiles(
   wrap,
   cards,
   pageBackgroundColor,
@@ -811,8 +1193,13 @@ async function buildPreviewFrontAndBackJpegFiles(
   const files = [];
   const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
   const totalSteps = cards.length + backExportCount;
-  /** Parallel html2canvas for large school exports; keep low to limit memory spikes. */
-  const captureConcurrency = bulk ? 4 : 1;
+  const captureConcurrency = bulk
+    ? cards.length > 200
+      ? 8
+      : cards.length > 60
+        ? 6
+        : 5
+    : 2;
 
   async function captureCell(el, label, index1) {
     let dataUrl;
@@ -824,6 +1211,7 @@ async function buildPreviewFrontAndBackJpegFiles(
           el,
           pageBackgroundColor,
           captureFlags,
+          "png",
         );
         lastErr = undefined;
         break;
@@ -838,74 +1226,63 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     return dataUrl;
   }
+
   let step = 0;
-  for (let start = 0; start < cards.length; start += captureConcurrency) {
-    if (shouldAbort()) throw new ExportCancelledError();
-    const end = Math.min(start + captureConcurrency, cards.length);
-    const dataUrls = await Promise.all(
-      Array.from({ length: end - start }, (_, k) => {
-        const i = start + k;
-        return captureCell(frontEls[i], "front", i + 1).then((dataUrl) => {
-          step += 1;
-          onProgress?.({
-            label: "Capturing JPEGs (front)…",
-            current: step,
-            total: totalSteps,
-          });
-          return dataUrl;
-        });
-      }),
-    );
-    for (let k = 0; k < dataUrls.length; k++) {
-      const i = start + k;
-      files.push({ filename: `${bases[i]}_front.jpg`, dataUrl: dataUrls[k] });
-    }
-    if (shouldAbort()) throw new ExportCancelledError();
-    if (betweenMs > 0) await delay(betweenMs);
+  const frontDataUrls = await mapWithConcurrency(
+    frontEls,
+    captureConcurrency,
+    async (el, i) => {
+      const dataUrl = await captureCell(el, "front", i + 1);
+      step += 1;
+      onProgress?.({
+        label: "Capturing PNGs (front)…",
+        current: step,
+        total: totalSteps,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let i = 0; i < cards.length; i++) {
+    files.push({ filename: `${bases[i]}_front.png`, dataUrl: frontDataUrls[i] });
   }
+  if (shouldAbort()) throw new ExportCancelledError();
+
   const backTasks = [];
   for (let i = 0; i < cards.length; i++) {
     if (!cardExportsBackJpeg(cards[i])) continue;
     const domIdx = backDomIndexForCard(cards, cardsPerPage, i);
     if (domIdx < 0 || !backEls[domIdx]) {
-      throw new Error(
-        `Back preview missing for card ${i + 1}. Wait and try again.`,
-      );
+      throw new Error(`Back preview missing for card ${i + 1}. Wait and try again.`);
     }
     backTasks.push({ i, domIdx });
   }
-  for (let start = 0; start < backTasks.length; start += captureConcurrency) {
-    if (shouldAbort()) throw new ExportCancelledError();
-    const chunk = backTasks.slice(start, start + captureConcurrency);
-    const dataUrls = await Promise.all(
-      chunk.map(({ i, domIdx }) =>
-        captureCell(backEls[domIdx], "back", i + 1).then((dataUrl) => {
-          step += 1;
-          onProgress?.({
-            label: "Capturing JPEGs (back)…",
-            current: step,
-            total: totalSteps,
-          });
-          return dataUrl;
-        }),
-      ),
-    );
-    for (let k = 0; k < chunk.length; k++) {
-      const { i } = chunk[k];
-      files.push({ filename: `${bases[i]}_back.jpg`, dataUrl: dataUrls[k] });
-    }
-    if (shouldAbort()) throw new ExportCancelledError();
-    if (betweenMs > 0) await delay(betweenMs);
+  const backDataUrls = await mapWithConcurrency(
+    backTasks,
+    captureConcurrency,
+    async ({ i, domIdx }) => {
+      const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
+      step += 1;
+      onProgress?.({
+        label: "Capturing PNGs (back)…",
+        current: step,
+        total: totalSteps,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let t = 0; t < backTasks.length; t++) {
+    const { i } = backTasks[t];
+    files.push({ filename: `${bases[i]}_back.png`, dataUrl: backDataUrls[t] });
   }
+  if (shouldAbort()) throw new ExportCancelledError();
   return files;
 }
 
-/**
- * Builds one JPEG per preview page (same page size as the preview),
- * e.g. page-001.jpg, page-002.jpg... This avoids the "thin width" issue
- * of stitching all pages into a single long image.
- */
-async function buildPreviewPagesJpegFiles(
+async function buildPreviewPagesPngFiles(
   pageNodes,
   pageBackgroundColor,
   onProgress,
@@ -916,40 +1293,51 @@ async function buildPreviewPagesJpegFiles(
     typeof captureOpts.shouldAbort === "function"
       ? captureOpts.shouldAbort
       : () => false;
-  const betweenMs = bulk ? 16 : 120;
-  const captureFlags = { bulk };
-  const pageConcurrency = bulk ? 2 : 1;
+  const betweenMs = bulk ? 0 : 120;
   const nodes = Array.from(pageNodes || []);
+  const megaBulkPage =
+    bulk && nodes.length >= MEGA_BULK_PAGE_THRESHOLD;
+  const captureFlags = { bulk, megaBulkPage };
+  const n = nodes.length;
+  const pageConcurrency = !bulk
+    ? 2
+    : n > 150
+      ? 7
+      : n > 80
+        ? 6
+        : n > 40
+          ? 5
+          : 4;
   if (nodes.length === 0) return [];
   const files = [];
   let pagesDone = 0;
-  for (let start = 0; start < nodes.length; start += pageConcurrency) {
-    if (shouldAbort()) throw new ExportCancelledError();
-    const end = Math.min(start + pageConcurrency, nodes.length);
-    const slice = nodes.slice(start, end);
-    const dataUrls = await Promise.all(
-      slice.map((node) =>
-        html2canvasWithFallback(node, pageBackgroundColor, captureFlags).then(
-          (dataUrl) => {
-            pagesDone += 1;
-            onProgress?.({
-              label: "Capturing JPEG pages…",
-              current: pagesDone,
-              total: nodes.length,
-            });
-            return dataUrl;
-          },
-        ),
-      ),
-    );
-    for (let k = 0; k < dataUrls.length; k++) {
-      const i = start + k;
-      const idx = String(i + 1).padStart(3, "0");
-      files.push({ filename: `page-${idx}.jpg`, dataUrl: dataUrls[k] });
-    }
-    if (shouldAbort()) throw new ExportCancelledError();
-    if (betweenMs > 0) await delay(betweenMs);
+  const pageDataUrls = await mapWithConcurrency(
+    nodes,
+    pageConcurrency,
+    async (node) => {
+      if (shouldAbort()) throw new ExportCancelledError();
+      const dataUrl = await html2canvasWithFallback(
+        node,
+        pageBackgroundColor,
+        captureFlags,
+        "png",
+      );
+      pagesDone += 1;
+      onProgress?.({
+        label: "Capturing PNG pages…",
+        current: pagesDone,
+        total: nodes.length,
+      });
+      if (betweenMs > 0) await delay(betweenMs);
+      return dataUrl;
+    },
+    shouldAbort,
+  );
+  for (let i = 0; i < nodes.length; i++) {
+    const idx = String(i + 1).padStart(3, "0");
+    files.push({ filename: `page-${idx}.png`, dataUrl: pageDataUrls[i] });
   }
+  if (shouldAbort()) throw new ExportCancelledError();
   return files;
 }
 
@@ -993,12 +1381,17 @@ async function downloadJpegsAsZipFolder(
   if (abortFn()) throw new ExportCancelledError();
   // JPEGs are already compressed; DEFLATE on hundreds of files is very slow for little gain.
   const useStore = files.length >= 20;
-  const blob = await zip.generateAsync({
-    type: "blob",
-    ...(useStore
-      ? { compression: "STORE" }
-      : { compression: "DEFLATE", compressionOptions: { level: 6 } }),
-  });
+  const blob = await zip.generateAsync(
+    {
+      type: "blob",
+      ...(useStore
+        ? { compression: "STORE" }
+        : { compression: "DEFLATE", compressionOptions: { level: 6 } }),
+    },
+    () => {
+      if (abortFn()) throw new ExportCancelledError();
+    },
+  );
   const a = document.createElement("a");
   const url = URL.createObjectURL(blob);
   a.href = url;
@@ -1140,6 +1533,170 @@ async function saveJpegExportToFolder(
   return { fallbackDownloads: true };
 }
 
+async function downloadPngsAsZipFolder(
+  safeSub,
+  files,
+  onProgress,
+  shouldAbort = null,
+) {
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const root = zip.folder(safeSub);
+  if (!root) throw new Error("Could not build ZIP.");
+  for (let i = 0; i < files.length; i++) {
+    if (abortFn()) throw new ExportCancelledError();
+    const f = files[i];
+    onProgress?.({
+      label: "Packing PNGs into ZIP…",
+      current: i + 1,
+      total: files.length,
+    });
+    const safeName = String(f.filename || `card-${i + 1}.png`).replace(
+      /[<>:"/\\|?*\x00-\x1f]/g,
+      "_",
+    );
+    const s = String(f.dataUrl || "");
+    const comma = s.indexOf(",");
+    const base64 = comma >= 0 ? s.slice(comma + 1) : s;
+    root.file(safeName, base64, { base64: true });
+  }
+  onProgress?.({
+    label: "Saving ZIP file…",
+    current: files.length,
+    total: files.length,
+  });
+  if (abortFn()) throw new ExportCancelledError();
+  const useStore = files.length >= 20;
+  const blob = await zip.generateAsync(
+    {
+      type: "blob",
+      ...(useStore
+        ? { compression: "STORE" }
+        : { compression: "DEFLATE", compressionOptions: { level: 6 } }),
+    },
+    () => {
+      if (abortFn()) throw new ExportCancelledError();
+    },
+  );
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = `${safeSub}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function savePngExportToFolder(
+  subfolderName,
+  files,
+  onProgress,
+  shouldAbort = null,
+) {
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+  const safeSub =
+    String(subfolderName)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim()
+      .slice(0, 120) || "id-cards-png";
+  if (typeof window !== "undefined" && window.electron?.selectOutputFolder) {
+    const el = window.electron;
+    onProgress?.({ label: "Choose folder to save PNGs…", current: 0, total: 1 });
+    if (abortFn()) throw new ExportCancelledError();
+    const pick = await el.selectOutputFolder();
+    if (!pick.success) return { cancelled: true };
+    if (abortFn()) throw new ExportCancelledError();
+
+    const runBatchSave = async () => {
+      if (!el.savePngExportFolder) {
+        throw new Error(
+          "PNG save is not available. Fully quit the app and start it again so Electron loads the latest code.",
+        );
+      }
+      if (abortFn()) throw new ExportCancelledError();
+      onProgress?.({
+        label: "Writing PNG files…",
+        current: 0,
+        total: files.length,
+      });
+      const r = await el.savePngExportFolder({
+        parentFolderPath: pick.folderPath,
+        subfolderName: safeSub,
+        files,
+      });
+      if (!r.success) {
+        throw new Error(r.error || "Could not save PNG files.");
+      }
+      onProgress?.({
+        label: "Writing PNG files…",
+        current: files.length,
+        total: files.length,
+      });
+      if (el.openFolder) await el.openFolder(r.folderPath);
+      return { folderPath: r.folderPath };
+    };
+
+    if (el.ensurePngExportDir && el.writePngFile) {
+      try {
+        const mkdirRes = await el.ensurePngExportDir({
+          parentFolderPath: pick.folderPath,
+          subfolderName: safeSub,
+        });
+        if (!mkdirRes.success) {
+          throw new Error(
+            mkdirRes.error || "Could not create folder for PNG export.",
+          );
+        }
+        const dir = mkdirRes.folderPath;
+        for (let i = 0; i < files.length; i++) {
+          if (abortFn()) throw new ExportCancelledError();
+          onProgress?.({
+            label: "Writing PNG files…",
+            current: i + 1,
+            total: files.length,
+          });
+          const wr = await el.writePngFile({
+            directoryPath: dir,
+            filename: files[i].filename,
+            dataUrl: files[i].dataUrl,
+          });
+          if (!wr.success) {
+            throw new Error(
+              wr.error || `Failed to write ${files[i].filename}`,
+            );
+          }
+        }
+        if (el.openFolder) await el.openFolder(dir);
+        return { folderPath: dir };
+      } catch (e) {
+        const msg = String(e?.message || e);
+        const ipcNotReady =
+          /no handler registered|not registered for ['"]ensure-png|ERR_UNKNOWN/i.test(
+            msg,
+          );
+        if (ipcNotReady && el.savePngExportFolder) {
+          console.warn(
+            "[PNG export] Per-file save IPC unavailable (fully quit & reopen the app to load main process). Using batch save.",
+            e,
+          );
+          return runBatchSave();
+        }
+        throw e;
+      }
+    }
+
+    return runBatchSave();
+  }
+
+  await downloadPngsAsZipFolder(safeSub, files, onProgress, shouldAbort);
+  window.alert(
+    `Downloaded "${safeSub}.zip". Extract it to get a folder with all ${files.length} PNG file(s).`,
+  );
+  return { fallbackDownloads: true };
+}
+
 /** Captures preview page DOM nodes to JPG/PNG (one file per page) or a single multi-page PDF. */
 async function exportPreviewPagesAsFiles(
   pageElements,
@@ -1151,10 +1708,35 @@ async function exportPreviewPagesAsFiles(
   pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
   onProgress = null,
   shouldAbort = null,
+  /** Same predicate as JPEG `useFastBulkCapture`: many cards / pages / all-school → faster raster + no per-file download delay. */
+  fastBulkCapture = false,
 ) {
   if (!pageElements?.length) return;
   const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
-  const emitProgress = typeof onProgress === "function" ? onProgress : () => { };
+  const rawEmit = typeof onProgress === "function" ? onProgress : () => {};
+  const emitProgress = (p) => {
+    if (abortFn()) return;
+    rawEmit(p);
+  };
+  const pageCount = pageElements.length;
+  const bulk =
+    Boolean(fastBulkCapture) ||
+    pageCount >= FAST_PREVIEW_EXPORT_THRESHOLD_PAGES;
+  const megaBulkPage = bulk && pageCount >= MEGA_BULK_PAGE_THRESHOLD;
+  const captureOpts = { bulk, megaBulkPage };
+  const pageRasterJpegQ = megaBulkPage
+    ? PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA
+    : PREVIEW_EXPORT_JPEG_QUALITY;
+  /** Match buildPreviewPagesJpegFiles: more parallel work when there are many full pages. */
+  const rasterCaptureConcurrency = !bulk
+    ? 2
+    : pageCount > 150
+      ? 7
+      : pageCount > 80
+        ? 6
+        : pageCount > 40
+          ? 5
+          : 4;
 
   if (format === "pdf") {
     const pdf = new jsPDF({
@@ -1162,18 +1744,41 @@ async function exportPreviewPagesAsFiles(
       format: [pageWidthMm, pageHeightMm],
       orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
     });
-    for (let i = 0; i < pageElements.length; i++) {
+    let pagesCaptured = 0;
+    const canvases = await mapWithConcurrency(
+      pageElements,
+      rasterCaptureConcurrency,
+      async (element, i) => {
+        const canvas = await html2canvasForExport(
+          element,
+          pageBackgroundColor,
+          captureOpts,
+        );
+        if (abortFn()) throw new ExportCancelledError();
+        pagesCaptured += 1;
+        emitProgress({
+          label: "Creating PDF…",
+          current: pagesCaptured,
+          total: pageCount,
+        });
+        return canvas;
+      },
+      abortFn,
+    );
+    for (let i = 0; i < pageCount; i++) {
       if (abortFn()) throw new ExportCancelledError();
-      const canvas = await html2canvasForExport(
-        pageElements[i],
-        pageBackgroundColor,
-      );
-      const imgData = canvas.toDataURL(
-        "image/jpeg",
-        PREVIEW_EXPORT_JPEG_QUALITY,
-      );
+      const canvas = canvases[i];
       if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], pageHeightMm >= pageWidthMm ? "p" : "l");
-      pdf.addImage(imgData, "JPEG", 0, 0, pageWidthMm, pageHeightMm);
+      pdf.addImage(
+        canvas,
+        "JPEG",
+        0,
+        0,
+        pageWidthMm,
+        pageHeightMm,
+        undefined,
+        "FAST",
+      );
     }
     const safeSub =
       String(subfolderName)
@@ -1192,18 +1797,15 @@ async function exportPreviewPagesAsFiles(
     ) {
       emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
       const pick = await el.selectOutputFolder();
+      if (abortFn()) throw new ExportCancelledError();
       if (!pick?.success || !pick?.folderPath) return;
       emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
       const pdfBytes = pdf.output("arraybuffer");
-      const bytes = new Uint8Array(pdfBytes);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
       const result = await el.savePdfExportFile({
         parentFolderPath: pick.folderPath,
         subfolderName: safeSub,
         filename: `${safeSub}.pdf`,
-        dataBase64: base64,
+        dataBytes: new Uint8Array(pdfBytes),
       });
       if (!result?.success) {
         throw new Error(result?.error || "Could not save PDF file.");
@@ -1217,21 +1819,86 @@ async function exportPreviewPagesAsFiles(
   }
 
   const ext = format === "png" ? "png" : "jpg";
-  for (let i = 0; i < pageElements.length; i++) {
+  const betweenDownloadsMs = bulk ? 0 : 300;
+  let pagesCaptured = 0;
+  const canvases = await mapWithConcurrency(
+    pageElements,
+    rasterCaptureConcurrency,
+    async (element, i) => {
+      const canvas = await html2canvasForExport(
+        element,
+        pageBackgroundColor,
+        captureOpts,
+      );
+      if (abortFn()) throw new ExportCancelledError();
+      pagesCaptured += 1;
+      emitProgress({
+        label:
+          format === "png"
+            ? "Capturing PNG pages…"
+            : "Capturing JPEG pages…",
+        current: pagesCaptured,
+        total: pageCount,
+      });
+      return canvas;
+    },
+    abortFn,
+  );
+  if (format === "png") {
+    const el =
+      typeof window !== "undefined" && window.electron
+        ? window.electron
+        : null;
+    if (
+      el?.selectOutputFolder &&
+      el?.savePngExportFolder &&
+      typeof el.selectOutputFolder === "function" &&
+      typeof el.savePngExportFolder === "function"
+    ) {
+      emitProgress({ label: "Choose folder to save PNG files…", current: 0, total: 1 });
+      const pick = await el.selectOutputFolder();
+      if (abortFn()) throw new ExportCancelledError();
+      if (!pick?.success || !pick?.folderPath) return;
+      const safeSub =
+        String(subfolderName)
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+          .trim()
+          .slice(0, 120) || "id-cards";
+      const files = [];
+      for (let i = 0; i < pageCount; i++) {
+        if (abortFn()) throw new ExportCancelledError();
+        files.push({
+          filename: `${fileBaseName}-page-${i + 1}.png`,
+          dataUrl: canvases[i].toDataURL("image/png"),
+        });
+      }
+      emitProgress({ label: "Writing PNG files…", current: 0, total: 1 });
+      const result = await el.savePngExportFolder({
+        parentFolderPath: pick.folderPath,
+        subfolderName: safeSub,
+        files,
+      });
+      if (!result?.success) {
+        throw new Error(result?.error || "Could not save PNG files.");
+      }
+      if (el.openFolder) await el.openFolder(pick.folderPath);
+      return;
+    }
+  }
+  for (let i = 0; i < pageCount; i++) {
     if (abortFn()) throw new ExportCancelledError();
-    const canvas = await html2canvasForExport(
-      pageElements[i],
-      pageBackgroundColor,
-    );
+    const canvas = canvases[i];
     const url =
       format === "png"
         ? canvas.toDataURL("image/png")
-        : canvas.toDataURL("image/jpeg", PREVIEW_EXPORT_JPEG_QUALITY);
+        : canvas.toDataURL("image/jpeg", pageRasterJpegQ);
     const a = document.createElement("a");
     a.href = url;
     a.download = `${fileBaseName}-page-${i + 1}.${ext}`;
     a.click();
-    await abortableDelay(300, abortFn, 80);
+    if (betweenDownloadsMs > 0) {
+      await abortableDelay(betweenDownloadsMs, abortFn, 80);
+    }
   }
 }
 
@@ -1261,6 +1928,7 @@ export default function SavedIdCardsList({
   const [showPreviewView, setShowPreviewView] = useState(false);
   const [singleCardPreview, setSingleCardPreview] = useState(null); // card object when viewing one student's card
   const printContentRef = useRef(null);
+  const previewScrollRef = useRef(null);
   const previewPagesWrapRef = useRef(null);
   /** Browser JPEG export: DirectoryHandle from showDirectoryPicker (must be set during click). */
   const jpegWebParentDirHandleRef = useRef(null);
@@ -1278,7 +1946,7 @@ export default function SavedIdCardsList({
   const [exportProgress, setExportProgress] = useState(null);
   const [chargingDownloadPoints, setChargingDownloadPoints] = useState(false);
 
-  const [pageSizeMode, setPageSizeMode] = useState("a4"); // 'a4' | 'custom'
+  const [pageSizeMode, setPageSizeMode] = useState("a4"); // key of PAGE_PRESET_MM | 'custom'
   const [pageSizeUnit, setPageSizeUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
   const [customPageWidthMm, setCustomPageWidthMm] = useState(A4_WIDTH_MM);
   const [customPageHeightMm, setCustomPageHeightMm] = useState(A4_HEIGHT_MM);
@@ -1302,20 +1970,21 @@ export default function SavedIdCardsList({
   const [previewPageBackgroundColor, setPreviewPageBackgroundColor] =
     useState(DEFAULT_PREVIEW_PAGE_BG);
 
-  const pageWidthMm = React.useMemo(
-    () =>
-      pageSizeMode === "a4"
-        ? A4_WIDTH_MM
-        : clampPageMm(customPageWidthMm, A4_WIDTH_MM),
-    [pageSizeMode, customPageWidthMm],
-  );
-  const pageHeightMm = React.useMemo(
-    () =>
-      pageSizeMode === "a4"
-        ? A4_HEIGHT_MM
-        : clampPageMm(customPageHeightMm, A4_HEIGHT_MM),
-    [pageSizeMode, customPageHeightMm],
-  );
+  const pageWidthMm = React.useMemo(() => {
+    if (pageSizeMode === "custom") {
+      return clampPageMm(customPageWidthMm, A4_WIDTH_MM);
+    }
+    const preset = PAGE_PRESET_MM[pageSizeMode];
+    return preset ? preset.w : A4_WIDTH_MM;
+  }, [pageSizeMode, customPageWidthMm]);
+
+  const pageHeightMm = React.useMemo(() => {
+    if (pageSizeMode === "custom") {
+      return clampPageMm(customPageHeightMm, A4_HEIGHT_MM);
+    }
+    const preset = PAGE_PRESET_MM[pageSizeMode];
+    return preset ? preset.h : A4_HEIGHT_MM;
+  }, [pageSizeMode, customPageHeightMm]);
 
   // When the unit changes, re-render the input from numeric mm values,
   // but don't clobber while the user is actively editing.
@@ -1351,6 +2020,10 @@ export default function SavedIdCardsList({
   const [selectedClass, setSelectedClass] = useState(null);
   /** GET /api/photographer/schools/:schoolId/students — full school roster */
   const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
+  const [viewTemplateEditProbe, setViewTemplateEditProbe] = useState({
+    done: false,
+    show: false,
+  });
 
   const [editStudentData, setEditStudentData] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1479,6 +2152,68 @@ export default function SavedIdCardsList({
       cancelled = true;
     };
   }, [schoolId, activeApi]);
+
+  // View Template: probe school for uploaded canvas template (show Edit template next to Create Template).
+  useEffect(() => {
+    if (!isViewTemplateFlow || !schoolId || classId != null) {
+      setViewTemplateEditProbe({ done: false, show: false });
+      return;
+    }
+    let cancelled = false;
+    setViewTemplateEditProbe({ done: false, show: false });
+    Promise.all([
+      activeApi.getAssignedSchools(),
+      activeApi.getStudentsBySchool(schoolId),
+      activeApi.getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
+    ])
+      .then(async ([schoolsRes, studentsRes, classesRes]) => {
+        if (cancelled) return;
+        let payload = studentsRes;
+        const classes = classesRes.classes ?? [];
+        if (!isFullApiCanvasTemplate(studentsRes.template) && classes.length > 0) {
+          try {
+            const byClass = await activeApi.getStudentsBySchoolAndClass(
+              schoolId,
+              classes[0]._id,
+            );
+            if (
+              !cancelled &&
+              isFullApiCanvasTemplate(byClass.template)
+            ) {
+              payload = { ...studentsRes, template: byClass.template };
+            }
+          } catch {
+            /* keep school payload */
+          }
+        }
+        if (cancelled) return;
+        const schoolsList = schoolsRes.schools ?? [];
+        const apiTemplate = pickSchoolLevelTemplate(
+          payload,
+          schoolId,
+          schoolsList,
+          isOnlineMode,
+        );
+        const schoolHasSaved = computeSchoolHasSavedIdCards(
+          schoolId,
+          payload.students,
+        );
+        const show =
+          schoolHasSaved &&
+          Boolean(
+            apiTemplate?.frontImage &&
+              Array.isArray(apiTemplate.elements) &&
+              apiTemplate.elements.length > 0,
+          );
+        setViewTemplateEditProbe({ done: true, show });
+      })
+      .catch(() => {
+        if (!cancelled) setViewTemplateEditProbe({ done: true, show: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId, classId, isViewTemplateFlow, activeApi, isOnlineMode]);
 
   // Fetch students (template status) when both schoolId and classId are in URL
   useEffect(() => {
@@ -1705,7 +2440,7 @@ export default function SavedIdCardsList({
     c.templateId?.startsWith("fabric-"),
   );
 
-  // How many cards fit per page from current page size (A4 or custom), card dimensions and current preview gaps
+  // How many cards fit per page from current page size (preset or custom), card dimensions and current preview gaps
   const printLayout = React.useMemo(() => {
     const first = cardsToPrint[0];
     let cardWidthMm = DEFAULT_CARD_WIDTH_MM;
@@ -1757,12 +2492,35 @@ export default function SavedIdCardsList({
 
   const spreadPagesCount = previewSpreadPages.length;
 
-  const pageSizeSummary =
-    pageSizeMode === "a4"
-      ? `A4 (${mmToUnit(A4_WIDTH_MM, pageSizeUnit).toFixed(1)}×${mmToUnit(A4_HEIGHT_MM, pageSizeUnit).toFixed(1)} ${pageSizeUnit === "px" ? "px" : pageSizeUnit
-      })`
-      : `Custom (${mmToUnit(pageWidthMm, pageSizeUnit).toFixed(1)}×${mmToUnit(pageHeightMm, pageSizeUnit).toFixed(1)} ${pageSizeUnit === "px" ? "px" : pageSizeUnit
-      })`;
+  useEffect(() => {
+    if (!showPreviewView) return;
+    const scroller = previewScrollRef.current;
+    if (!scroller) return;
+    // Always open preview from the true left edge.
+    scroller.scrollLeft = 0;
+    const raf1 = requestAnimationFrame(() => {
+      scroller.scrollLeft = 0;
+      const raf2 = requestAnimationFrame(() => {
+        scroller.scrollLeft = 0;
+      });
+      void raf2;
+    });
+    return () => cancelAnimationFrame(raf1);
+  }, [showPreviewView, pageWidthMm, pageHeightMm, cols, rows, previewGapHorizontalMm, previewGapVerticalMm]);
+
+  const pageSizeSummary = React.useMemo(() => {
+    const u = pageSizeUnit === "px" ? "px" : pageSizeUnit;
+    if (pageSizeMode === "custom") {
+      return `Custom (${mmToUnit(pageWidthMm, pageSizeUnit).toFixed(1)}×${mmToUnit(pageHeightMm, pageSizeUnit).toFixed(1)} ${u})`;
+    }
+    const preset = PAGE_PRESET_MM[pageSizeMode];
+    const name =
+      PAGE_PRESET_DISPLAY_NAME[pageSizeMode] ?? String(pageSizeMode).toUpperCase();
+    if (preset) {
+      return `${name} (${mmToUnit(preset.w, pageSizeUnit).toFixed(1)}×${mmToUnit(preset.h, pageSizeUnit).toFixed(1)} ${u})`;
+    }
+    return `A4 (${mmToUnit(A4_WIDTH_MM, pageSizeUnit).toFixed(1)}×${mmToUnit(A4_HEIGHT_MM, pageSizeUnit).toFixed(1)} ${u})`;
+  }, [pageSizeMode, pageSizeUnit, pageWidthMm, pageHeightMm]);
 
   const pageSizeControlStyle = {
     background: "#2a2a2a",
@@ -1791,11 +2549,40 @@ export default function SavedIdCardsList({
       <select
         id={`${idPrefix}-size-mode`}
         value={pageSizeMode}
-        onChange={(e) => setPageSizeMode(e.target.value)}
-        style={{ ...pageSizeControlStyle, minWidth: 140 }}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "custom") {
+            let w = customPageWidthMm;
+            let h = customPageHeightMm;
+            if (pageSizeMode !== "custom") {
+              const preset = PAGE_PRESET_MM[pageSizeMode];
+              if (preset) {
+                w = preset.w;
+                h = preset.h;
+              } else {
+                w = A4_WIDTH_MM;
+                h = A4_HEIGHT_MM;
+              }
+            }
+            const cw = clampPageMm(w, A4_WIDTH_MM);
+            const ch = clampPageMm(h, A4_HEIGHT_MM);
+            setCustomPageWidthMm(cw);
+            setCustomPageHeightMm(ch);
+            setCustomPageWidthInput(String(mmToUnit(cw, pageSizeUnit)));
+            setCustomPageHeightInput(String(mmToUnit(ch, pageSizeUnit)));
+          }
+          setPageSizeMode(v);
+        }}
+        style={{ ...pageSizeControlStyle, minWidth: 280 }}
       >
-        <option value="a4">A4</option>
-        <option value="custom">Custom</option>
+        <option value="c1">{`C1[08.0" x 12.0"]`}</option>
+        <option value="c2">{`C2[12.0" x 18.0"]`}</option>
+        <option value="c3">{`C3[04.0" x 06.0"]`}</option>
+        <option value="a3">{`A3 [11.7" x 16.5"]`}</option>
+        <option value="a4">{`A4 [08.3" x 11.7"]`}</option>
+        <option value="a5">{`A5 [05.8" x 08.3"]`}</option>
+        <option value="p1">{`P1 [08.5" x 14.0"]`}</option>
+        <option value="custom">CUSTOME SIZE</option>
       </select>
       <label
         htmlFor={`${idPrefix}-unit`}
@@ -2048,8 +2835,10 @@ export default function SavedIdCardsList({
     const run = async () => {
       exportCancelRequestedRef.current = false;
       const isAborted = () => cancelled || exportCancelRequestedRef.current;
-      setExporting(true);
-      setExportProgress({ label: "Preparing…", current: 0, total: 1 });
+      flushSync(() => {
+        setExporting(true);
+        setExportProgress({ label: "Preparing…", current: 0, total: 1 });
+      });
       const fileBaseName = `id-cards-${isAllSchoolStudents ? "all-students" : classId || schoolId || "export"
         }-${Date.now()}`;
       const subfolderName = isAllSchoolStudents
@@ -2068,16 +2857,50 @@ export default function SavedIdCardsList({
             : classId || schoolId || "Class",
         ).trim() || "Class";
       let captured = false;
-      const jpegBulkSpeed = format === "jpg" && isAllSchoolStudents;
-      const jpegCaptureOpts = { bulk: jpegBulkSpeed, shouldAbort: isAborted };
-      const maxAttempts = format === "jpg" ? (jpegBulkSpeed ? 120 : 220) : 100;
-      const stepMs = format === "jpg" ? (jpegBulkSpeed ? 32 : 120) : 100;
+      const fastBulkPreviewExport =
+        isAllSchoolStudents ||
+        spreadPagesCount >= FAST_PREVIEW_EXPORT_THRESHOLD_PAGES ||
+        studentsForPreviewPrint.length >= FAST_PREVIEW_EXPORT_THRESHOLD_CARDS;
+      const useFastBulkCapture = format === "jpg" && fastBulkPreviewExport;
+      /** Throttle parallel html2canvas progress so the counter steps ~1/s tick, not by concurrency (e.g. 7). */
+      const useExportProgressThrottle =
+        useFastBulkCapture ||
+        ((format === "pdf" || format === "png") && fastBulkPreviewExport);
+      const jpegCaptureOpts = { bulk: useFastBulkCapture, shouldAbort: isAborted };
+      const fastRasterPoll =
+        fastBulkPreviewExport && (format === "png" || format === "pdf");
+      const maxAttempts =
+        format === "jpg"
+          ? useFastBulkCapture
+            ? 120
+            : 220
+          : fastRasterPoll
+            ? 120
+            : 100;
+      const stepMs =
+        format === "jpg"
+          ? useFastBulkCapture
+            ? 22
+            : 120
+          : fastRasterPoll
+            ? 22
+            : 100;
+      const progressThrottle = useExportProgressThrottle
+        ? createProgressThrottle(
+            Math.max(
+              50,
+              Math.round(1000 / FAST_EXPORT_PROGRESS_UPDATES_PER_SEC),
+            ),
+            (p) => {
+              if (isAborted()) return;
+              flushSync(() => setExportProgress(p));
+            },
+          )
+        : null;
       const onProg = (p) => {
         if (isAborted()) return;
-        // Parallel JPEG capture fires several completions in one tick; React 18 batches
-        // those updates unless we flush so "See all" progress matches class (1-by-1).
-        if (jpegBulkSpeed) {
-          flushSync(() => setExportProgress(p));
+        if (progressThrottle) {
+          progressThrottle.emit(p);
         } else {
           setExportProgress(p);
         }
@@ -2132,14 +2955,14 @@ export default function SavedIdCardsList({
             });
             const renderDelayMs = includePerCard
               ? hasFabricCards
-                ? jpegBulkSpeed
-                  ? 1800
+                ? useFastBulkCapture
+                  ? 1500
                   : 2800
-                : jpegBulkSpeed
-                  ? 220
+                : useFastBulkCapture
+                  ? 180
                   : 650
-              : jpegBulkSpeed
-                ? 120
+              : useFastBulkCapture
+                ? 90
                 : 400;
             await abortableDelay(renderDelayMs, isAborted);
             if (isAborted()) throw new ExportCancelledError();
@@ -2170,6 +2993,7 @@ export default function SavedIdCardsList({
                 jpegCaptureOpts,
               );
               files.push(...cardFiles);
+              progressThrottle?.flush();
             }
             if (includePages) {
               try {
@@ -2191,6 +3015,7 @@ export default function SavedIdCardsList({
                   throw e;
                 }
               }
+              progressThrottle?.flush();
             }
 
             if (files.length === 0) {
@@ -2204,6 +3029,85 @@ export default function SavedIdCardsList({
               jpegWebParentDirHandleRef.current,
               isAborted,
             );
+            progressThrottle?.flush();
+            if (saveResult?.cancelled) {
+              captured = true;
+              break;
+            }
+            captured = true;
+            break;
+          }
+          if (format === "png") {
+            const frontCells = getFrontCardCellElements(wrap);
+            const backCells = getBackCardCellElements(wrap);
+            const expectedBackCells = countExpectedBackDomCells(
+              cards,
+              cardsPerPage,
+            );
+            if (
+              frontCells.length !== cards.length ||
+              backCells.length !== expectedBackCells ||
+              cards.length === 0 ||
+              nodes.length !== spreadPagesCount ||
+              spreadPagesCount <= 0
+            ) {
+              continue;
+            }
+            setExportProgress({
+              label: "Rendering cards…",
+              current: 0,
+              total: 1,
+            });
+            const renderDelayMs = hasFabricCards
+              ? fastBulkPreviewExport
+                ? 1500
+                : 2800
+              : fastBulkPreviewExport
+                ? 180
+                : 650;
+            await abortableDelay(renderDelayMs, isAborted);
+            if (isAborted()) throw new ExportCancelledError();
+            await new Promise((r) =>
+              requestAnimationFrame(() => requestAnimationFrame(r)),
+            );
+            if (isAborted()) throw new ExportCancelledError();
+
+            const cellsReadyFront = getFrontCardCellElements(wrap);
+            const cellsReadyBack = getBackCardCellElements(wrap);
+            if (
+              cellsReadyFront.length !== cards.length ||
+              cellsReadyBack.length !== expectedBackCells
+            ) {
+              continue;
+            }
+
+            const files = [];
+            const cardFiles = await buildPreviewFrontAndBackPngFiles(
+              wrap,
+              cards,
+              previewPageBackgroundColor,
+              onProg,
+              cardsPerPage,
+              { bulk: fastBulkPreviewExport, shouldAbort: isAborted },
+            );
+            files.push(...cardFiles);
+            progressThrottle?.flush();
+            const pageFiles = await buildPreviewPagesPngFiles(
+              nodes,
+              previewPageBackgroundColor,
+              onProg,
+              { bulk: fastBulkPreviewExport, shouldAbort: isAborted },
+            );
+            files.push(...pageFiles);
+            progressThrottle?.flush();
+            if (files.length === 0) continue;
+            const saveResult = await savePngExportToFolder(
+              subfolderName,
+              files,
+              onProg,
+              isAborted,
+            );
+            progressThrottle?.flush();
             if (saveResult?.cancelled) {
               captured = true;
               break;
@@ -2231,7 +3135,9 @@ export default function SavedIdCardsList({
             previewPageBackgroundColor,
             onProg,
             isAborted,
+            fastBulkPreviewExport,
           );
+          progressThrottle?.flush();
           captured = true;
           break;
         }
@@ -2254,7 +3160,10 @@ export default function SavedIdCardsList({
         }
       } finally {
         if (!cancelled) {
-          exportCancelRequestedRef.current = false;
+          // Do not clear exportCancelRequestedRef here: in-flight html2canvas/PDF work can
+          // finish after this finally runs; clearing the ref would let late onProgress calls
+          // think the export is still active and show "Downloading…" again. The next run()
+          // resets the ref at startup.
           setExporting(false);
           setPendingExportFormat(null);
           setJpegExportMode(null);
@@ -2272,6 +3181,7 @@ export default function SavedIdCardsList({
     jpegExportMode,
     showPreviewView,
     spreadPagesCount,
+    studentsForPreviewPrint.length,
     cardsPerPage,
     pageWidthMm,
     pageHeightMm,
@@ -2367,8 +3277,16 @@ export default function SavedIdCardsList({
 
     jpegWebParentDirHandleRef.current = null;
 
+    flushSync(() => {
+      setExporting(true);
+      setExportProgress({ label: "Preparing…", current: 0, total: 1 });
+    });
     const charged = await ensureViewTemplateDownloadCharge();
-    if (!charged) return;
+    if (!charged) {
+      setExporting(false);
+      setExportProgress(null);
+      return;
+    }
 
     if (!showPreviewView) {
       setShowPreviewView(true);
@@ -2820,25 +3738,41 @@ export default function SavedIdCardsList({
           See all students
         </button>
         {isViewTemplateFlow && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() =>
-              navigate(`/view-template/wizard/students/${schoolId}/all`)
-            }
-            style={{ padding: "10px 16px" }}
-          >
-            Create Template
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() =>
+                navigate(`/view-template/wizard/students/${schoolId}/all`)
+              }
+              style={{ padding: "10px 16px" }}
+            >
+              Create Template
+            </button>
+            {viewTemplateEditProbe.done && viewTemplateEditProbe.show ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() =>
+                  navigate(`/view-template/wizard/students/${schoolId}/all`, {
+                    state: { openEditTemplate: true },
+                  })
+                }
+                style={{ padding: "10px 16px" }}
+              >
+                Edit template
+              </button>
+            ) : null}
+          </>
         )}
-        <span
+        {/* <span
           className="text-muted"
           style={{ fontSize: "0.9rem" }}
         >
           {isViewTemplateFlow
             ? "Entire school roster in one list, or create template for all."
             : "All students in this school; preview and print use saved ID cards only."}
-        </span>
+        </span> */}
       </div>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
@@ -3195,7 +4129,7 @@ export default function SavedIdCardsList({
                       overflow: "hidden",
                     }}
                   >
-                    {["jpg", "png", "pdf"].map((fmt) => (
+                    {["jpg", "pdf", "png"].map((fmt) => (
                       <button
                         key={fmt}
                         type="button"
@@ -3242,8 +4176,12 @@ export default function SavedIdCardsList({
               </button>
             </div>
           </div>
-          <div className="preview-cards-scroll">
-            <div className="preview-pages-wrap" ref={previewPagesWrapRef}>
+          <div className="preview-cards-scroll" ref={previewScrollRef}>
+            <div
+              className="preview-pages-wrap"
+              ref={previewPagesWrapRef}
+              style={{ paddingInline: 24, boxSizing: "content-box", margin: 0 }}
+            >
               {previewSpreadPages.map((desc) => {
                 const { batchIndex, side } = desc;
                 const isBackPage = side === "back";
@@ -3396,7 +4334,8 @@ export default function SavedIdCardsList({
               style={{
                 position: "absolute",
                 inset: 0,
-                zIndex: 10050,
+                /* Above JPEG mode picker (10055) so Cancel is always clickable */
+                zIndex: 10060,
                 background: "rgba(0,0,0,0.55)",
                 display: "flex",
                 alignItems: "center",
@@ -3405,6 +4344,7 @@ export default function SavedIdCardsList({
               }}
               aria-live="polite"
               aria-busy="true"
+              onClick={(e) => e.stopPropagation()}
             >
               <div
                 style={{
@@ -3416,6 +4356,7 @@ export default function SavedIdCardsList({
                   border: "1px solid rgba(255,255,255,0.12)",
                   boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
                 }}
+                onClick={(e) => e.stopPropagation()}
               >
                 <div
                   style={{
@@ -3470,8 +4411,12 @@ export default function SavedIdCardsList({
                     padding: "10px 14px",
                     fontSize: 14,
                   }}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     exportCancelRequestedRef.current = true;
+                    setExporting(false);
+                    setExportProgress(null);
                   }}
                 >
                   Cancel download
@@ -3603,14 +4548,19 @@ export default function SavedIdCardsList({
           padding: 24px;
           display: flex;
           flex-direction: column;
-          align-items: center;
+          align-items: stretch;
           gap: 24px;
+          direction: ltr;
         }
         .preview-pages-wrap {
           display: flex;
           flex-direction: column;
           align-items: center;
           gap: 24px;
+          width: max-content;
+          min-width: 100%;
+          margin: 0 auto;
+          direction: ltr;
         }
         .print-page.preview-page {
           flex-shrink: 0;
@@ -3622,8 +4572,11 @@ export default function SavedIdCardsList({
         .print-pages-wrap {
           display: flex;
           flex-direction: column;
-          align-items: center;
+          align-items: flex-start;
           gap: 0;
+          width: max-content;
+          min-width: 100%;
+          margin: 0;
         }
         .single-card-preview-overlay {
           position: fixed;
@@ -3776,12 +4729,16 @@ export default function SavedIdCardsList({
           justify-content: flex-start;
         }
         .preview-page--center {
-          align-items: center !important;
-          justify-content: center !important;
+          align-items: flex-start !important;
+          justify-content: flex-start !important;
         }
         .preview-page--center .print-cards-grid.print-cards-grid--preview {
-          width: max-content !important;
-          height: max-content !important;
+          width: 100% !important;
+          height: 100% !important;
+        }
+        .preview-page--front,
+        .preview-page--front .print-cards-grid.print-cards-grid--preview {
+          direction: ltr !important;
         }
         .print-cards-grid {
           display: grid;
@@ -3794,6 +4751,7 @@ export default function SavedIdCardsList({
         }
         .print-cards-grid.print-cards-grid--preview {
           gap: unset;
+          justify-content: center;
         }
         .print-card-cell {
           break-inside: avoid;

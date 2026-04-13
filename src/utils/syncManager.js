@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { db } from '../data/db';
 import * as net from '../api/network_backend';
+import { sortStudentsByExcelRowOrder } from './studentListOrder';
 
 function extractDataURLBlob(dataURL) {
   if (!dataURL || typeof dataURL !== "string" || !dataURL.startsWith("data:")) return null;
@@ -49,8 +50,10 @@ export async function syncAllBackgroundData(onProgress) {
       
       const mongoSchoolId = createRes.schoolId;
       
-      // 2. Re-create the standard Excel Workbook from local DB chunks
-      const localStudents = await db.students.where('schoolId').equals(localSchoolId).toArray();
+      // 2. Re-create the standard Excel Workbook from local DB chunks (same row order as original Excel)
+      const localStudents = sortStudentsByExcelRowOrder(
+        await db.students.where('schoolId').equals(localSchoolId).toArray(),
+      );
       const localClasses = await db.classes.where('schoolId').equals(localSchoolId).toArray();
       
       const classMap = {};

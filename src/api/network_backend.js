@@ -3,6 +3,7 @@
  */
 import { API_BASE_URL } from "./config";
 import { getToken } from "./authStorage";
+import { sortStudentsByExcelRowOrder } from "../utils/studentListOrder";
 
 function authHeaders() {
   const token = getToken();
@@ -73,7 +74,10 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
     const msg = data?.message || data?.error || res.statusText || 'Failed to load students';
     throw new Error(msg);
   }
-  return data;
+  return {
+    ...data,
+    students: sortStudentsByExcelRowOrder(data.students ?? []),
+  };
 }
 
 export async function updateStudent(studentId, data) {
@@ -173,7 +177,10 @@ export async function getStudentsBySchool(schoolId) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.message || data?.error || "Failed");
-  return data;
+  return {
+    ...data,
+    students: sortStudentsByExcelRowOrder(data.students ?? []),
+  };
 }
 
 export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {

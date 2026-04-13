@@ -174,6 +174,15 @@ function registerJpegExportIpcHandlers() {
   try {
     ipcMain.removeHandler('save-pdf-export-file');
   } catch (_) {}
+  try {
+    ipcMain.removeHandler('save-png-export-folder');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('ensure-png-export-dir');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('write-png-file');
+  } catch (_) {}
 
   ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
     try {
@@ -247,8 +256,21 @@ function registerJpegExportIpcHandlers() {
 
   ipcMain.handle('save-pdf-export-file', async (event, payload) => {
     try {
-      const { parentFolderPath, subfolderName, filename, dataBase64 } = payload || {};
-      if (!parentFolderPath || !subfolderName || !dataBase64) {
+      const { parentFolderPath, subfolderName, filename, dataBase64, dataBytes } =
+        payload || {};
+      if (!parentFolderPath || !subfolderName) {
+        return { success: false, error: 'Invalid PDF payload' };
+      }
+      let buffer;
+      if (dataBytes instanceof Uint8Array) {
+        buffer = Buffer.from(
+          dataBytes.buffer,
+          dataBytes.byteOffset,
+          dataBytes.byteLength,
+        );
+      } else if (dataBase64) {
+        buffer = Buffer.from(String(dataBase64), 'base64');
+      } else {
         return { success: false, error: 'Invalid PDF payload' };
       }
       const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-pdf';
@@ -260,12 +282,81 @@ function registerJpegExportIpcHandlers() {
       if (!safeName.toLowerCase().endsWith('.pdf')) {
         safeName += '.pdf';
       }
-      const buffer = Buffer.from(String(dataBase64), 'base64');
       const filePath = path.join(dir, safeName);
       await fs.writeFile(filePath, buffer);
       return { success: true, folderPath: dir, filePath };
     } catch (error) {
       console.error('save-pdf-export-file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-png-export-folder', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName, files } = payload || {};
+      if (!parentFolderPath || !subfolderName || !Array.isArray(files)) {
+        return { success: false, error: 'Invalid save payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-png';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        let name = path
+          .basename(String(f.filename || `page-${i + 1}.png`))
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+        if (!name.toLowerCase().endsWith('.png')) {
+          name += '.png';
+        }
+        const dataUrl = String(f.dataUrl || '');
+        const comma = dataUrl.indexOf(',');
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        const buffer = Buffer.from(base64, 'base64');
+        await fs.writeFile(path.join(dir, name), buffer);
+      }
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('save-png-export-folder:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('ensure-png-export-dir', async (event, payload) => {
+    try {
+      const { parentFolderPath, subfolderName } = payload || {};
+      if (!parentFolderPath || !subfolderName) {
+        return { success: false, error: 'Invalid folder payload' };
+      }
+      const safeSub = String(subfolderName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'id-cards-png';
+      const dir = path.join(parentFolderPath, safeSub);
+      await fs.mkdir(dir, { recursive: true });
+      return { success: true, folderPath: dir };
+    } catch (error) {
+      console.error('ensure-png-export-dir:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('write-png-file', async (event, payload) => {
+    try {
+      const { directoryPath, filename, dataUrl } = payload || {};
+      if (!directoryPath || !dataUrl) {
+        return { success: false, error: 'Invalid file payload' };
+      }
+      let name = path
+        .basename(String(filename || 'page.png'))
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+      if (!name.toLowerCase().endsWith('.png')) {
+        name += '.png';
+      }
+      const dataUrlStr = String(dataUrl);
+      const comma = dataUrlStr.indexOf(',');
+      const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
+      const buffer = Buffer.from(base64, 'base64');
+      await fs.writeFile(path.join(directoryPath, name), buffer);
+      return { success: true };
+    } catch (error) {
+      console.error('write-png-file:', error);
       return { success: false, error: error.message };
     }
   });

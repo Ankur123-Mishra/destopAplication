@@ -2,6 +2,9 @@ import { db } from '../data/db';
 import * as XLSX from 'xlsx';
 import { nanoid } from 'nanoid';
 import { getUploadedTemplates } from '../data/uploadedTemplatesStorage';
+import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
+
+export { sortStudentsByExcelRowOrder };
 
 function isValidPhotographerTemplateShape(t) {
   return (
@@ -60,6 +63,26 @@ function templateFromUploadedStorage(schoolId) {
     };
   }
   return null;
+}
+
+/**
+ * School-level uploaded template only: stored on the school record or in localStorage for this school.
+ * Does not consider per-student template rows (those can exist without the school having uploaded a design).
+ */
+export function resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc = null) {
+  if (!schoolId) return null;
+  const fromSchool = schoolDoc?.offlineIdCardTemplate;
+  if (isValidPhotographerTemplateShape(fromSchool)) {
+    return {
+      frontImage: fromSchool.frontImage,
+      backImage: fromSchool.backImage ?? null,
+      elements: fromSchool.elements,
+      ...(Array.isArray(fromSchool.backElements) ? { backElements: fromSchool.backElements } : {}),
+      name: fromSchool.name || 'Uploaded Template',
+      templateId: fromSchool.templateId ?? 'offline-school-template',
+    };
+  }
+  return templateFromUploadedStorage(schoolId);
 }
 
 /** Same shape as online GET /students `template` field — used by ClassIdCardsWizard (Edit template). */
@@ -128,7 +151,9 @@ export async function getClassesBySchool(schoolId) {
 }
 
 export async function getTemplatesStatus(schoolId, classId) {
-  const studentsList = await db.students.where({ schoolId, classId }).toArray();
+  const studentsList = sortStudentsByExcelRowOrder(
+    await db.students.where({ schoolId, classId }).toArray(),
+  );
   const schoolDoc = await db.schools.get(schoolId);
   const withTemplates = studentsList.filter(s => s.hasTemplate).length;
   const withoutTemplates = studentsList.length - withTemplates;
@@ -143,7 +168,9 @@ export async function getTemplatesStatus(schoolId, classId) {
 }
 
 export async function getStudentsBySchoolAndClass(schoolId, classId) {
-  const studentsList = await db.students.where({ schoolId, classId }).toArray();
+  const studentsList = sortStudentsByExcelRowOrder(
+    await db.students.where({ schoolId, classId }).toArray(),
+  );
   const schoolDoc = await db.schools.get(schoolId);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
@@ -158,7 +185,9 @@ export async function updateStudent(studentId, data) {
 }
 
 export async function getStudentsBySchool(schoolId) {
-  const studentsList = await db.students.where('schoolId').equals(schoolId).toArray();
+  const studentsList = sortStudentsByExcelRowOrder(
+    await db.students.where('schoolId').equals(schoolId).toArray(),
+  );
   const schoolDoc = await db.schools.get(schoolId);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
@@ -358,7 +387,8 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
           'marking',
         ].map((x) => String(x).replace(/[\s.]+/g, '').toLowerCase()));
 
-        for (const row of json) {
+        for (let sheetRowIndex = 0; sheetRowIndex < json.length; sheetRowIndex++) {
+          const row = json[sheetRowIndex];
           const clsStr = String(getCol(row, "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
           const divStr = String(getCol(row, "Division", "Section")).trim();
           
@@ -400,6 +430,8 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             classId: classRecord.id,
             className,
             section,
+            /** 0-based index in parsed sheet (XLSX row order) — used to preserve Excel sequence in UI */
+            excelRowOrder: sheetRowIndex,
             studentName: getCol(row, "Student Name", "StudentName"),
             admissionNo: String(getCol(row, "RegNo", "AdmissionNo", "Sr.No")),
             rollNo: String(getCol(row, "RollNo", "SrNo", "Sirial", "Serial")),

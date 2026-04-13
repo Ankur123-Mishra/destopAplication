@@ -17,11 +17,11 @@ import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
 import * as offlineApi from '../api/dashboard';
 import * as onlineApi from '../api/network_backend';
 import { API_BASE_URL } from '../api/config';
-import { compressImageForUpload } from '../utils/imageUpload';
 import {
   getProjectBulkPreviewUrl,
   subscribeProjectBulkPhotoPreview,
 } from '../utils/projectBulkPhotoPreview';
+import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
 import '../components/IdCardRenderer.css';
 import '../components/IdCardCanvasEditor.css';
 
@@ -136,6 +136,76 @@ function normalizeClassNameForDisplay(label) {
   return label.replace(/\s*[–-]\s*A\s*$/i, '').trim();
 }
 
+function isFullCanvasTemplateShape(t) {
+  return (
+    t &&
+    typeof t === 'object' &&
+    t.frontImage &&
+    Array.isArray(t.elements) &&
+    t.elements.length > 0
+  );
+}
+
+/**
+ * Template the school actually uploaded (API root layout and/or school doc / localStorage for school).
+ * Not derived only from a student's assigned card layout.
+ */
+function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, offlineMode) {
+  const raw = studentsRes?.students ?? [];
+  let schoolDoc = null;
+  const first = raw[0];
+  if (first && typeof first.schoolId === 'object' && first.schoolId != null && !Array.isArray(first.schoolId)) {
+    schoolDoc = first.schoolId;
+  } else if (first && typeof first.school === 'object' && first.school != null) {
+    schoolDoc = first.school;
+  }
+  if (!schoolDoc && Array.isArray(schoolsList) && schoolId) {
+    const s = schoolsList.find((x) => x._id === schoolId);
+    if (s) schoolDoc = s;
+  }
+
+  if (!offlineMode && isFullCanvasTemplateShape(studentsRes?.template)) {
+    return studentsRes.template;
+  }
+
+  return offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+}
+
+const SAVED_ID_CARDS_FLAG_PREFIX = 'classIdCardsWizard.savedIdCardsSchool:';
+
+function readSavedIdCardsFlagForSchool(schoolId) {
+  if (!schoolId || typeof localStorage === 'undefined') return false;
+  try {
+    return localStorage.getItem(`${SAVED_ID_CARDS_FLAG_PREFIX}${schoolId}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeSavedIdCardsFlagForSchool(schoolId) {
+  if (!schoolId || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(`${SAVED_ID_CARDS_FLAG_PREFIX}${schoolId}`, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+/** At least one student row indicates ID cards were already saved (assigned template / layout). */
+function rawStudentsIndicateSavedIdCards(rawStudents) {
+  if (!Array.isArray(rawStudents)) return false;
+  return rawStudents.some((s) => {
+    if (!s || typeof s !== 'object') return false;
+    if (s.hasTemplate === true) return true;
+    const t = s.template;
+    return isFullCanvasTemplateShape(t);
+  });
+}
+
+function computeSchoolHasSavedIdCards(schoolId, rawStudents) {
+  return readSavedIdCardsFlagForSchool(schoolId) || rawStudentsIndicateSavedIdCards(rawStudents);
+}
+
 /** For template upload API (expects data URLs); fetch http(s) / blob URLs into data URL */
 async function imageRefToDataUrlForUpload(ref) {
   if (!ref || typeof ref !== 'string') return ref;
@@ -208,6 +278,7 @@ function mapApiStudent(s) {
     'extraFields',
     'createdAt',
     'updatedAt',
+    'excelRowOrder',
   ]);
   Object.entries(s || {}).forEach(([key, value]) => {
     if (reservedKeys.has(key)) return;
@@ -245,6 +316,7 @@ function mapApiStudent(s) {
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
+    ...(s.excelRowOrder != null ? { excelRowOrder: Number(s.excelRowOrder) } : {}),
   };
 }
 
@@ -294,7 +366,6 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const [selectedClassId, setSelectedClassId] = useState(classIdFromUrl || null);
   const [selectedTemplateId, setSelectedTemplateId] = useState(templateIdFromUrl || null);
   const [studentImages, setStudentImages] = useState({}); // { [studentId]: dataUrl }
-  const [uploadingStudentId, setUploadingStudentId] = useState(null);
   const [bulkPreviewEpoch, setBulkPreviewEpoch] = useState(0);
   const [savingAll, setSavingAll] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]); // IDs of students to include in ID cards
@@ -309,6 +380,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const [arrangeSelectedIdBack, setArrangeSelectedIdBack] = useState(null);
   /** Template object from GET /api/photographer/students (same response as students list) */
   const [apiClassTemplate, setApiClassTemplate] = useState(null);
+  /** True once this school has at least one saved ID card (local flag or API student rows). Used to show "Edit template" only after a save. */
+  const [schoolHasSavedIdCards, setSchoolHasSavedIdCards] = useState(false);
   const [editorOpenedFromApiClassTemplate, setEditorOpenedFromApiClassTemplate] = useState(false);
   const frontFileInputRef = useRef(null);
   const backFileInputRef = useRef(null);
@@ -381,6 +454,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     if (!hasUrlIds) return;
     if (hasStateData) {
       setApiClassTemplate(null);
+      setSchoolHasSavedIdCards(readSavedIdCardsFlagForSchool(stateSchool._id));
       setApiSchool({
         id: stateSchool._id,
         name: stateSchool.schoolName,
@@ -396,15 +470,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     let cancelled = false;
     setApiDataLoaded(false);
     setApiClassTemplate(null);
+    setSchoolHasSavedIdCards(false);
 
     const applySchoolStudentsPayload = (schoolsList, studentsRes) => {
       const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
-      const tpl = studentsRes.template;
-      setApiClassTemplate(
-        tpl && typeof tpl === 'object' && tpl.frontImage && Array.isArray(tpl.elements) && tpl.elements.length
-          ? tpl
-          : null,
-      );
+      setApiClassTemplate(pickSchoolLevelTemplate(studentsRes, schoolIdFromUrl, schoolsList, offlineMode));
+      setSchoolHasSavedIdCards(computeSchoolHasSavedIdCards(schoolIdFromUrl, studentsRes.students));
       const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
       setApiSchool(
         school
@@ -422,36 +493,30 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     };
 
     if (classIdFromUrl === 'all') {
-      const isValidApiTemplate = (t) =>
-        t &&
-        typeof t === 'object' &&
-        t.frontImage &&
-        Array.isArray(t.elements) &&
-        t.elements.length > 0;
-
       Promise.all([
         offlineMode ? offlineApi.getAssignedSchools() : onlineApi.getAssignedSchools(),
         offlineMode ? offlineApi.getStudentsBySchool(schoolIdFromUrl) : onlineApi.getStudentsBySchool(schoolIdFromUrl),
-        (offlineMode ? offlineApi.getClassesBySchool(schoolIdFromUrl) : onlineApi.getClassesBySchool(schoolIdFromUrl)).catch(() => ({ classes: [] })),
+        offlineMode ? offlineApi.getClassesBySchool(schoolIdFromUrl) : onlineApi.getClassesBySchool(schoolIdFromUrl).catch(() => ({ classes: [] })),
       ])
         .then(async ([schoolsRes, studentsRes, classesRes]) => {
           if (cancelled) return;
           const schoolsList = schoolsRes.schools ?? [];
-          const classesList = classesRes.classes ?? [];
-          setApiClass({ id: 'all', name: 'All students' });
-
           let payload = studentsRes;
-          if (!isValidApiTemplate(studentsRes.template) && classesList.length > 0) {
+          const classes = classesRes?.classes ?? [];
+          if (!isFullCanvasTemplateShape(studentsRes.template) && classes.length > 0) {
             try {
-              const byClass = await (offlineMode ? offlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classesList[0]._id) : onlineApi.getStudentsBySchoolAndClass(schoolIdFromUrl, classesList[0]._id));
-              if (!cancelled && isValidApiTemplate(byClass.template)) {
+              const byClass = await (offlineMode ? offlineApi.getStudentsBySchoolAndClass : onlineApi.getStudentsBySchoolAndClass)(
+                schoolIdFromUrl,
+                classes[0]._id,
+              );
+              if (!cancelled && isFullCanvasTemplateShape(byClass.template)) {
                 payload = { ...studentsRes, template: byClass.template };
               }
             } catch {
-              // use school list without template
+              /* keep school payload */
             }
           }
-          if (cancelled) return;
+          setApiClass({ id: 'all', name: 'All students' });
           applySchoolStudentsPayload(schoolsList, payload);
         })
         .catch(() => {
@@ -468,12 +533,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           const schoolsList = schoolsRes.schools ?? [];
           const classesList = classesRes.classes ?? [];
           const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
-          const tpl = studentsRes.template;
-          setApiClassTemplate(
-            tpl && typeof tpl === 'object' && tpl.frontImage && Array.isArray(tpl.elements) && tpl.elements.length
-              ? tpl
-              : null,
-          );
+          setApiClassTemplate(pickSchoolLevelTemplate(studentsRes, schoolIdFromUrl, schoolsList, offlineMode));
+          setSchoolHasSavedIdCards(computeSchoolHasSavedIdCards(schoolIdFromUrl, studentsRes.students));
           const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
           const cls = classesList.find((c) => c._id === classIdFromUrl);
           setApiSchool(
@@ -511,13 +572,14 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     return classList.find((c) => c.id === effectiveClassId) || apiClass;
   }, [classList, effectiveClassId, apiClass, apiDataLoaded, classIdFromUrl]);
 
-  console.log('cls', cls);
   const students = useMemo(() => {
+    let list = [];
     if (apiDataLoaded && (effectiveClassId === classIdFromUrl || effectiveClassId === cls?.id)) {
-      return apiStudents;
+      list = apiStudents;
+    } else if (cls && cls.id !== 'all') {
+      list = getStudents(cls.id) || [];
     }
-    if (cls && cls.id !== 'all') return getStudents(cls.id) || [];
-    return [];
+    return sortStudentsByExcelRowOrder(list);
   }, [cls, getStudents, apiStudents, apiDataLoaded, effectiveClassId, classIdFromUrl]);
 
   // When school/class changes, default selection = all students in that class
@@ -720,6 +782,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       if (offlineUpdates.length > 0) {
         await offlineApi.bulkSaveFullOfflineTemplates(offlineUpdates);
       }
+      writeSavedIdCardsFlagForSchool(school.id);
       const viewTemplatePath =
         cls.id === 'all'
           ? `/view-template/school/${school.id}/all-students`
@@ -772,6 +835,45 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setStep(STEPS.SELECT_TEMPLATE);
     navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
   }, [apiClassTemplate, effectiveSchoolId, effectiveClassId, navigate]);
+
+  const openEditTemplateFromListRef = useRef(false);
+  /** SavedIdCardsList "Edit template" → open canvas editor once students + apiClassTemplate are ready. */
+  useEffect(() => {
+    if (!location.state?.openEditTemplate) {
+      openEditTemplateFromListRef.current = false;
+      return;
+    }
+    if (!hasUrlIds || hasStateData) return;
+    if (classIdFromUrl !== 'all') return;
+    if (!apiDataLoaded) return;
+    if (openEditTemplateFromListRef.current) return;
+    const showBar =
+      schoolHasSavedIdCards &&
+      Boolean(
+        apiClassTemplate?.frontImage &&
+          Array.isArray(apiClassTemplate.elements) &&
+          apiClassTemplate.elements.length > 0,
+      );
+    openEditTemplateFromListRef.current = true;
+    navigate(`${path}${location.search || ''}`, { replace: true, state: {} });
+    if (showBar) {
+      openClassTemplateEditor();
+    } else {
+      openEditTemplateFromListRef.current = false;
+    }
+  }, [
+    location.state?.openEditTemplate,
+    hasUrlIds,
+    hasStateData,
+    classIdFromUrl,
+    apiDataLoaded,
+    schoolHasSavedIdCards,
+    apiClassTemplate,
+    navigate,
+    path,
+    location.search,
+    openClassTemplateEditor,
+  ]);
 
   const selectTemplate = (tid) => {
     setSelectedTemplateId(tid);
@@ -1086,6 +1188,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       );
     }
     const showApiClassTemplateBar =
+      schoolHasSavedIdCards &&
       Boolean(
         apiClassTemplate?.frontImage &&
           Array.isArray(apiClassTemplate.elements) &&
@@ -1186,6 +1289,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
                       <span className="text-muted" style={{ fontSize: '0.8rem' }}>{normalizeClassNameForDisplay(student.className)}</span>
                     ) : null}
                   </div>
+                  {/* Change / Select photo control — commented out
                   <label className="btn btn-secondary btn-sm" style={{ cursor: uploadingStudentId === student.id ? 'wait' : 'pointer', marginLeft: 'auto' }}>
                     {uploadingStudentId === student.id ? 'Uploading…' : (img ? 'Change photo' : 'Select photo')}
                     <input
@@ -1218,6 +1322,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
                       }}
                     />
                   </label>
+                  */}
                 </div>
               );
             })}

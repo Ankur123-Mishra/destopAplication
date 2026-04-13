@@ -49,8 +49,9 @@ function hasTextFieldBinding(els, fieldKey) {
 }
 
 /** Default photo box size (% of card) when no saved layout provides dimensions */
-export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = 40;
-export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT = 48;
+const DEFAULT_PHOTO_BOX_SCALE = 0.75;
+export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = 40 * DEFAULT_PHOTO_BOX_SCALE;
+export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT = 48 * DEFAULT_PHOTO_BOX_SCALE;
 
 const DEFAULT_ELEMENTS = () => [
   {

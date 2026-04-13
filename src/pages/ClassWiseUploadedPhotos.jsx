@@ -67,6 +67,7 @@ function mapApiStudent(s) {
     'createdAt',
     'updatedAt',
     'extraFields',
+    'excelRowOrder',
   ]);
   Object.entries(s || {}).forEach(([key, value]) => {
     if (reservedKeys.has(key)) return;
@@ -103,6 +104,7 @@ function mapApiStudent(s) {
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: s.photoUrl,
+    ...(s.excelRowOrder != null ? { excelRowOrder: Number(s.excelRowOrder) } : {}),
   };
 }
 
