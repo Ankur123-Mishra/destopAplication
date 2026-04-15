@@ -596,6 +596,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   }, [effectiveSchoolId, effectiveClassId, students]);
 
   const arrangeEditorElements = useMemo(() => {
+    // "Edit template" should open with the latest saved server/school layout.
+    // Do not override it with any stale local draft from older sessions.
+    if (editorOpenedFromApiClassTemplate) {
+      return uploadedTemplate?.elements ?? null;
+    }
     if (!uploadedTemplate?.frontImage || !Array.isArray(uploadedTemplate.elements)) {
       return uploadedTemplate?.elements ?? null;
     }
@@ -614,7 +619,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       return draft.elements;
     }
     return uploadedTemplate.elements;
-  }, [uploadedTemplate, effectiveSchoolId, effectiveClassId]);
+  }, [uploadedTemplate, effectiveSchoolId, effectiveClassId, editorOpenedFromApiClassTemplate]);
 
   /** Front-side layout for arrange step (preview / other-side union / purge). */
   const frontLayoutElementsForArrange = useMemo(
@@ -709,32 +714,40 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const selectAllStudents = () => setSelectedStudentIds(students.map((s) => s.id));
   const deselectAllStudents = () => setSelectedStudentIds([]);
 
-  const handleSaveAll = async () => {
-    if (!cls || !school || !selectedTemplateId) return;
-    const isUploaded = selectedTemplateId === 'uploaded-custom' || (typeof selectedTemplateId === 'string' && selectedTemplateId.startsWith('uploaded-'));
-    const effectiveUploadedTemplate = getUploadedTemplateById(selectedTemplateId) || (selectedTemplateId === 'uploaded-custom' ? uploadedTemplate : null);
-    const template = isUploaded ? (effectiveUploadedTemplate && { name: effectiveUploadedTemplate.name }) : (getTemplateById(selectedTemplateId) || getFabricTemplateById(selectedTemplateId));
+  /**
+   * Save all selected students' ID cards for `templateId`, then open the template preview list.
+   * Returns `{ skipped: true }` when no student has a photo (same as before: caller may send user to Review).
+   */
+  const saveAllIdCardsForTemplate = async (templateId, { manageSavingState = true } = {}) => {
+    if (!cls || !school || !templateId) return;
+    const isUploaded =
+      templateId === 'uploaded-custom' || (typeof templateId === 'string' && templateId.startsWith('uploaded-'));
+    const effectiveUploadedTemplate =
+      getUploadedTemplateById(templateId) || (templateId === 'uploaded-custom' ? uploadedTemplate : null);
+    const template = isUploaded
+      ? effectiveUploadedTemplate && { name: effectiveUploadedTemplate.name }
+      : getTemplateById(templateId) || getFabricTemplateById(templateId);
     if (!template && !isUploaded) return;
     if (isUploaded && !effectiveUploadedTemplate?.elements) return;
-    const studentIds = selectedStudents
-      .filter((s) => getImageForStudent(s))
-      .map((s) => s.id);
-    if (studentIds.length === 0) return;
+    const studentIds = selectedStudents.filter((s) => getImageForStudent(s)).map((s) => s.id);
+    if (studentIds.length === 0) return { skipped: true };
 
-    setSavingAll(true);
+    if (manageSavingState) setSavingAll(true);
     try {
       if (!isUploaded) {
-        const apiTemplateId = getApiTemplateId(selectedTemplateId);
-        await (offlineMode ? offlineApi.bulkSaveTemplates(apiTemplateId, studentIds) : onlineApi.bulkSaveTemplates(apiTemplateId, studentIds));
+        const apiTemplateId = getApiTemplateId(templateId);
+        await (offlineMode
+          ? offlineApi.bulkSaveTemplates(apiTemplateId, studentIds)
+          : onlineApi.bulkSaveTemplates(apiTemplateId, studentIds));
       }
-      
+
       const offlineUpdates = [];
 
       selectedStudents.forEach((student) => {
         const image = getImageForStudent(student);
         if (!image) return;
         const cardData = {
-          templateId: selectedTemplateId,
+          templateId,
           studentImage: image,
           name: student.name,
           studentId: student.studentId,
@@ -743,7 +756,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           address: school.address,
         };
 
-        let offlineTemplateObj = { templateId: selectedTemplateId, name: template?.name };
+        let offlineTemplateObj = { templateId, name: template?.name };
 
         if (isUploaded && effectiveUploadedTemplate) {
           cardData.uploadedTemplate = {
@@ -756,7 +769,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
             name: effectiveUploadedTemplate.name,
           };
           offlineTemplateObj = {
-            templateId: selectedTemplateId,
+            templateId,
             name: effectiveUploadedTemplate.name,
             frontImage: effectiveUploadedTemplate.frontImage,
             backImage: effectiveUploadedTemplate.backImage,
@@ -766,14 +779,13 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
               : {}),
           };
         } else if (template) {
-          // Fallback to storing raw full properties if it's a fabric API template
           if (template.frontImage && Array.isArray(template.elements)) {
             offlineTemplateObj.frontImage = template.frontImage;
             offlineTemplateObj.backImage = template.backImage;
             offlineTemplateObj.elements = template.elements;
           }
         }
-        
+
         offlineUpdates.push({ id: student.id, template: offlineTemplateObj });
 
         addSavedIdCard(student.id, cardData, { schoolId: school.id, classId: cls.id });
@@ -790,8 +802,17 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       navigate(viewTemplatePath, { replace: true });
     } catch (err) {
       alert(err?.message || 'Failed to save ID cards. Please try again.');
+      throw err;
     } finally {
-      setSavingAll(false);
+      if (manageSavingState) setSavingAll(false);
+    }
+  };
+
+  const handleSaveAll = async () => {
+    try {
+      await saveAllIdCardsForTemplate(selectedTemplateId);
+    } catch {
+      /* alert already shown in saveAllIdCardsForTemplate */
     }
   };
 
@@ -818,17 +839,22 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     if (!t?.frontImage || !Array.isArray(t.elements) || t.elements.length === 0) return;
     const front = fullPhotoUrl(t.frontImage);
     const back = t.backImage ? fullPhotoUrl(t.backImage) : front;
+    const frontElements = mapTemplateElementsToNameDobAddress(t.elements);
+    const backElements = Array.isArray(t.backElements)
+      ? mapTemplateElementsToNameDobAddress(t.backElements)
+      : null;
     setUploadedTemplate({
       frontImage: front,
       backImage: back,
-      elements: mapTemplateElementsToNameDobAddress(t.elements),
+      elements: frontElements,
+      ...(Array.isArray(backElements) ? { backElements } : {}),
       name: t.name || t.title || 'Uploaded Template',
       templateId: t.templateId,
     });
-    setTemplateUploadMode(t.backImage ? 'both' : 'single');
+    setTemplateUploadMode(t.backImage || (Array.isArray(backElements) && backElements.length > 0) ? 'both' : 'single');
     setEditorOpenedFromApiClassTemplate(true);
     setArrangeEditSide('front');
-    setArrangeBackElements(null);
+    setArrangeBackElements(backElements);
     setArrangeSelectedIdFront(null);
     setArrangeSelectedIdBack(null);
     setArrangingUploaded(true);
@@ -956,61 +982,75 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
 
   const handleUseUploadedTemplate = async (payload) => {
     setEditorOpenedFromApiClassTemplate(false);
-    const draftSub = uploadedTemplate ? layoutDraftSubKey(uploadedTemplate) : '';
-    if (draftSub) clearLayoutDraft(effectiveSchoolId, effectiveClassId, draftSub);
-    const front = uploadedTemplate?.frontImage;
-    // Single-side mode: do not upload/save back image unless user explicitly selected it.
-    const back =
-      templateUploadMode === 'single'
-        ? uploadedTemplate?.backImage ?? null
-        : uploadedTemplate?.backImage;
-    const frontElementsToSave =
-      arrangeEditSide === 'front'
-        ? payload.elements
-        : (arrangeEditorElements ?? uploadedTemplate?.elements ?? []);
-    const backElementsToSave =
-      templateUploadMode === 'both' && back
-        ? arrangeEditSide === 'back'
-          ? payload.elements
-          : (arrangeBackElements ?? uploadedTemplate?.backElements ?? [])
-        : undefined;
-    const toSave = {
-      name: uploadedTemplate?.name || 'Uploaded Template',
-      frontImage: front,
-      backImage: back,
-      schoolId: effectiveSchoolId,
-      elements: frontElementsToSave,
-      ...(templateUploadMode === 'both' && back ? { backElements: backElementsToSave ?? [] } : {}),
-    };
-    const savedId = saveUploadedTemplate(toSave);
-
+    setSavingAll(true);
     try {
-      const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);
-      const backData = await imageRefToDataUrlForUpload(toSave.backImage);
-      const templatePayload = {
-        name: toSave.name,
+      const draftSub = uploadedTemplate ? layoutDraftSubKey(uploadedTemplate) : '';
+      if (draftSub) clearLayoutDraft(effectiveSchoolId, effectiveClassId, draftSub);
+      const front = uploadedTemplate?.frontImage;
+      const back =
+        templateUploadMode === 'single'
+          ? uploadedTemplate?.backImage ?? null
+          : uploadedTemplate?.backImage;
+      const frontElementsToSave =
+        arrangeEditSide === 'front'
+          ? payload.elements
+          : (arrangeEditorElements ?? uploadedTemplate?.elements ?? []);
+      const backElementsToSave =
+        templateUploadMode === 'both' && back
+          ? arrangeEditSide === 'back'
+            ? payload.elements
+            : (arrangeBackElements ?? uploadedTemplate?.backElements ?? [])
+          : undefined;
+      const toSave = {
+        name: uploadedTemplate?.name || 'Uploaded Template',
+        frontImage: front,
+        backImage: back,
         schoolId: effectiveSchoolId,
-        frontImage: frontData,
-        backImage: backData,
-        elements: toSave.elements,
-        ...(toSave.backElements != null ? { backElements: toSave.backElements } : {}),
+        elements: frontElementsToSave,
+        ...(templateUploadMode === 'both' && back ? { backElements: backElementsToSave ?? [] } : {}),
       };
-      
-      if (offlineMode) {
-        await offlineApi.uploadTemplate(templatePayload);
-      } else {
-        await onlineApi.uploadTemplate(templatePayload);
-      }
-    } catch (err) {
-      console.error('Template upload to API failed:', err);
-      alert(err?.message || 'Template saved locally but upload to server failed. You can still use it for ID cards.');
-    }
+      const savedId = saveUploadedTemplate(toSave);
 
-    setUploadedTemplate(null);
-    setArrangingUploaded(false);
-    setSelectedTemplateId(savedId);
-    setStep(STEPS.REVIEW_SAVE);
-    navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
+      try {
+        const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);
+        const backData = await imageRefToDataUrlForUpload(toSave.backImage);
+        const templatePayload = {
+          name: toSave.name,
+          schoolId: effectiveSchoolId,
+          frontImage: frontData,
+          backImage: backData,
+          elements: toSave.elements,
+          ...(toSave.backElements != null ? { backElements: toSave.backElements } : {}),
+        };
+
+        if (offlineMode) {
+          await offlineApi.uploadTemplate(templatePayload);
+        } else {
+          await onlineApi.uploadTemplate(templatePayload);
+        }
+      } catch (err) {
+        console.error('Template upload to API failed:', err);
+        alert(
+          err?.message ||
+            'Template saved locally but upload to server failed. You can still use it for ID cards.',
+        );
+      }
+
+      try {
+        const bulkResult = await saveAllIdCardsForTemplate(savedId, { manageSavingState: false });
+        setUploadedTemplate(null);
+        setArrangingUploaded(false);
+        setSelectedTemplateId(savedId);
+        if (bulkResult?.skipped) {
+          setStep(STEPS.REVIEW_SAVE);
+          navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
+        }
+      } catch {
+        /* bulk save failed; template is still in localStorage — keep editor state */
+      }
+    } finally {
+      setSavingAll(false);
+    }
   };
 
   const handleCancelUploadedTemplate = () => {
@@ -1486,7 +1526,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           onBackClick={backFromArrange}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
-          Drag elements to position, resize photo from corner, and change font size in the sidebar. Then click &quot;Use this template&quot; to continue.
+          Drag elements to position, resize photo from corner, and change font size in the sidebar. Then click
+          &quot;Save all ID cards&quot; to save the template and open the preview screen.
         </p>
         {canEditBack ? (
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
@@ -1555,7 +1596,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           }}
           onSave={handleUseUploadedTemplate}
           onCancel={handleCancelUploadedTemplate}
-          saveLabel="Use this template"
+          saveLabel={savingAll ? 'Saving…' : 'Save all ID cards'}
+          saveDisabled={savingAll}
           cancelLabel="Cancel"
         />
       </>

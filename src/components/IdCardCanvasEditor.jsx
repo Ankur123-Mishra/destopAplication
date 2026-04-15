@@ -49,9 +49,12 @@ function hasTextFieldBinding(els, fieldKey) {
 }
 
 /** Default photo box size (% of card) when no saved layout provides dimensions */
-const DEFAULT_PHOTO_BOX_SCALE = 0.75;
-export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = 40 * DEFAULT_PHOTO_BOX_SCALE;
-export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT = 48 * DEFAULT_PHOTO_BOX_SCALE;
+const DEFAULT_PHOTO_BOX_WIDTH_BASE_PERCENT = 30;
+/** Keep default photo portrait (3:4) across all card dimensions (88x56 or 56x88). */
+const DEFAULT_PHOTO_BOX_ASPECT_RATIO = 3 / 4;
+export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = DEFAULT_PHOTO_BOX_WIDTH_BASE_PERCENT;
+export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT =
+  DEFAULT_PHOTO_BOX_WIDTH_BASE_PERCENT / DEFAULT_PHOTO_BOX_ASPECT_RATIO;
 
 const DEFAULT_ELEMENTS = () => [
   {
@@ -70,8 +73,16 @@ const DEFAULT_ELEMENTS = () => [
  * Maps legacy API/default text fields (student ID, class, school) to Name + DOB + Address
  * while keeping positions so “Edit template layout” opens with the preferred trio.
  */
+
+
 function mapTemplateElementsToNameDobAddress(elements) {
   if (!Array.isArray(elements)) return elements;
+  const hasDobField = elements.some(
+    (el) => el?.type === 'text' && el?.dataField === 'dateOfBirth'
+  );
+  const hasAddressField = elements.some(
+    (el) => el?.type === 'text' && el?.dataField === 'address'
+  );
   const out = [];
   for (const el of elements) {
     if (el.type !== 'text') {
@@ -82,7 +93,9 @@ function mapTemplateElementsToNameDobAddress(elements) {
     if (df === 'schoolName') {
       continue;
     }
-    if (df === 'studentId') {
+    // Legacy default template had a fixed "studentId" text slot.
+    // Do not remap custom/user-added studentId fields.
+    if (df === 'studentId' && el.id === 'studentId' && !hasDobField) {
       out.push({
         ...el,
         id: el.id === 'studentId' ? 'dob' : el.id,
@@ -91,10 +104,12 @@ function mapTemplateElementsToNameDobAddress(elements) {
       });
       continue;
     }
-    if (df === 'className') {
+    // Legacy default template had a fixed "class" slot that is now preferred as Address.
+    // Keep custom className fields intact (e.g. front side class labels in edited templates).
+    if (df === 'className' && el.id === 'class' && !hasAddressField) {
       out.push({
         ...el,
-        id: el.id === 'class' ? 'address' : el.id,
+        id: 'address',
         dataField: 'address',
         label: 'Address',
         fontSize:
@@ -328,6 +343,8 @@ export default function IdCardCanvasEditor({
   onCancel,
   saveLabel = 'Save ID Card',
   cancelLabel = 'Cancel',
+  /** When true, primary save is disabled (e.g. parent is saving in bulk). */
+  saveDisabled = false,
 }) {
   const canvasRef = useRef(null);
   const [elements, setElements] = useState(() => initialElements || DEFAULT_ELEMENTS());
@@ -953,7 +970,14 @@ export default function IdCardCanvasEditor({
             {showPreview ? 'Edit Card' : 'Preview Card'}
           </button>
           <button type="button" className="btn btn-secondary" onClick={onCancel}>{cancelLabel}</button>
-          <button type="button" className="btn btn-primary" onClick={handleSaveClick}>{saveLabel}</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSaveClick}
+            disabled={saveDisabled}
+          >
+            {saveLabel}
+          </button>
         </div>
       </div>
 

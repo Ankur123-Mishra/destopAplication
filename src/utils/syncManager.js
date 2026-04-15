@@ -3,6 +3,19 @@ import { db } from '../data/db';
 import * as net from '../api/network_backend';
 import { sortStudentsByExcelRowOrder } from './studentListOrder';
 
+function normalizeStudentMatchKey(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function extractRemoteStudents(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  if (Array.isArray(payload.students)) return payload.students;
+  if (Array.isArray(payload.data?.students)) return payload.data.students;
+  if (Array.isArray(payload.data?.rows)) return payload.data.rows;
+  if (Array.isArray(payload.rows)) return payload.rows;
+  return [];
+}
+
 function extractDataURLBlob(dataURL) {
   if (!dataURL || typeof dataURL !== "string" || !dataURL.startsWith("data:")) return null;
   const arr = dataURL.split(",");
@@ -93,21 +106,32 @@ export async function syncAllBackgroundData(onProgress) {
       XLSX.utils.book_append_sheet(workbook, worksheet, "Dataset");
       
       const xlsxArrayBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      const xlsxBlob = new Blob([xlsxArrayBuffer], { type: 'application/octet-stream' });
-      const xlsxFile = new File([xlsxBlob], `${school.schoolName.replace(/[^a-z0-9]/gi, '_')}_offline_sync.xlsx`);
+      const xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const xlsxBlob = new Blob([xlsxArrayBuffer], { type: xlsxMime });
+      const xlsxFile = new File(
+        [xlsxBlob],
+        `${school.schoolName.replace(/[^a-z0-9]/gi, '_')}_offline_sync.xlsx`,
+        { type: xlsxMime },
+      );
       
       // 3. Initiate Bulk Upload XHR Wrapper
       reportProgress(`Pushing dataset to remote mapping engine...`);
-      await net.bulkUploadStudentsXls(mongoSchoolId, xlsxFile);
+      const bulkUploadRes = await net.bulkUploadStudentsXls(mongoSchoolId, xlsxFile);
       
       // 4. Download processed Mongo structure to pair ObjectIDs
       reportProgress(`Aligning synchronized targets...`);
       const remoteData = await net.getStudentsBySchool(mongoSchoolId);
-      const remoteStudentsArr = remoteData.students || [];
+      let remoteStudentsArr = extractRemoteStudents(remoteData);
+      if (remoteStudentsArr.length === 0) {
+        remoteStudentsArr = extractRemoteStudents(bulkUploadRes);
+      }
+      if (remoteStudentsArr.length === 0) {
+        throw new Error("Students were not found online after Excel upload");
+      }
       
       const remotePhotoMap = {}; 
       remoteStudentsArr.forEach(rs => {
-         const backendKey = rs.photoNo || rs.studentId; 
+         const backendKey = normalizeStudentMatchKey(rs.photoNo || rs.studentId);
          if (backendKey) remotePhotoMap[backendKey] = rs._id;
       });
       
@@ -118,7 +142,7 @@ export async function syncAllBackgroundData(onProgress) {
       
       for (let i = 0; i < localStudents.length; i++) {
          const ls = localStudents[i];
-         const localKey = ls.photoNo || ls.studentId;
+         const localKey = normalizeStudentMatchKey(ls.photoNo || ls.studentId);
          const mongoStudentId = remotePhotoMap[localKey];
          
          if (!mongoStudentId) continue;

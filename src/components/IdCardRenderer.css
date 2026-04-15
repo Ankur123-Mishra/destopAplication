@@ -1500,15 +1500,17 @@
 .idcard-image-template-canvas .idcard-canvas-text {
   color: #111;
   text-shadow: none;
-  max-width: 55%;
+  max-width: 100%;
   padding: 0 2px;
 }
 
 .idcard-image-template-canvas .idcard-canvas-text .idcard-canvas-text-content {
   display: block;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
+  box-sizing: border-box;
+  padding-right: 2px;
   line-height: 1.12;
 }
 

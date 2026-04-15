@@ -27,6 +27,7 @@ function getCanvasRawValue(data, key) {
  * Resolve template dataField to student data. Supports phone/mobile aliases, Map extraFields,
  * and common API key variants so canvas preview matches the editor.
  */
+
 function resolveCanvasDataField(data, fieldKey) {
   if (!fieldKey || !data) return null;
   const tryKeys = (keys) => {
@@ -72,12 +73,157 @@ function resolveCanvasDataField(data, fieldKey) {
   return tryKeys(keys);
 }
 
+function getAutoFitScaleOrigin(textAlign) {
+  if (textAlign === 'right') return 'right center';
+  if (textAlign === 'center') return 'center center';
+  return 'left center';
+}
+
+function getSingleLineSafeFontWeight(el, wrapMultiline) {
+  if (wrapMultiline || el?.type !== 'text') return undefined;
+  if (el.fontWeight === 'bold') return '600';
+  const numeric =
+    typeof el.fontWeight === 'number'
+      ? el.fontWeight
+      : typeof el.fontWeight === 'string' && /^\d+$/.test(el.fontWeight)
+        ? Number(el.fontWeight)
+        : null;
+  if (numeric != null && numeric >= 700) return '600';
+  return undefined;
+}
+
+function CanvasTemplateTextElement({ el, textContent, wrapMultiline, textBoxWClamped }) {
+  const baseFontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
+  const textBoxLayout = getTextBoxLayoutStyles(el);
+  const containerRef = React.useRef(null);
+  const contentRef = React.useRef(null);
+  const [fitState, setFitState] = React.useState({
+    fontSizePx: baseFontSizePx,
+    scaleX: 1,
+  });
+
+  const applyAutoFit = React.useCallback(() => {
+    if (wrapMultiline || !textContent) {
+      setFitState((prev) => {
+        if (prev.fontSizePx === baseFontSizePx && prev.scaleX === 1) return prev;
+        return { fontSizePx: baseFontSizePx, scaleX: 1 };
+      });
+      return;
+    }
+
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+
+    // Keep a tiny right-edge guard so anti-aliased glyph pixels do not get clipped.
+    const EDGE_GUARD_PX = 3;
+    const availableWidth = Math.max(0, container.clientWidth - EDGE_GUARD_PX);
+    if (availableWidth <= 0) return;
+
+    const MIN_FONT_SIZE_PX = 3;
+    const WIDTH_EPSILON = 0.25;
+    const MIN_SCALE_X = 0.35;
+    const MAX_BINARY_STEPS = 8;
+
+    const doesFitAt = (sizePx) => {
+      content.style.fontSize = `${sizePx}px`;
+      content.style.transform = 'none';
+      return content.scrollWidth <= availableWidth + WIDTH_EPSILON;
+    };
+
+    let fittedFontSizePx = baseFontSizePx;
+    let scaleX = 1;
+
+    if (!doesFitAt(baseFontSizePx)) {
+      let low = MIN_FONT_SIZE_PX;
+      let high = baseFontSizePx;
+
+      for (let i = 0; i < MAX_BINARY_STEPS; i += 1) {
+        const mid = (low + high) / 2;
+        if (doesFitAt(mid)) low = mid;
+        else high = mid;
+      }
+
+      // Keep the largest font size that still fits.
+      fittedFontSizePx = Math.max(MIN_FONT_SIZE_PX, Math.round(low * 10) / 10);
+      content.style.fontSize = `${fittedFontSizePx}px`;
+      const stillNeededWidth = content.scrollWidth;
+      if (stillNeededWidth > availableWidth + WIDTH_EPSILON) {
+        scaleX = Math.max(MIN_SCALE_X, availableWidth / stillNeededWidth);
+      }
+    }
+
+    setFitState((prev) => {
+      const roundedScale = Math.round(scaleX * 1000) / 1000;
+      if (
+        Math.abs(prev.fontSizePx - fittedFontSizePx) < 0.05 &&
+        Math.abs(prev.scaleX - roundedScale) < 0.001
+      ) {
+        return prev;
+      }
+      return { fontSizePx: fittedFontSizePx, scaleX: roundedScale };
+    });
+  }, [baseFontSizePx, textContent, wrapMultiline]);
+
+  React.useLayoutEffect(() => {
+    applyAutoFit();
+  }, [applyAutoFit]);
+
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(() => applyAutoFit());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [applyAutoFit]);
+
+  const scaleOrigin = getAutoFitScaleOrigin(textBoxLayout.content.textAlign);
+  const safeFontWeight = getSingleLineSafeFontWeight(el, wrapMultiline);
+  const safeFontSizePx = wrapMultiline ? fitState.fontSizePx : Math.max(3, fitState.fontSizePx - 0.5);
+  const safeTop = wrapMultiline ? `${el.y}%` : `calc(${el.y}% + 0.8px)`;
+
+  return (
+    <div
+      ref={containerRef}
+      className={`idcard-canvas-el idcard-canvas-text idcard-render-only${wrapMultiline ? ' idcard-canvas-text--wrap' : ''}`}
+      style={{
+        left: `${el.x}%`,
+        top: safeTop,
+        width: `${textBoxWClamped}%`,
+        maxWidth: `${textBoxWClamped}%`,
+        fontSize: `${safeFontSizePx}px`,
+        ...getTextTypographyStyle(el),
+        ...(safeFontWeight ? { fontWeight: safeFontWeight } : {}),
+        ...(el.color ? { color: el.color } : {}),
+        ...textBoxLayout.container,
+      }}
+    >
+      <span
+        ref={contentRef}
+        className="idcard-canvas-text-content"
+        style={{
+          ...textBoxLayout.content,
+          ...(fitState.scaleX < 0.999
+            ? {
+                transform: `scaleX(${fitState.scaleX})`,
+                transformOrigin: scaleOrigin,
+              }
+            : {}),
+        }}
+      >
+        {textContent}
+      </span>
+    </div>
+  );
+}
+
 /**
  * Renders an ID card with given template and data.
  * data: { studentImage, name, studentId, className, schoolName, dateOfBirth, address, email, phone, academyName, schoolLogo, signature }
  * templateId can be internal (navy-design) or API format (template-navy) – both render correctly.
  * template: optional override { image, elements } for uploaded/custom image templates.
  */
+
 export default function IdCardRenderer({ templateId, data, size = 'normal', template: templateOverride }) {
   const { studentImage, name, studentId, className, schoolName, dateOfBirth, address, email, phone, academyName, schoolLogo, signature, elements } = data || {};
   const sizeClass = size === 'small' ? 'idcard--small' : size === 'preview' ? 'idcard--preview' : '';
@@ -119,27 +265,14 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
           const wrapMultiline = el.dataField === 'address';
           const textBoxW = typeof el.width === 'number' && el.width > 0 ? el.width : 42;
           const textBoxWClamped = Math.min(textBoxW, Math.max(1, 100 - el.x));
-          const fontSizePx = getCanvasTextEffectiveFontSizePx(el, textBoxWClamped);
-          const textBoxLayout = getTextBoxLayoutStyles(el);
           return (
-            <div
+            <CanvasTemplateTextElement
               key={el.id}
-              className={`idcard-canvas-el idcard-canvas-text idcard-render-only${wrapMultiline ? ' idcard-canvas-text--wrap' : ''}`}
-              style={{
-                left: `${el.x}%`,
-                top: `${el.y}%`,
-                width: `${textBoxWClamped}%`,
-                maxWidth: `${textBoxWClamped}%`,
-                fontSize: `${fontSizePx}px`,
-                ...getTextTypographyStyle(el),
-                ...(el.color ? { color: el.color } : {}),
-                ...textBoxLayout.container,
-              }}
-            >
-              <span className="idcard-canvas-text-content" style={textBoxLayout.content}>
-                {textContent}
-              </span>
-            </div>
+              el={el}
+              textContent={textContent}
+              wrapMultiline={wrapMultiline}
+              textBoxWClamped={textBoxWClamped}
+            />
           );
         })}
       </div>

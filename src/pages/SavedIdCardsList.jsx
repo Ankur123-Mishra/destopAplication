@@ -255,24 +255,114 @@ function sortClassesForDisplay(list) {
   return [...list].sort(compareClassForDisplay);
 }
 
+function getStudentClassIdStringForSort(student) {
+  if (!student || typeof student !== "object") return null;
+  if (typeof student.classId === "string" && student.classId.trim() !== "")
+    return student.classId.trim();
+  if (student.classId && typeof student.classId === "object") {
+    const id = student.classId._id ?? student.classId.id;
+    if (id != null && id !== "") return String(id);
+  }
+  return null;
+}
+
+/** Same shape as class rows in `classes` — used with compareClassForDisplay. */
+function getPseudoClassForSort(student) {
+  return {
+    className:
+      (typeof student.className === "string" && student.className.trim() !== ""
+        ? student.className
+        : student.classId && typeof student.classId === "object"
+          ? String(student.classId.className ?? "").trim()
+          : "") || "",
+    section:
+      (typeof student.section === "string" ? student.section : "").trim() ||
+      (student.classId && typeof student.classId === "object"
+        ? String(student.classId.section ?? "").trim()
+        : "") ||
+      "",
+  };
+}
+
+/**
+ * Class rank for preview ordering: match school `classes` list when possible,
+ * otherwise infer position from class name/section (smallest class first).
+ */
+
+function getStudentClassRankForPreview(student, classesOrdered) {
+  const list = classesOrdered ?? [];
+  const cid = getStudentClassIdStringForSort(student);
+  if (cid && list.length > 0) {
+    const idx = list.findIndex((c) => c && c._id === cid);
+    if (idx >= 0) return idx;
+  }
+  const pseudo = getPseudoClassForSort(student);
+  if (list.length === 0) return 0;
+  let insertPos = 0;
+  while (
+    insertPos < list.length &&
+    compareClassForDisplay(list[insertPos], pseudo) < 0
+  ) {
+    insertPos += 1;
+  }
+  return insertPos;
+}
+
+function sortStudentsForPreviewPrint(students, classesOrdered) {
+  if (!Array.isArray(students) || students.length <= 1) return students;
+  const list = classesOrdered ?? [];
+  const hasClasses = list.length > 0;
+
+  const nameKey = (s) =>
+    String(s.studentName ?? s.name ?? "")
+      .trim()
+      .toLocaleLowerCase();
+
+  return [...students].sort((a, b) => {
+    if (!hasClasses) {
+      const cmp = compareClassForDisplay(
+        getPseudoClassForSort(a),
+        getPseudoClassForSort(b),
+      );
+      if (cmp !== 0) return cmp;
+      return nameKey(a).localeCompare(nameKey(b));
+    }
+    const ra = getStudentClassRankForPreview(a, list);
+    const rb = getStudentClassRankForPreview(b, list);
+    if (ra !== rb) return ra - rb;
+    return nameKey(a).localeCompare(nameKey(b));
+  });
+}
+
 /** Saved ID card / template present — used for bulk preview and per-row preview. */
-function studentHasRenderableSavedCard(s, schoolListResponse = null) {
+function studentHasRenderableSavedCard(
+  s,
+  schoolListResponse = null,
+  options = {},
+) {
   if (!s || typeof s !== "object") return false;
+  const { allowRootTemplateFallback = true } = options;
   const t = s.template;
   if (isFullApiCanvasTemplate(t)) return true;
+  if (s.hasTemplate === true) return true;
+  if (t && typeof t === "object" && t.templateId) return true;
   const root = schoolListResponse?.template;
   const rootOk = isFullApiCanvasTemplate(root);
 
   if (schoolListResponse == null) {
-    if (s.hasTemplate === true) return true;
-    if (t && typeof t === "object" && t.templateId) return true;
     return false;
   }
 
   // School/class API often omits per-student flags when photo is missing (hasTemplate false),
   // but the shared root template still applies — preview with an empty photo slot.
-  if (rootOk) return true;
+  if (allowRootTemplateFallback && rootOk) return true;
   return false;
+}
+
+function studentHasUploadedPhoto(s) {
+  if (!s || typeof s !== "object") return false;
+  if (typeof s.photoUrl !== "string") return false;
+  return s.photoUrl.trim() !== "";
 }
 
 function formatDateDMY(input) {
@@ -2056,12 +2146,14 @@ export default function SavedIdCardsList({
             fatherName: cleanData.fatherName || "",
             dob: cleanData.dob || cleanData.dateOfBirth || "",
             mobile: cleanData.mobile || cleanData.phone || "",
-            address: cleanData.address || "",
             gender: cleanData.gender || "",
             bloodGroup: cleanData.bloodGroup || "",
             photoNo: cleanData.photoNo || "",
             extraFields: cleanData.extraFields || {}
           };
+          if (Object.prototype.hasOwnProperty.call(cleanData, "address")) {
+            onlinePayload.address = cleanData.address || "";
+          }
           await onlineApi.updateStudent(studentId, onlinePayload);
         }
       }
@@ -2285,31 +2377,15 @@ export default function SavedIdCardsList({
     Promise.all([
       activeApi.getAssignedSchools(),
       activeApi.getStudentsBySchool(schoolId),
-      activeApi.getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
     ])
-      .then(async ([schoolsRes, studentsRes, classesRes]) => {
+      .then(([schoolsRes, studentsRes]) => {
         if (cancelled) return;
         const school = (schoolsRes.schools ?? []).find((s) => s._id === schoolId);
         setSelectedSchool(school || { _id: schoolId, schoolName: schoolId });
 
-        let payload = studentsRes;
-        const classes = classesRes.classes ?? [];
-        if (!isFullApiCanvasTemplate(studentsRes.template) && classes.length > 0) {
-          try {
-            const byClass = await activeApi.getStudentsBySchoolAndClass(
-              schoolId,
-              classes[0]._id,
-            );
-            if (
-              !cancelled &&
-              isFullApiCanvasTemplate(byClass.template)
-            ) {
-              payload = { ...studentsRes, template: byClass.template };
-            }
-          } catch {
-            /* keep school payload */
-          }
-        }
+        // In "See all" list we must keep template eligibility per-student/per-school only.
+        // Borrowing one class template here makes template-missing classes wrongly previewable.
+        const payload = studentsRes;
         if (!cancelled) {
           setSchoolAllStudentsData(payload);
           setLoadingStudents(false);
@@ -2333,13 +2409,27 @@ export default function SavedIdCardsList({
     ? allSchoolStudentsRaw
     : classStudentsRaw;
 
-  const studentsForPreviewPrint = isAllSchoolStudents
-    ? allSchoolStudentsRaw.filter((s) =>
-      studentHasRenderableSavedCard(s, schoolAllStudentsData),
-    )
-    : classStudentsRaw.filter((s) =>
-      studentHasRenderableSavedCard(s, templateStatus),
-    );
+  const studentsForPreviewPrint = React.useMemo(() => {
+    const filtered = isAllSchoolStudents
+      ? allSchoolStudentsRaw.filter((s) =>
+          studentHasUploadedPhoto(s) &&
+          studentHasRenderableSavedCard(s, schoolAllStudentsData, {
+            allowRootTemplateFallback: false,
+          }),
+        )
+      : classStudentsRaw.filter((s) =>
+          studentHasUploadedPhoto(s) &&
+          studentHasRenderableSavedCard(s, templateStatus),
+        );
+    return sortStudentsForPreviewPrint(filtered, classes);
+  }, [
+    isAllSchoolStudents,
+    allSchoolStudentsRaw,
+    classStudentsRaw,
+    schoolAllStudentsData,
+    templateStatus,
+    classes,
+  ]);
 
   const getTemplateName = (templateId, card = null) => {
     if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
@@ -3874,7 +3964,7 @@ export default function SavedIdCardsList({
           <p className="text-muted" style={{ marginBottom: 16 }}>
             {isViewTemplateFlow
               ? "None of these students have template data yet."
-              : "None of these students have a saved ID card yet (or template data is missing)."}
+              : "None of these students are ready for preview (saved card/template or photo is missing)."}
           </p>
         )}
       {!loadingStudents &&
@@ -3910,10 +4000,16 @@ export default function SavedIdCardsList({
         <ul className="saved-idcards-list">
           {studentsForList.map((student) => {
             const card = studentToCard(student);
-            const canOpenPreview = studentHasRenderableSavedCard(
-              student,
-              isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
-            );
+            const hasUploadedPhoto = studentHasUploadedPhoto(student);
+            const canOpenPreview =
+              hasUploadedPhoto &&
+              studentHasRenderableSavedCard(
+                student,
+                isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
+                isAllSchoolStudents
+                  ? { allowRootTemplateFallback: false }
+                  : undefined,
+              );
             return (
               <li key={student._id} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <button
@@ -3922,13 +4018,21 @@ export default function SavedIdCardsList({
                   disabled={!canOpenPreview}
                   title={
                     !canOpenPreview
-                      ? isViewTemplateFlow
-                        ? "No template data for this student"
-                        : "No saved ID card for this student"
+                      ? !hasUploadedPhoto
+                        ? "Photo not uploaded for this student"
+                        : isViewTemplateFlow
+                          ? "No template data for this student"
+                          : "No saved ID card for this student"
                       : undefined
                   }
                   style={{
                     flex: 1,
+                    ...(hasUploadedPhoto
+                      ? {}
+                      : {
+                          backgroundColor: "rgba(255,255,255,0.08)",
+                          borderColor: "rgba(255,255,255,0.2)",
+                        }),
                     ...(!canOpenPreview
                       ? { opacity: 0.55, cursor: "not-allowed" }
                       : {})
@@ -3947,6 +4051,11 @@ export default function SavedIdCardsList({
                         {getTemplateName(card.templateId, card)} ·{" "}
                         {student.admissionNo || student.rollNo || ""} ·{" "}
                         {student.template?.status || ""}
+                      </>
+                    ) : !hasUploadedPhoto ? (
+                      <>
+                        {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
+                        {student.admissionNo || student.rollNo || ""} · Photo missing
                       </>
                     ) : (
                       <>
@@ -4320,7 +4429,11 @@ export default function SavedIdCardsList({
                     className="btn btn-ghost"
                     disabled={exporting || chargingDownloadPoints}
                     onClick={() => setSeeAllJpegDialogOpen(false)}
-                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    style={{
+                      background: "rgba(255,255,255,0.12)",
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      color: "rgba(255,255,255,0.9)",
+                    }}
                   >
                     Cancel
                   </button>
