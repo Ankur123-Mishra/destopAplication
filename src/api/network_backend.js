@@ -177,9 +177,63 @@ export async function getStudentsBySchool(schoolId) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.message || data?.error || "Failed");
+  const schoolStudents = Array.isArray(data.students) ? data.students : [];
+  if (schoolStudents.length > 0) {
+    return {
+      ...data,
+      students: sortStudentsByExcelRowOrder(schoolStudents),
+    };
+  }
+
+  // Some projects occasionally return an empty school-level list even though
+  // class-level student endpoints still have data. Recover from that case.
+  try {
+    const classesRes = await getClassesBySchool(schoolId);
+    const classes = Array.isArray(classesRes?.classes) ? classesRes.classes : [];
+    if (classes.length === 0) {
+      return {
+        ...data,
+        students: [],
+      };
+    }
+
+    const classResults = await Promise.allSettled(
+      classes
+        .map((cls) => cls?._id || cls?.id)
+        .filter((id) => typeof id === "string" && id.trim() !== "")
+        .map((classId) => getStudentsBySchoolAndClass(schoolId, classId)),
+    );
+
+    const deduped = new Map();
+    let fallbackTemplate = null;
+    classResults.forEach((result) => {
+      if (result.status !== "fulfilled") return;
+      const payload = result.value;
+      const rows = Array.isArray(payload?.students) ? payload.students : [];
+      rows.forEach((student) => {
+        const id = student?._id || student?.id;
+        if (typeof id === "string" && id.trim() !== "" && !deduped.has(id)) {
+          deduped.set(id, student);
+        }
+      });
+      if (!fallbackTemplate && payload?.template) {
+        fallbackTemplate = payload.template;
+      }
+    });
+
+    const mergedStudents = sortStudentsByExcelRowOrder(Array.from(deduped.values()));
+    return {
+      ...data,
+      ...(data?.template ? {} : fallbackTemplate ? { template: fallbackTemplate } : {}),
+      students: mergedStudents,
+    };
+  } catch {
+    // Keep original response shape when fallback probing fails.
+  }
+
   return {
     ...data,
-    students: sortStudentsByExcelRowOrder(data.students ?? []),
+    students: sortStudentsByExcelRowOrder(schoolStudents),
   };
 }
 

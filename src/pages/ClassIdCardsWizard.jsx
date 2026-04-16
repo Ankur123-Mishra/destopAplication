@@ -146,10 +146,19 @@ function isFullCanvasTemplateShape(t) {
   );
 }
 
+function templateLayoutScore(t) {
+  if (!isFullCanvasTemplateShape(t)) return -1;
+  const frontCount = Array.isArray(t.elements) ? t.elements.length : 0;
+  const backCount = Array.isArray(t.backElements) ? t.backElements.length : 0;
+  const hasBackArt = t.backImage ? 1 : 0;
+  return frontCount + backCount + hasBackArt;
+}
+
 /**
  * Template the school actually uploaded (API root layout and/or school doc / localStorage for school).
  * Not derived only from a student's assigned card layout.
  */
+
 function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, offlineMode) {
   const raw = studentsRes?.students ?? [];
   let schoolDoc = null;
@@ -164,11 +173,19 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, offlineMode
     if (s) schoolDoc = s;
   }
 
-  if (!offlineMode && isFullCanvasTemplateShape(studentsRes?.template)) {
-    return studentsRes.template;
+  const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  const onlineTemplate = studentsRes?.template;
+  if (!offlineMode && isFullCanvasTemplateShape(onlineTemplate)) {
+    if (
+      isFullCanvasTemplateShape(fallbackOfflineTemplate) &&
+      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(onlineTemplate)
+    ) {
+      return fallbackOfflineTemplate;
+    }
+    return onlineTemplate;
   }
 
-  return offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  return fallbackOfflineTemplate;
 }
 
 const SAVED_ID_CARDS_FLAG_PREFIX = 'classIdCardsWizard.savedIdCardsSchool:';
@@ -293,7 +310,17 @@ function mapApiStudent(s) {
     name: s.studentName,
     studentId: s.studentId || s.admissionNo || s.rollNo || s.uniqueCode || '',
     admissionNo: s.admissionNo || '',
-    rollNo: s.rollNo || '',
+    rollNo:
+      s.rollNo ||
+      s.sNo ||
+      s.sno ||
+      s.srNo ||
+      s.srno ||
+      s.serialNo ||
+      s.serial ||
+      s.admissionNo ||
+      s.uniqueCode ||
+      '',
     uniqueCode: s.uniqueCode || '',
     dateOfBirth: s.dateOfBirth || s.dob || '',
     phone: s.phone || s.mobile || s.contactNo || '',
@@ -339,6 +366,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const templateIdFromUrl = params.templateId;
   const path = location.pathname;
   const fromUploadedPhotos = location.state?.fromUploadedPhotos;
+  const preferredOfflineMode = location.state?.preferredOfflineMode;
   const stateSchool = location.state?.school;
   const stateClass = location.state?.class;
   const stateStudents = location.state?.students;
@@ -383,6 +411,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   /** True once this school has at least one saved ID card (local flag or API student rows). Used to show "Edit template" only after a save. */
   const [schoolHasSavedIdCards, setSchoolHasSavedIdCards] = useState(false);
   const [editorOpenedFromApiClassTemplate, setEditorOpenedFromApiClassTemplate] = useState(false);
+
+  useEffect(() => {
+    if (typeof preferredOfflineMode !== 'boolean') return;
+    if (preferredOfflineMode === offlineMode) return;
+    setOfflineMode(preferredOfflineMode);
+  }, [preferredOfflineMode, offlineMode, setOfflineMode]);
   const frontFileInputRef = useRef(null);
   const backFileInputRef = useRef(null);
 

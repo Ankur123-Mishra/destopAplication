@@ -314,6 +314,22 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
       try {
         if (typeof onUploadProgress === 'function') onUploadProgress(40);
         const data = new Uint8Array(e.target.result);
+        const originalExcelArrayBuffer = e.target.result;
+        try {
+          await db.schools.update(schoolId, {
+            sourceExcelUpload: {
+              name: file?.name || 'students.xlsx',
+              type:
+                file?.type ||
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              arrayBuffer: originalExcelArrayBuffer,
+              savedAt: new Date().toISOString(),
+            },
+          });
+        } catch (cacheErr) {
+          // Non-fatal: parsing + local student import should continue even if Excel caching fails.
+          console.warn('Failed to cache original Excel for sync resume', cacheErr);
+        }
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];

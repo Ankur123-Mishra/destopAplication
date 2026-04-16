@@ -95,6 +95,14 @@ function isFullApiCanvasTemplate(t) {
   );
 }
 
+function templateLayoutScore(t) {
+  if (!isFullApiCanvasTemplate(t)) return -1;
+  const frontCount = Array.isArray(t.elements) ? t.elements.length : 0;
+  const backCount = Array.isArray(t.backElements) ? t.backElements.length : 0;
+  const hasBackArt = t.backImage ? 1 : 0;
+  return frontCount + backCount + hasBackArt;
+}
+
 /** Same localStorage key as ClassIdCardsWizard — "saved ID cards" flag per school. */
 const SAVED_ID_CARDS_FLAG_PREFIX = "classIdCardsWizard.savedIdCardsSchool:";
 
@@ -143,11 +151,19 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, isOnlineMod
     if (s) schoolDoc = s;
   }
 
-  if (isOnlineMode && isFullApiCanvasTemplate(studentsRes?.template)) {
-    return studentsRes.template;
+  const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  const onlineTemplate = studentsRes?.template;
+  if (isOnlineMode && isFullApiCanvasTemplate(onlineTemplate)) {
+    if (
+      isFullApiCanvasTemplate(fallbackOfflineTemplate) &&
+      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(onlineTemplate)
+    ) {
+      return fallbackOfflineTemplate;
+    }
+    return onlineTemplate;
   }
 
-  return offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  return fallbackOfflineTemplate;
 }
 
 /**
@@ -186,12 +202,23 @@ function mergeExtraFieldsFromStudent(student) {
     if (ex[key] != null && ex[key] !== "") return;
     ex[key] = val;
   };
+  const resolveRollNo = (s) =>
+    s?.rollNo ??
+    s?.sNo ??
+    s?.sno ??
+    s?.srNo ??
+    s?.srno ??
+    s?.serialNo ??
+    s?.serial ??
+    s?.admissionNo ??
+    s?.uniqueCode ??
+    "";
   fill("fatherName", student.fatherName);
   fill("motherName", student.motherName);
   fill("guardianName", student.guardianName);
   fill("className", student.className);
   fill("section", student.section);
-  fill("rollNo", student.rollNo);
+  fill("rollNo", resolveRollNo(student));
   fill("admissionNo", student.admissionNo);
   fill("uniqueCode", student.uniqueCode);
   fill("phone", student.phone ?? student.mobile);
@@ -2008,7 +2035,7 @@ export default function SavedIdCardsList({
   const isAllSchoolStudents =
     Boolean(allStudentsMatch) ||
     pathnameIsSchoolAllStudentsRoute(location.pathname, basePath);
-  const { user } = useApp();
+  const { user, setOfflineMode } = useApp();
   const isViewTemplateFlow = basePath === "/view-template";
   const [viewMode, setViewMode] = useState("offline"); // offline | online
   const showOnlineProjects = user?.id !== "offline-user";
@@ -2184,6 +2211,10 @@ export default function SavedIdCardsList({
     if (showOnlineProjects) return;
     if (viewMode === "online") setViewMode("offline");
   }, [showOnlineProjects, viewMode]);
+
+  useEffect(() => {
+    setOfflineMode(viewMode !== "online");
+  }, [viewMode, setOfflineMode]);
 
   // Fetch schools when on root saved-id-cards
   useEffect(() => {
@@ -2468,12 +2499,26 @@ export default function SavedIdCardsList({
       ? "uploaded-custom"
       : apiTemplate?.templateId;
 
+    const extraFields = mergeExtraFieldsFromStudent(student);
+    const resolvedRollNo =
+      student.rollNo ??
+      student.sNo ??
+      student.sno ??
+      student.srNo ??
+      student.srno ??
+      student.serialNo ??
+      student.serial ??
+      student.admissionNo ??
+      student.uniqueCode ??
+      "";
+
     return {
       _id: student._id,
       id: apiTemplate?.templateId || student._id,
       studentId:
         student.admissionNo ?? student.rollNo ?? student.uniqueCode ?? "",
       name: student.studentName ?? "",
+      rollNo: resolvedRollNo,
       templateId,
       uploadedTemplate: isApiTemplateRenderable
         ? {
@@ -2497,7 +2542,7 @@ export default function SavedIdCardsList({
         student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
       phone: student.mobile ?? student.phone ?? undefined,
       email: student.email ?? undefined,
-      extraFields: mergeExtraFieldsFromStudent(student),
+      extraFields,
       dimension:
         student.school?.dimension ??
         (typeof student.schoolId === "object"
@@ -3833,7 +3878,9 @@ export default function SavedIdCardsList({
               type="button"
               className="btn btn-primary"
               onClick={() =>
-                navigate(`/view-template/wizard/students/${schoolId}/all`)
+                navigate(`/view-template/wizard/students/${schoolId}/all`, {
+                  state: { preferredOfflineMode: viewMode !== "online" },
+                })
               }
               style={{ padding: "10px 16px" }}
             >
@@ -3845,7 +3892,10 @@ export default function SavedIdCardsList({
                 className="btn btn-secondary"
                 onClick={() =>
                   navigate(`/view-template/wizard/students/${schoolId}/all`, {
-                    state: { openEditTemplate: true },
+                    state: {
+                      openEditTemplate: true,
+                      preferredOfflineMode: viewMode !== "online",
+                    },
                   })
                 }
                 style={{ padding: "10px 16px" }}
@@ -4706,7 +4756,7 @@ export default function SavedIdCardsList({
           background: #1a1a1a;
           border-radius: 12px;
           max-width: 100%;
-          max-height: 100%;
+          max-height: calc(100vh - 40px);
           overflow: auto;
           display: flex;
           flex-direction: column;
@@ -4725,6 +4775,7 @@ export default function SavedIdCardsList({
           display: flex;
           align-items: center;
           justify-content: center;
+          flex: 1;
           min-height: 280px;
         }
         .preview-card-stack {
@@ -4842,12 +4893,13 @@ export default function SavedIdCardsList({
           justify-content: flex-start;
         }
         .preview-page--center {
-          align-items: flex-start !important;
-          justify-content: flex-start !important;
+          align-items: center !important;
+          justify-content: center !important;
         }
         .preview-page--center .print-cards-grid.print-cards-grid--preview {
-          width: 100% !important;
-          height: 100% !important;
+          width: max-content !important;
+          height: max-content !important;
+          margin: 0 auto;
         }
         .preview-page--front,
         .preview-page--front .print-cards-grid.print-cards-grid--preview {
