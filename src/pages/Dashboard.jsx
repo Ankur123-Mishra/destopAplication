@@ -37,15 +37,38 @@ const defaultStats = {
 export default function Dashboard() {
   const { user, isSyncing, syncMessage, startGlobalSync } = useApp();
   const navigate = useNavigate();
-  const [stats, setStats] = useState(defaultStats);
-  const [schools, setSchools] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const DASH_CACHE_VERSION = 1;
+  const makeCacheKey = (mode) => `dashboard_cache_v${DASH_CACHE_VERSION}:${mode}`;
+  const readCache = (mode) => {
+    try {
+      const raw = sessionStorage.getItem(makeCacheKey(mode));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (!parsed.stats || !Array.isArray(parsed.schools)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+  const writeCache = (mode, payload) => {
+    try {
+      sessionStorage.setItem(makeCacheKey(mode), JSON.stringify(payload));
+    } catch {
+      // ignore cache write failures (storage full / private mode)
+    }
+  };
+
+  const [viewMode, setViewMode] = useState('offline'); // online | offline
+  const initialCache = readCache('offline');
+  const [stats, setStats] = useState(initialCache?.stats ?? defaultStats);
+  const [schools, setSchools] = useState(initialCache?.schools ?? []);
+  const [loading, setLoading] = useState(!initialCache);
   const [error, setError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createModalVersion, setCreateModalVersion] = useState(0);
   const [deletingSchoolId, setDeletingSchoolId] = useState(null);
   const [deleteConfirmTargetId, setDeleteConfirmTargetId] = useState(null);
-  const [viewMode, setViewMode] = useState('offline'); // online | offline
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState([]);
   const [projectFolderExcel, setProjectFolderExcel] = useState(null);
   const projectFolderInputRef = useRef(null);
@@ -64,7 +87,12 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      const cached = readCache(viewMode);
+      if (cached) {
+        setStats(cached.stats);
+        setSchools(cached.schools);
+      }
+      setLoading(!cached);
       setError('');
       try {
         const fetchDash = viewMode === 'online' ? getOnlineDashboard() : getOfflineDashboard();
@@ -74,18 +102,20 @@ export default function Dashboard() {
           fetchDash,
           fetchSchools,
         ]);
-        console.log(dashboardRes);
 
         if (cancelled) return;
-        setStats({
+        const nextStats = {
           assignedSchools: dashboardRes.assignedSchools ?? 0,
           totalStudents: dashboardRes.totalStudents ?? 0,
           photoPending: dashboardRes.photoPending ?? 0,
           photoUploaded: dashboardRes.photoUploaded ?? 0,
           correctionRequired: dashboardRes.correctionsFromSchool ?? 0,
           deliveryPending: dashboardRes.deliveryPending ?? 0,
-        });
-        setSchools(schoolsRes.schools ?? []);
+        };
+        const nextSchools = schoolsRes.schools ?? [];
+        setStats(nextStats);
+        setSchools(nextSchools);
+        writeCache(viewMode, { stats: nextStats, schools: nextSchools, cachedAt: Date.now() });
       } catch (err) {
         if (!cancelled) setError(err?.message || `Failed to load ${viewMode} dashboard`);
       } finally {
@@ -258,8 +288,6 @@ export default function Dashboard() {
     // { label: 'Correction From School', value: stats.correctionRequired, icon: '⚠️' },
     // { label: 'Delivery Pending', value: stats.deliveryPending, icon: '📦' },
   ];
-
-  console.log("stats", stats);
 
   return (
     <>

@@ -108,13 +108,13 @@ export function resolveOfflinePhotographerTemplate(schoolId, studentsRaw, school
 
 // --- Mocks to replace the previous API tokens ---
 export async function getDashboard() {
-  const schoolsList = await db.schools.toArray();
-  const assignedSchools = schoolsList.length;
-  const schoolIds = schoolsList.map((s) => s.id);
-  const totalStudents =
-    schoolIds.length === 0
-      ? 0
-      : await db.students.where('schoolId').anyOf(schoolIds).count();
+  // Avoid reading full rows when we only need counts.
+  // `toArray()` can be slow for large datasets, especially on first DB open/upgrade.
+  const assignedSchools = await db.schools.count();
+  const schoolIds = assignedSchools === 0 ? [] : await db.schools.toCollection().primaryKeys();
+  const totalStudents = schoolIds.length === 0
+    ? 0
+    : await db.students.where('schoolId').anyOf(schoolIds).count();
 
   return {
     assignedSchools,
@@ -314,22 +314,6 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
       try {
         if (typeof onUploadProgress === 'function') onUploadProgress(40);
         const data = new Uint8Array(e.target.result);
-        const originalExcelArrayBuffer = e.target.result;
-        try {
-          await db.schools.update(schoolId, {
-            sourceExcelUpload: {
-              name: file?.name || 'students.xlsx',
-              type:
-                file?.type ||
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              arrayBuffer: originalExcelArrayBuffer,
-              savedAt: new Date().toISOString(),
-            },
-          });
-        } catch (cacheErr) {
-          // Non-fatal: parsing + local student import should continue even if Excel caching fails.
-          console.warn('Failed to cache original Excel for sync resume', cacheErr);
-        }
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
