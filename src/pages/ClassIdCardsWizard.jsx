@@ -22,10 +22,13 @@ import {
   subscribeProjectBulkPhotoPreview,
 } from '../utils/projectBulkPhotoPreview';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
+import { List } from 'react-window';
 import '../components/IdCardRenderer.css';
 import '../components/IdCardCanvasEditor.css';
 
 const STEPS = { SELECT_SCHOOL: 1, SELECT_CLASS: 2, STUDENTS_IMAGES: 3, SELECT_TEMPLATE: 4, REVIEW_SAVE: 5 };
+const CLASS_IDCARD_STUDENT_ROW_HEIGHT = 88;
+const CLASS_IDCARD_STUDENT_LIST_VIEWPORT_HEIGHT = 520;
 
 /** Default elements for uploaded template – first time only photo on front */
 function uploadedTemplateDefaultElements() {
@@ -137,27 +140,18 @@ function normalizeClassNameForDisplay(label) {
 }
 
 /**
- * Per-student template row in Dexie: layout + ids only. Never embed front/back artwork here — the
- * same base64 art is large; duplicating it for every student causes OOM / white screen on preview
- * for rosters of 1000+.
- * Full images come from `school.offlineIdCardTemplate`, uploaded-template storage, or the
- * built-in template registry via `templateId` (see dashboard.resolveOfflinePhotographerTemplate).
+ * Per-student template row in Dexie: keep only tiny metadata. Shared layout/artwork is already
+ * available from the school-level uploaded template or the template registry, so duplicating full
+ * element arrays per student quickly blows up renderer memory on large batches.
  */
 function buildSlimPerStudentOfflineTemplate(isUploaded, effectiveUploadedTemplate, template, templateId) {
-  if (isUploaded && effectiveUploadedTemplate) {
-    return {
-      templateId,
-      name: effectiveUploadedTemplate.name,
-      elements: effectiveUploadedTemplate.elements,
-      ...(Array.isArray(effectiveUploadedTemplate.backElements)
-        ? { backElements: effectiveUploadedTemplate.backElements }
-        : {}),
-    };
-  }
-  if (template?.frontImage && Array.isArray(template.elements)) {
-    return { templateId, name: template?.name };
-  }
-  return { templateId, name: template?.name };
+  const name = isUploaded
+    ? effectiveUploadedTemplate?.name
+    : template?.name;
+  return {
+    templateId,
+    ...(name ? { name } : {}),
+  };
 }
 
 function isFullCanvasTemplateShape(t) {
@@ -183,7 +177,7 @@ function templateLayoutScore(t) {
  * Not derived only from a student's assigned card layout.
  */
 
-function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, offlineMode) {
+function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _offlineMode) {
   const raw = studentsRes?.students ?? [];
   let schoolDoc = null;
   const first = raw[0];
@@ -198,15 +192,15 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, offlineMode
   }
 
   const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
-  const onlineTemplate = studentsRes?.template;
-  if (!offlineMode && isFullCanvasTemplateShape(onlineTemplate)) {
+  const responseTemplate = studentsRes?.template;
+  if (isFullCanvasTemplateShape(responseTemplate)) {
     if (
       isFullCanvasTemplateShape(fallbackOfflineTemplate) &&
-      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(onlineTemplate)
+      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(responseTemplate)
     ) {
       return fallbackOfflineTemplate;
     }
-    return onlineTemplate;
+    return responseTemplate;
   }
 
   return fallbackOfflineTemplate;
@@ -245,6 +239,53 @@ function rawStudentsIndicateSavedIdCards(rawStudents) {
 
 function computeSchoolHasSavedIdCards(schoolId, rawStudents) {
   return readSavedIdCardsFlagForSchool(schoolId) || rawStudentsIndicateSavedIdCards(rawStudents);
+}
+
+function VirtualizedWizardStudentRow({
+  index,
+  style,
+  ariaAttributes,
+  students,
+  selectedStudentIdSet,
+  getImageForStudent,
+  toggleStudentSelection,
+}) {
+  const student = students[index];
+  if (!student) return null;
+  const img = getImageForStudent(student);
+  const isSelected = selectedStudentIdSet.has(student.id);
+  return (
+    <div style={{ ...style, paddingBottom: 0 }} {...ariaAttributes}>
+      <div
+        className={`class-idcards-student-row ${isSelected ? 'class-idcards-student-row-selected' : ''}`}
+        style={{ height: '100%' }}
+      >
+        <label className="class-idcards-student-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => toggleStudentSelection(student.id)}
+          />
+          <span className="class-idcards-student-checkbox-label">Include</span>
+        </label>
+        <div className="class-idcards-student-photo-wrap">
+          {img ? (
+            <img src={img} alt={student.name} className="class-idcards-student-photo" />
+          ) : (
+            <div className="class-idcards-student-placeholder">📷</div>
+          )}
+        </div>
+        <div className="class-idcards-student-info">
+          <span className="class-idcards-student-name">{student.name}</span>
+          {student.className ? (
+            <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+              {normalizeClassNameForDisplay(student.className)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** For template upload API (expects data URLs); fetch http(s) / blob URLs into data URL */
@@ -383,7 +424,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
-  const { user, schools: contextSchools, classes: classList, getStudents, addSavedIdCard, offlineMode, setOfflineMode } = useApp();
+  const { user, schools: contextSchools, classes: classList, getStudents, offlineMode, setOfflineMode } = useApp();
 
   const schoolIdFromUrl = params.schoolId;
   const classIdFromUrl = params.classId;
@@ -443,6 +484,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   }, [preferredOfflineMode, offlineMode, setOfflineMode]);
   const frontFileInputRef = useRef(null);
   const backFileInputRef = useRef(null);
+  const studentsListWrapRef = useRef(null);
+  const [studentsListWidth, setStudentsListWidth] = useState(860);
 
   useEffect(() => {
     setStep(stepFromPath);
@@ -653,6 +696,23 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     }
   }, [effectiveSchoolId, effectiveClassId, students]);
 
+  React.useLayoutEffect(() => {
+    if (step !== STEPS.STUDENTS_IMAGES) return undefined;
+    const el = studentsListWrapRef.current;
+    if (!el) return undefined;
+    const updateWidth = (width) => {
+      setStudentsListWidth(Math.max(320, Math.floor(width)));
+    };
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        updateWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    updateWidth(el.clientWidth || el.getBoundingClientRect().width || 860);
+    return () => ro.disconnect();
+  }, [step, students.length]);
+
   const arrangeEditorElements = useMemo(() => {
     // "Edit template" should open with the latest saved server/school layout.
     // Do not override it with any stale local draft from older sessions.
@@ -740,7 +800,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   ], [fabricTemplates, savedUploadedTemplates]);
 
   const bulkSchoolId = school?.id || schoolIdFromUrl || null;
-  const getImageForStudent = (student) => {
+  const getImageForStudent = useCallback((student) => {
     const fromPicker = studentImages[student.id];
     if (fromPicker) return fromPicker;
     if (bulkSchoolId) {
@@ -748,29 +808,57 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       if (bulk) return bulk;
     }
     return student.photoUrl ?? null;
-  };
-  const setImageForStudent = (studentId, dataUrl) => {
-    setStudentImages((prev) => ({ ...prev, [studentId]: dataUrl }));
-  };
+  }, [bulkSchoolId, bulkPreviewEpoch, studentImages]);
 
+  const selectedStudentIdSet = useMemo(
+    () => new Set(selectedStudentIds),
+    [selectedStudentIds],
+  );
   const selectedStudents = useMemo(
-    () => students.filter((s) => selectedStudentIds.includes(s.id)),
-    [students, selectedStudentIds]
+    () => students.filter((s) => selectedStudentIdSet.has(s.id)),
+    [students, selectedStudentIdSet]
+  );
+  const selectedStudentsWithPhotos = useMemo(
+    () => selectedStudents.filter((s) => Boolean(getImageForStudent(s))),
+    [selectedStudents, getImageForStudent]
+  );
+  const firstSelectedStudent = selectedStudents[0] ?? null;
+  const firstSelectedHasPhoto = useMemo(
+    () => Boolean(firstSelectedStudent && getImageForStudent(firstSelectedStudent)),
+    [firstSelectedStudent, getImageForStudent]
+  );
+  const studentsListViewportHeight = useMemo(
+    () => Math.min(
+      CLASS_IDCARD_STUDENT_LIST_VIEWPORT_HEIGHT,
+      Math.max(CLASS_IDCARD_STUDENT_ROW_HEIGHT, students.length * CLASS_IDCARD_STUDENT_ROW_HEIGHT),
+    ),
+    [students.length]
   );
 
   const canProceedFromStudents = useMemo(() => {
     if (selectedStudents.length === 0) return false;
-    const firstSelected = selectedStudents[0];
-    return Boolean(getImageForStudent(firstSelected));
-  }, [selectedStudents, studentImages, bulkPreviewEpoch, bulkSchoolId]);
+    return firstSelectedHasPhoto;
+  }, [selectedStudents.length, firstSelectedHasPhoto]);
 
-  const toggleStudentSelection = (studentId) => {
+  const toggleStudentSelection = useCallback((studentId) => {
     setSelectedStudentIds((prev) =>
       prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId]
     );
-  };
-  const selectAllStudents = () => setSelectedStudentIds(students.map((s) => s.id));
-  const deselectAllStudents = () => setSelectedStudentIds([]);
+  }, []);
+  const selectAllStudents = useCallback(
+    () => setSelectedStudentIds(students.map((s) => s.id)),
+    [students],
+  );
+  const deselectAllStudents = useCallback(() => setSelectedStudentIds([]), []);
+  const virtualizedStudentRowProps = useMemo(
+    () => ({
+      students,
+      selectedStudentIdSet,
+      getImageForStudent,
+      toggleStudentSelection,
+    }),
+    [students, selectedStudentIdSet, getImageForStudent, toggleStudentSelection]
+  );
 
   /**
    * Save all selected students' ID cards for `templateId`, then open the template preview list.
@@ -787,7 +875,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       : getTemplateById(templateId) || getFabricTemplateById(templateId);
     if (!template && !isUploaded) return;
     if (isUploaded && !effectiveUploadedTemplate?.elements) return;
-    const studentIds = selectedStudents.filter((s) => getImageForStudent(s)).map((s) => s.id);
+    const studentIds = selectedStudentsWithPhotos.map((s) => s.id);
     if (studentIds.length === 0) return { skipped: true };
 
     if (manageSavingState) setSavingAll(true);
@@ -799,41 +887,16 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           : onlineApi.bulkSaveTemplates(apiTemplateId, studentIds));
       }
 
+      const persistedStudentTemplate = buildSlimPerStudentOfflineTemplate(
+        isUploaded,
+        effectiveUploadedTemplate,
+        template,
+        templateId,
+      );
       const offlineUpdates = [];
 
-      selectedStudents.forEach((student) => {
-        const image = getImageForStudent(student);
-        if (!image) return;
-        const cardData = {
-          templateId,
-          studentImage: image,
-          name: student.name,
-          studentId: student.studentId,
-          className: normalizeClassNameForDisplay(student.className || cls.name),
-          schoolName: school.name,
-          address: school.address,
-        };
-
-        let offlineTemplateObj = buildSlimPerStudentOfflineTemplate(
-          isUploaded,
-          effectiveUploadedTemplate,
-          template,
-          templateId,
-        );
-
-        if (isUploaded && effectiveUploadedTemplate) {
-          cardData.uploadedTemplate = {
-            name: effectiveUploadedTemplate.name,
-            elements: effectiveUploadedTemplate.elements,
-            ...(Array.isArray(effectiveUploadedTemplate.backElements)
-              ? { backElements: effectiveUploadedTemplate.backElements }
-              : {}),
-          };
-        }
-
-        offlineUpdates.push({ id: student.id, template: offlineTemplateObj });
-
-        addSavedIdCard(student.id, cardData, { schoolId: school.id, classId: cls.id });
+      selectedStudentsWithPhotos.forEach((student) => {
+        offlineUpdates.push({ id: student.id, template: persistedStudentTemplate });
       });
 
       if (offlineUpdates.length > 0) {
@@ -1344,73 +1407,25 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           <p className="text-muted class-idcards-students-next-hint" style={{ fontSize: '0.9rem', marginBottom: 16, marginTop: 0 }}>
             First selected needs a photo to continue
             {selectedStudents.length > 0
-              ? ` (${getImageForStudent(selectedStudents[0]) ? 'done' : 'missing'}) · ${selectedStudents.filter((s) => getImageForStudent(s)).length} / ${selectedStudents.length} with photos overall`
+              ? ` (${firstSelectedHasPhoto ? 'done' : 'missing'}) · ${selectedStudentsWithPhotos.length} / ${selectedStudents.length} with photos overall`
               : ''}
           </p>
-          <div className="class-idcards-students-grid">
-            {students.map((student) => {
-              const img = getImageForStudent(student);
-              const isSelected = selectedStudentIds.includes(student.id);
-              return (
-                <div key={student.id} className={`class-idcards-student-row ${isSelected ? 'class-idcards-student-row-selected' : ''}`}>
-                  <label className="class-idcards-student-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleStudentSelection(student.id)}
-                    />
-                    <span className="class-idcards-student-checkbox-label">Include</span>
-                  </label>
-                  <div className="class-idcards-student-photo-wrap">
-                    {img ? (
-                      <img src={img} alt={student.name} className="class-idcards-student-photo" />
-                    ) : (
-                      <div className="class-idcards-student-placeholder">📷</div>
-                    )}
-                  </div>
-                  <div className="class-idcards-student-info">
-                    <span className="class-idcards-student-name">{student.name}</span>
-                    {student.className ? (
-                      <span className="text-muted" style={{ fontSize: '0.8rem' }}>{normalizeClassNameForDisplay(student.className)}</span>
-                    ) : null}
-                  </div>
-                  {/* Change / Select photo control — commented out
-                  <label className="btn btn-secondary btn-sm" style={{ cursor: uploadingStudentId === student.id ? 'wait' : 'pointer', marginLeft: 'auto' }}>
-                    {uploadingStudentId === student.id ? 'Uploading…' : (img ? 'Change photo' : 'Select photo')}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      style={{ display: 'none' }}
-                      disabled={uploadingStudentId === student.id}
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file?.type.startsWith('image/')) {
-                          e.target.value = '';
-                          return;
-                        }
-                        setUploadingStudentId(student.id);
-                        try {
-                          const fileToUpload = await compressImageForUpload(file);
-                          const res = await (offlineMode ? offlineApi.uploadStudentPhoto(student.id, fileToUpload, 'Photographer Desktop App') : onlineApi.uploadStudentPhoto(student.id, fileToUpload, 'Photographer Desktop App'));
-                          const photoUrl = res?.photoUrl;
-                          const displayUrl = photoUrl
-                            ? (photoUrl.startsWith('http') ? photoUrl : `${API_BASE_URL.replace(/\/$/, '')}${photoUrl.startsWith('/') ? photoUrl : '/' + photoUrl}`)
-                            : URL.createObjectURL(fileToUpload);
-                          setImageForStudent(student.id, displayUrl);
-                          alert('Successfully uploaded!');
-                        } catch (err) {
-                          alert(err?.message || 'Upload failed. Please try again.');
-                        } finally {
-                          setUploadingStudentId(null);
-                          e.target.value = '';
-                        }
-                      }}
-                    />
-                  </label>
-                  */}
-                </div>
-              );
-            })}
+          <div ref={studentsListWrapRef} className="class-idcards-students-virtual-wrap">
+            {students.length > 0 ? (
+              <List
+                rowCount={students.length}
+                rowHeight={CLASS_IDCARD_STUDENT_ROW_HEIGHT}
+                rowComponent={VirtualizedWizardStudentRow}
+                rowProps={virtualizedStudentRowProps}
+                overscanCount={8}
+                style={{
+                  height: studentsListViewportHeight,
+                  width: studentsListWidth,
+                }}
+              />
+            ) : (
+              <p className="text-muted" style={{ margin: 0 }}>No students found for this class.</p>
+            )}
           </div>
         </div>
         </div>
@@ -1419,9 +1434,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
             padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
             max-width: 100%;
           }
-          .class-idcards-students-grid { display: flex; flex-direction: column; gap: 12px; }
+          .class-idcards-students-virtual-wrap { width: 100%; }
           .class-idcards-student-row {
             display: flex; align-items: center; gap: 16px;
+            box-sizing: border-box;
             padding: 12px; background: rgba(255,255,255,0.04); border-radius: 12px; border: 1px solid rgba(255,255,255,0.08);
           }
           .class-idcards-student-row-selected { border-color: rgba(52, 152, 219, 0.4); background: rgba(52, 152, 219, 0.06); }
@@ -1913,7 +1929,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     const template = isUploadedTemplate
       ? (reviewUploadedTemplate ? { name: reviewUploadedTemplate.name || 'Uploaded Template' } : null)
       : (getTemplateById(selectedTemplateId) || getFabricTemplateById(selectedTemplateId));
-    const readyCount = selectedStudents.filter((s) => getImageForStudent(s)).length;
+    const readyCount = selectedStudentsWithPhotos.length;
     return (
       <>
         <Header

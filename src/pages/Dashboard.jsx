@@ -11,12 +11,9 @@ import {
 import {
   getDashboard as getOfflineDashboard,
   getAssignedSchools as getOfflineSchools,
-  getClassesBySchool,
-  getStudentsBySchoolAndClass,
+  getStudentsBySchool,
   uploadStudentPhoto,
   deletePhotographerSchool as deleteOfflineSchool,
-  createSchool,
-  bulkUploadStudentsXls,
 } from '../api/dashboard';
 
 import {
@@ -34,10 +31,22 @@ const defaultStats = {
   deliveryPending: 0,
 };
 
+function toDashboardSchoolSummary(school) {
+  if (!school || typeof school !== 'object') return null;
+  const id = school._id || school.id;
+  return {
+    id,
+    _id: id,
+    schoolName: school.schoolName || '',
+    address: school.address || '',
+    schoolCode: school.schoolCode || '',
+  };
+}
+
 export default function Dashboard() {
-  const { user, isSyncing, syncMessage, startGlobalSync } = useApp();
+  const { user, isSyncing, startGlobalSync } = useApp();
   const navigate = useNavigate();
-  const DASH_CACHE_VERSION = 1;
+  const DASH_CACHE_VERSION = 2;
   const makeCacheKey = (mode) => `dashboard_cache_v${DASH_CACHE_VERSION}:${mode}`;
   const readCache = (mode) => {
     try {
@@ -112,7 +121,9 @@ export default function Dashboard() {
           correctionRequired: dashboardRes.correctionsFromSchool ?? 0,
           deliveryPending: dashboardRes.deliveryPending ?? 0,
         };
-        const nextSchools = schoolsRes.schools ?? [];
+        const nextSchools = (schoolsRes.schools ?? [])
+          .map(toDashboardSchoolSummary)
+          .filter(Boolean);
         setStats(nextStats);
         setSchools(nextSchools);
         writeCache(viewMode, { stats: nextStats, schools: nextSchools, cachedAt: Date.now() });
@@ -195,21 +206,12 @@ export default function Dashboard() {
   const uploadPhotosAfterExcel = async (schoolId) => {
     const files = pendingPhotoFilesRef.current;
     if (!files?.length) return;
-    const classesRes = await getClassesBySchool(schoolId);
-    const classes = classesRes.classes ?? [];
-    if (classes.length === 0) return;
-    const studentResList = await Promise.all(
-      classes.map((cls) => getStudentsBySchoolAndClass(schoolId, cls._id))
-    );
-    const combined = [];
-    studentResList.forEach((sr) => {
-      (sr.students ?? []).forEach((s) => {
-        combined.push({
-          id: s._id,
-          studentId: studentPhotoMatchKey(s),
-        });
-      });
-    });
+    const studentsRes = await getStudentsBySchool(schoolId);
+    const combined = (studentsRes.students ?? []).map((student) => ({
+      id: student._id,
+      studentId: studentPhotoMatchKey(student),
+    }));
+    if (combined.length === 0) return;
     const fileMap = {};
     files.forEach((file) => {
       addPhotoFileToMap(fileMap, file);

@@ -140,7 +140,7 @@ function computeSchoolHasSavedIdCards(schoolId, rawStudents) {
 /**
  * Same logic as ClassIdCardsWizard pickSchoolLevelTemplate — school-level uploaded layout for Edit template.
  */
-function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, isOnlineMode) {
+function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _isOnlineMode) {
   const raw = studentsRes?.students ?? [];
   let schoolDoc = null;
   const first = raw[0];
@@ -160,15 +160,15 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, isOnlineMod
   }
 
   const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
-  const onlineTemplate = studentsRes?.template;
-  if (isOnlineMode && isFullApiCanvasTemplate(onlineTemplate)) {
+  const responseTemplate = studentsRes?.template;
+  if (isFullApiCanvasTemplate(responseTemplate)) {
     if (
       isFullApiCanvasTemplate(fallbackOfflineTemplate) &&
-      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(onlineTemplate)
+      templateLayoutScore(fallbackOfflineTemplate) > templateLayoutScore(responseTemplate)
     ) {
       return fallbackOfflineTemplate;
     }
-    return onlineTemplate;
+    return responseTemplate;
   }
 
   return fallbackOfflineTemplate;

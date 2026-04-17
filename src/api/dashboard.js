@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from '../data/db';
 import * as XLSX from 'xlsx';
 import { nanoid } from 'nanoid';
@@ -7,12 +8,43 @@ import { slimStudentTemplateField } from '../utils/slimStudentTemplateForClient'
 
 export { sortStudentsByExcelRowOrder };
 
-function mapStudentRowForApi(s, schoolDoc) {
-  const row = { ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc };
+function buildOfflineSchoolRef(schoolDoc) {
+  if (!schoolDoc || typeof schoolDoc !== 'object') return null;
+  return {
+    id: schoolDoc.id,
+    _id: schoolDoc.id,
+    schoolName: schoolDoc.schoolName,
+    address: schoolDoc.address,
+    schoolCode: schoolDoc.schoolCode,
+    allowedMobiles: Array.isArray(schoolDoc.allowedMobiles)
+      ? schoolDoc.allowedMobiles
+      : [],
+    dimension: schoolDoc.dimension,
+    dimensionUnit: schoolDoc.dimensionUnit,
+  };
+}
+
+function mapStudentRowForApi(s, schoolRef) {
+  const row = { ...s, _id: s.id, school: schoolRef, schoolId: schoolRef };
   if (row.template) {
     row.template = slimStudentTemplateField(row.template);
   }
   return row;
+}
+
+function getStudentsForSchoolInOrder(schoolId) {
+  return db.students
+    .where('[schoolId+excelRowOrder]')
+    .between([schoolId, Dexie.minKey], [schoolId, Dexie.maxKey]);
+}
+
+function getStudentsForSchoolClassInOrder(schoolId, classId) {
+  return db.students
+    .where('[schoolId+classId+excelRowOrder]')
+    .between(
+      [schoolId, classId, Dexie.minKey],
+      [schoolId, classId, Dexie.maxKey],
+    );
 }
 
 function isValidPhotographerTemplateShape(t) {
@@ -117,13 +149,10 @@ export function resolveOfflinePhotographerTemplate(schoolId, studentsRaw, school
 
 // --- Mocks to replace the previous API tokens ---
 export async function getDashboard() {
-  // Avoid reading full rows when we only need counts.
-  // `toArray()` can be slow for large datasets, especially on first DB open/upgrade.
-  const assignedSchools = await db.schools.count();
-  const schoolIds = assignedSchools === 0 ? [] : await db.schools.toCollection().primaryKeys();
-  const totalStudents = schoolIds.length === 0
-    ? 0
-    : await db.students.where('schoolId').anyOf(schoolIds).count();
+  const [assignedSchools, totalStudents] = await Promise.all([
+    db.schools.count(),
+    db.students.count(),
+  ]);
 
   return {
     assignedSchools,
@@ -160,10 +189,9 @@ export async function getClassesBySchool(schoolId) {
 }
 
 export async function getTemplatesStatus(schoolId, classId) {
-  const studentsList = sortStudentsByExcelRowOrder(
-    await db.students.where({ schoolId, classId }).toArray(),
-  );
+  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
+  const schoolRef = buildOfflineSchoolRef(schoolDoc);
   const withTemplates = studentsList.filter(s => s.hasTemplate).length;
   const withoutTemplates = studentsList.length - withTemplates;
   return { 
@@ -171,19 +199,18 @@ export async function getTemplatesStatus(schoolId, classId) {
     total: studentsList.length, 
     withTemplates, 
     withoutTemplates, 
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
     summary: { withTemplates, withoutTemplates }
   };
 }
 
 export async function getStudentsBySchoolAndClass(schoolId, classId) {
-  const studentsList = sortStudentsByExcelRowOrder(
-    await db.students.where({ schoolId, classId }).toArray(),
-  );
+  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
+  const schoolRef = buildOfflineSchoolRef(schoolDoc);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
     ...(template ? { template } : {}),
   };
 }
@@ -194,13 +221,12 @@ export async function updateStudent(studentId, data) {
 }
 
 export async function getStudentsBySchool(schoolId) {
-  const studentsList = sortStudentsByExcelRowOrder(
-    await db.students.where('schoolId').equals(schoolId).toArray(),
-  );
+  const studentsList = await getStudentsForSchoolInOrder(schoolId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
+  const schoolRef = buildOfflineSchoolRef(schoolDoc);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
     ...(template ? { template } : {}),
   };
 }
