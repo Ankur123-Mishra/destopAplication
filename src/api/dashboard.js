@@ -3,8 +3,17 @@ import * as XLSX from 'xlsx';
 import { nanoid } from 'nanoid';
 import { getUploadedTemplates } from '../data/uploadedTemplatesStorage';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
+import { slimStudentTemplateField } from '../utils/slimStudentTemplateForClient';
 
 export { sortStudentsByExcelRowOrder };
+
+function mapStudentRowForApi(s, schoolDoc) {
+  const row = { ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc };
+  if (row.template) {
+    row.template = slimStudentTemplateField(row.template);
+  }
+  return row;
+}
 
 function isValidPhotographerTemplateShape(t) {
   return (
@@ -162,7 +171,7 @@ export async function getTemplatesStatus(schoolId, classId) {
     total: studentsList.length, 
     withTemplates, 
     withoutTemplates, 
-    students: studentsList.map(s => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
     summary: { withTemplates, withoutTemplates }
   };
 }
@@ -174,7 +183,7 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
   const schoolDoc = await db.schools.get(schoolId);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
     ...(template ? { template } : {}),
   };
 }
@@ -191,7 +200,7 @@ export async function getStudentsBySchool(schoolId) {
   const schoolDoc = await db.schools.get(schoolId);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => ({ ...s, _id: s.id, school: schoolDoc, schoolId: schoolDoc })),
+    students: studentsList.map((s) => mapStudentRowForApi(s, schoolDoc)),
     ...(template ? { template } : {}),
   };
 }

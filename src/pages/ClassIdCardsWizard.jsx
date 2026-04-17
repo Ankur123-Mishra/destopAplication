@@ -136,6 +136,30 @@ function normalizeClassNameForDisplay(label) {
   return label.replace(/\s*[–-]\s*A\s*$/i, '').trim();
 }
 
+/**
+ * Per-student template row in Dexie: layout + ids only. Never embed front/back artwork here — the
+ * same base64 art is large; duplicating it for every student causes OOM / white screen on preview
+ * for rosters of 1000+.
+ * Full images come from `school.offlineIdCardTemplate`, uploaded-template storage, or the
+ * built-in template registry via `templateId` (see dashboard.resolveOfflinePhotographerTemplate).
+ */
+function buildSlimPerStudentOfflineTemplate(isUploaded, effectiveUploadedTemplate, template, templateId) {
+  if (isUploaded && effectiveUploadedTemplate) {
+    return {
+      templateId,
+      name: effectiveUploadedTemplate.name,
+      elements: effectiveUploadedTemplate.elements,
+      ...(Array.isArray(effectiveUploadedTemplate.backElements)
+        ? { backElements: effectiveUploadedTemplate.backElements }
+        : {}),
+    };
+  }
+  if (template?.frontImage && Array.isArray(template.elements)) {
+    return { templateId, name: template?.name };
+  }
+  return { templateId, name: template?.name };
+}
+
 function isFullCanvasTemplateShape(t) {
   return (
     t &&
@@ -790,34 +814,21 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           address: school.address,
         };
 
-        let offlineTemplateObj = { templateId, name: template?.name };
+        let offlineTemplateObj = buildSlimPerStudentOfflineTemplate(
+          isUploaded,
+          effectiveUploadedTemplate,
+          template,
+          templateId,
+        );
 
         if (isUploaded && effectiveUploadedTemplate) {
           cardData.uploadedTemplate = {
-            frontImage: effectiveUploadedTemplate.frontImage,
-            backImage: effectiveUploadedTemplate.backImage,
-            elements: effectiveUploadedTemplate.elements,
-            ...(Array.isArray(effectiveUploadedTemplate.backElements)
-              ? { backElements: effectiveUploadedTemplate.backElements }
-              : {}),
             name: effectiveUploadedTemplate.name,
-          };
-          offlineTemplateObj = {
-            templateId,
-            name: effectiveUploadedTemplate.name,
-            frontImage: effectiveUploadedTemplate.frontImage,
-            backImage: effectiveUploadedTemplate.backImage,
             elements: effectiveUploadedTemplate.elements,
             ...(Array.isArray(effectiveUploadedTemplate.backElements)
               ? { backElements: effectiveUploadedTemplate.backElements }
               : {}),
           };
-        } else if (template) {
-          if (template.frontImage && Array.isArray(template.elements)) {
-            offlineTemplateObj.frontImage = template.frontImage;
-            offlineTemplateObj.backImage = template.backImage;
-            offlineTemplateObj.elements = template.elements;
-          }
         }
 
         offlineUpdates.push({ id: student.id, template: offlineTemplateObj });

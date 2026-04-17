@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { List } from "react-window";
 import { useLocation, useMatch, useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import Header from "../components/Header";
@@ -48,6 +49,13 @@ const PRINT_PAGE_MARGIN_MM = 4;
 const PRINT_GAP_MM = 4;
 const DEFAULT_CARD_WIDTH_MM = 90;
 const DEFAULT_CARD_HEIGHT_MM = 57;
+/** Build preview/print card rows in slices so opening preview stays instant for large lists. */
+const PREVIEW_CARDS_CHUNK_SIZE = 64;
+/** Render preview pages in small batches so first pages appear immediately. */
+const PREVIEW_PAGES_RENDER_CHUNK_SIZE = 1;
+const PREVIEW_PAGES_RENDER_DELAY_MS = 16;
+/** Stable fallback so `studentsForPreviewPrint` / card-building effects are not invalidated every render. */
+const EMPTY_STUDENTS = [];
 
 function fullPhotoUrl(url) {
   if (!url || typeof url !== "string") return url;
@@ -392,6 +400,120 @@ function studentHasUploadedPhoto(s) {
   return s.photoUrl.trim() !== "";
 }
 
+/** Virtual list row height (must match CSS: card padding + two lines + list gap). */
+const SAVED_ID_STUDENT_ROW_HEIGHT = 80;
+const SAVED_ID_STUDENT_LIST_VIEWPORT_HEIGHT = 520;
+
+function VirtualizedSavedIdStudentRow({
+  index,
+  style,
+  ariaAttributes,
+  students,
+  studentToCard,
+  studentHasRenderableSavedCard,
+  schoolAllStudentsData,
+  templateStatus,
+  isAllSchoolStudents,
+  isViewTemplateFlow,
+  isOnlineMode,
+  getTemplateName,
+  formatStudentClassForIdCard,
+  setSingleCardPreview,
+  setEditStudentData,
+  formatToDDMMYYYYDot,
+}) {
+  const student = students[index];
+  if (!student) return null;
+  const card = studentToCard(student);
+  const hasUploadedPhoto = studentHasUploadedPhoto(student);
+  const canOpenPreview =
+    hasUploadedPhoto &&
+    studentHasRenderableSavedCard(
+      student,
+      isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
+      isAllSchoolStudents ? { allowRootTemplateFallback: false } : undefined,
+    );
+  return (
+    <div
+      style={{ ...style, paddingBottom: 0 }}
+      {...ariaAttributes}
+    >
+      <div
+        style={{ display: "flex", gap: "8px", alignItems: "center", height: "100%" }}
+      >
+        <button
+          type="button"
+          className="saved-idcard-item"
+          disabled={!canOpenPreview}
+          title={
+            !canOpenPreview
+              ? !hasUploadedPhoto
+                ? "Photo not uploaded for this student"
+                : isViewTemplateFlow
+                  ? "No template data for this student"
+                  : "No saved ID card for this student"
+              : undefined
+          }
+          style={{
+            flex: 1,
+            ...(hasUploadedPhoto
+              ? {}
+              : {
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                  borderColor: "rgba(255,255,255,0.2)",
+                }),
+            ...(!canOpenPreview ? { opacity: 0.55, cursor: "not-allowed" } : {}),
+          }}
+          onClick={() => {
+            if (!canOpenPreview) return;
+            setSingleCardPreview(card);
+          }}
+        >
+          <span className="saved-idcard-name">{student.studentName}</span>
+          <span className="text-muted saved-idcard-meta">
+            {canOpenPreview ? (
+              <>
+                {getTemplateName(card.templateId, card)} ·{" "}
+                {student.admissionNo || student.rollNo || ""} ·{" "}
+                {student.template?.status || ""}
+              </>
+            ) : !hasUploadedPhoto ? (
+              <>
+                {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
+                {student.admissionNo || student.rollNo || ""} · Photo missing
+              </>
+            ) : (
+              <>
+                {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
+                {student.admissionNo || student.rollNo || ""}
+                {isAllSchoolStudents ? " · No saved card" : ""}
+              </>
+            )}
+          </span>
+        </button>
+        {isOnlineMode && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ padding: "6px 12px", fontSize: "0.85rem", height: "auto" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              const dobVal = student.dateOfBirth || student.dob || "";
+              setEditStudentData({
+                ...student,
+                dateOfBirth: formatToDDMMYYYYDot(dobVal),
+                dob: formatToDDMMYYYYDot(dobVal),
+              });
+            }}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function formatDateDMY(input) {
   if (!input) return "";
   if (input instanceof Date && !Number.isNaN(input.getTime())) {
@@ -458,6 +580,10 @@ const MIN_PAGE_CM = 0.1;
 const MAX_PAGE_CM = 120;
 const MIN_PAGE_MM = MIN_PAGE_CM * 10;
 const MAX_PAGE_MM = MAX_PAGE_CM * 10;
+/** Keep typing smooth but apply page resize almost instantly. */
+const PAGE_SIZE_INPUT_DEBOUNCE_MS = 40;
+/** Keep spacing fields responsive while avoiding heavy re-layout on every keystroke. */
+const PREVIEW_GAP_INPUT_DEBOUNCE_MS = 120;
 
 const MIN_PREVIEW_GAP_MM = 0;
 const MAX_PREVIEW_GAP_MM = 40;
@@ -2035,6 +2161,8 @@ export default function SavedIdCardsList({
   const isAllSchoolStudents =
     Boolean(allStudentsMatch) ||
     pathnameIsSchoolAllStudentsRoute(location.pathname, basePath);
+  const showStudentsView =
+    (schoolId != null && classId != null) || isAllSchoolStudents;
   const { user, setOfflineMode } = useApp();
   const isViewTemplateFlow = basePath === "/view-template";
   const [viewMode, setViewMode] = useState("offline"); // offline | online
@@ -2047,6 +2175,11 @@ export default function SavedIdCardsList({
   const printContentRef = useRef(null);
   const previewScrollRef = useRef(null);
   const previewPagesWrapRef = useRef(null);
+  /** Width for react-window FixedSizeList (measured from container). */
+  const savedIdStudentListWrapRef = useRef(null);
+  const [savedIdStudentListWidth, setSavedIdStudentListWidth] = useState(800);
+  const [savedIdStudentListViewportHeight, setSavedIdStudentListViewportHeight] =
+    useState(SAVED_ID_STUDENT_LIST_VIEWPORT_HEIGHT);
   /** Browser JPEG export: DirectoryHandle from showDirectoryPicker (must be set during click). */
   const jpegWebParentDirHandleRef = useRef(null);
   /** User clicked "Cancel download" while an export is running. */
@@ -2077,6 +2210,8 @@ export default function SavedIdCardsList({
   );
   const [isEditingPageWidth, setIsEditingPageWidth] = useState(false);
   const [isEditingPageHeight, setIsEditingPageHeight] = useState(false);
+  const pageWidthInputCommitTimeoutRef = useRef(null);
+  const pageHeightInputCommitTimeoutRef = useRef(null);
 
   const [previewGapUnit, setPreviewGapUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
 
@@ -2084,6 +2219,18 @@ export default function SavedIdCardsList({
     useState(PRINT_GAP_MM);
   const [previewGapVerticalMm, setPreviewGapVerticalMm] =
     useState(PRINT_GAP_MM);
+  const [previewGapHorizontalInput, setPreviewGapHorizontalInput] = useState(
+    String(mmToUnit(PRINT_GAP_MM, previewGapUnit)),
+  );
+  const [previewGapVerticalInput, setPreviewGapVerticalInput] = useState(
+    String(mmToUnit(PRINT_GAP_MM, previewGapUnit)),
+  );
+  const [isEditingPreviewGapHorizontal, setIsEditingPreviewGapHorizontal] =
+    useState(false);
+  const [isEditingPreviewGapVertical, setIsEditingPreviewGapVertical] =
+    useState(false);
+  const previewGapHorizontalCommitTimeoutRef = useRef(null);
+  const previewGapVerticalCommitTimeoutRef = useRef(null);
   const [previewPageBackgroundColor, setPreviewPageBackgroundColor] =
     useState(DEFAULT_PREVIEW_PAGE_BG);
 
@@ -2102,6 +2249,66 @@ export default function SavedIdCardsList({
     const preset = PAGE_PRESET_MM[pageSizeMode];
     return preset ? preset.h : A4_HEIGHT_MM;
   }, [pageSizeMode, customPageHeightMm]);
+  // Keep visual page frame instant, while heavy card layout can settle a moment later.
+  const layoutPageWidthMm = React.useDeferredValue(pageWidthMm);
+  const layoutPageHeightMm = React.useDeferredValue(pageHeightMm);
+  // Gap changes can reflow many preview pages; defer to keep typing and UI responsive.
+  const layoutPreviewGapHorizontalMm = React.useDeferredValue(
+    previewGapHorizontalMm,
+  );
+  const layoutPreviewGapVerticalMm = React.useDeferredValue(previewGapVerticalMm);
+  const clearPageSizeCommitTimers = React.useCallback(() => {
+    if (pageWidthInputCommitTimeoutRef.current !== null) {
+      window.clearTimeout(pageWidthInputCommitTimeoutRef.current);
+      pageWidthInputCommitTimeoutRef.current = null;
+    }
+    if (pageHeightInputCommitTimeoutRef.current !== null) {
+      window.clearTimeout(pageHeightInputCommitTimeoutRef.current);
+      pageHeightInputCommitTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearPageSizeCommitTimers(), [clearPageSizeCommitTimers]);
+
+  const scheduleWidthMmCommitFromInput = React.useCallback(
+    (rawValue) => {
+      if (pageWidthInputCommitTimeoutRef.current !== null) {
+        window.clearTimeout(pageWidthInputCommitTimeoutRef.current);
+        pageWidthInputCommitTimeoutRef.current = null;
+      }
+      const parsed = parseUnitInput(rawValue);
+      if (!Number.isFinite(parsed)) return;
+      pageWidthInputCommitTimeoutRef.current = window.setTimeout(() => {
+        const nextMm = clampPageMm(
+          convertToMm(parsed, pageSizeUnit),
+          A4_WIDTH_MM,
+        );
+        setCustomPageWidthMm(nextMm);
+        pageWidthInputCommitTimeoutRef.current = null;
+      }, PAGE_SIZE_INPUT_DEBOUNCE_MS);
+    },
+    [pageSizeUnit],
+  );
+
+  const scheduleHeightMmCommitFromInput = React.useCallback(
+    (rawValue) => {
+      if (pageHeightInputCommitTimeoutRef.current !== null) {
+        window.clearTimeout(pageHeightInputCommitTimeoutRef.current);
+        pageHeightInputCommitTimeoutRef.current = null;
+      }
+      const parsed = parseUnitInput(rawValue);
+      if (!Number.isFinite(parsed)) return;
+      pageHeightInputCommitTimeoutRef.current = window.setTimeout(() => {
+        const nextMm = clampPageMm(
+          convertToMm(parsed, pageSizeUnit),
+          A4_HEIGHT_MM,
+        );
+        setCustomPageHeightMm(nextMm);
+        pageHeightInputCommitTimeoutRef.current = null;
+      }, PAGE_SIZE_INPUT_DEBOUNCE_MS);
+    },
+    [pageSizeUnit],
+  );
 
   // When the unit changes, re-render the input from numeric mm values,
   // but don't clobber while the user is actively editing.
@@ -2118,6 +2325,71 @@ export default function SavedIdCardsList({
       String(mmToUnit(customPageHeightMm, pageSizeUnit)),
     );
   }, [pageSizeMode, isEditingPageHeight, customPageHeightMm, pageSizeUnit]);
+
+  const clearPreviewGapCommitTimers = React.useCallback(() => {
+    if (previewGapHorizontalCommitTimeoutRef.current !== null) {
+      window.clearTimeout(previewGapHorizontalCommitTimeoutRef.current);
+      previewGapHorizontalCommitTimeoutRef.current = null;
+    }
+    if (previewGapVerticalCommitTimeoutRef.current !== null) {
+      window.clearTimeout(previewGapVerticalCommitTimeoutRef.current);
+      previewGapVerticalCommitTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearPreviewGapCommitTimers(), [clearPreviewGapCommitTimers]);
+
+  const scheduleHorizontalPreviewGapCommitFromInput = React.useCallback(
+    (rawValue) => {
+      if (previewGapHorizontalCommitTimeoutRef.current !== null) {
+        window.clearTimeout(previewGapHorizontalCommitTimeoutRef.current);
+        previewGapHorizontalCommitTimeoutRef.current = null;
+      }
+      const parsed = parseUnitInput(rawValue);
+      if (!Number.isFinite(parsed)) return;
+      previewGapHorizontalCommitTimeoutRef.current = window.setTimeout(() => {
+        const nextMm = clampPreviewGapMm(
+          convertToMm(parsed, previewGapUnit),
+          PRINT_GAP_MM,
+        );
+        setPreviewGapHorizontalMm(nextMm);
+        previewGapHorizontalCommitTimeoutRef.current = null;
+      }, PREVIEW_GAP_INPUT_DEBOUNCE_MS);
+    },
+    [previewGapUnit],
+  );
+
+  const scheduleVerticalPreviewGapCommitFromInput = React.useCallback(
+    (rawValue) => {
+      if (previewGapVerticalCommitTimeoutRef.current !== null) {
+        window.clearTimeout(previewGapVerticalCommitTimeoutRef.current);
+        previewGapVerticalCommitTimeoutRef.current = null;
+      }
+      const parsed = parseUnitInput(rawValue);
+      if (!Number.isFinite(parsed)) return;
+      previewGapVerticalCommitTimeoutRef.current = window.setTimeout(() => {
+        const nextMm = clampPreviewGapMm(
+          convertToMm(parsed, previewGapUnit),
+          PRINT_GAP_MM,
+        );
+        setPreviewGapVerticalMm(nextMm);
+        previewGapVerticalCommitTimeoutRef.current = null;
+      }, PREVIEW_GAP_INPUT_DEBOUNCE_MS);
+    },
+    [previewGapUnit],
+  );
+
+  useEffect(() => {
+    if (isEditingPreviewGapHorizontal) return;
+    setPreviewGapHorizontalInput(
+      String(mmToUnit(previewGapHorizontalMm, previewGapUnit)),
+    );
+  }, [isEditingPreviewGapHorizontal, previewGapHorizontalMm, previewGapUnit]);
+
+  useEffect(() => {
+    if (isEditingPreviewGapVertical) return;
+    setPreviewGapVerticalInput(String(mmToUnit(previewGapVerticalMm, previewGapUnit)));
+  }, [isEditingPreviewGapVertical, previewGapVerticalMm, previewGapUnit]);
 
   // Level 1: Schools
   const [schools, setSchools] = useState([]);
@@ -2433,12 +2705,41 @@ export default function SavedIdCardsList({
     };
   }, [schoolId, isAllSchoolStudents, activeApi]);
 
-  const allSchoolStudentsRaw = schoolAllStudentsData?.students ?? [];
-  const classStudentsRaw = templateStatus?.students ?? [];
+  const allSchoolStudentsRaw =
+    schoolAllStudentsData?.students ?? EMPTY_STUDENTS;
+  const classStudentsRaw = templateStatus?.students ?? EMPTY_STUDENTS;
 
   const studentsForList = isAllSchoolStudents
     ? allSchoolStudentsRaw
     : classStudentsRaw;
+
+  useLayoutEffect(() => {
+    const el = savedIdStudentListWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const w = Math.max(320, Math.floor(e.contentRect.width));
+        setSavedIdStudentListWidth(w);
+        if (showStudentsView) {
+          const h = Math.floor(e.contentRect.height);
+          setSavedIdStudentListViewportHeight(Math.max(200, h));
+        }
+      }
+    });
+    ro.observe(el);
+    setSavedIdStudentListWidth(Math.max(320, Math.floor(el.clientWidth)));
+    if (showStudentsView) {
+      const h = Math.floor(el.getBoundingClientRect().height);
+      setSavedIdStudentListViewportHeight(Math.max(200, h));
+    }
+    return () => ro.disconnect();
+  }, [
+    schoolId,
+    classId,
+    isAllSchoolStudents,
+    studentsForList.length,
+    showStudentsView,
+  ]);
 
   const studentsForPreviewPrint = React.useMemo(() => {
     const filtered = isAllSchoolStudents
@@ -2462,7 +2763,22 @@ export default function SavedIdCardsList({
     classes,
   ]);
 
-  const getTemplateName = (templateId, card = null) => {
+  /** One shared canvas template object for all cards — avoids duplicating multi‑MB base64 per student. */
+  const sharedUploadedCanvasTemplate = React.useMemo(() => {
+    const root = isAllSchoolStudents
+      ? schoolAllStudentsData?.template
+      : templateStatus?.template;
+    if (!isFullApiCanvasTemplate(root)) return null;
+    return {
+      name: root.name || "Uploaded Template",
+      frontImage: fullPhotoUrl(root.frontImage),
+      backImage: fullPhotoUrl(root.backImage),
+      elements: root.elements,
+      ...(root.backElements != null ? { backElements: root.backElements } : {}),
+    };
+  }, [isAllSchoolStudents, schoolAllStudentsData?.template, templateStatus?.template]);
+
+  const getTemplateName = React.useCallback((templateId, card = null) => {
     if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
       return card.uploadedTemplate.name;
     if (templateId === "uploaded-custom") return "Uploaded Template";
@@ -2478,11 +2794,12 @@ export default function SavedIdCardsList({
       getTemplateById(internalId || templateId) ||
       getFabricTemplateById(templateId);
     return t?.name || templateId;
-  };
+  }, []);
 
   // Build card-like object from API student for preview/print
   // Include address, name, photoUrl, studentId, dimension (from school) so ID card preview shows full data and size
-  const studentToCard = (student) => {
+  const studentToCard = React.useCallback(
+    (student) => {
     const apiTemplate = isAllSchoolStudents
       ? mergeSchoolRootTemplateIntoStudent(
         student,
@@ -2512,6 +2829,20 @@ export default function SavedIdCardsList({
       student.uniqueCode ??
       "";
 
+    const uploadedTemplateForCard =
+      isApiTemplateRenderable &&
+      (sharedUploadedCanvasTemplate
+        ? sharedUploadedCanvasTemplate
+        : {
+          name: apiTemplate?.name || "Uploaded Template",
+          frontImage: fullPhotoUrl(apiTemplate.frontImage),
+          backImage: fullPhotoUrl(apiTemplate.backImage),
+          elements: apiTemplate.elements,
+          ...(apiTemplate.backElements != null
+            ? { backElements: apiTemplate.backElements }
+            : {}),
+        });
+
     return {
       _id: student._id,
       id: apiTemplate?.templateId || student._id,
@@ -2520,15 +2851,7 @@ export default function SavedIdCardsList({
       name: student.studentName ?? "",
       rollNo: resolvedRollNo,
       templateId,
-      uploadedTemplate: isApiTemplateRenderable
-        ? {
-          name: apiTemplate?.name || "Uploaded Template",
-          frontImage: fullPhotoUrl(apiTemplate.frontImage),
-          backImage: fullPhotoUrl(apiTemplate.backImage),
-          elements: apiTemplate.elements,
-          ...(apiTemplate.backElements != null ? { backElements: apiTemplate.backElements } : {}),
-        }
-        : null,
+      uploadedTemplate: isApiTemplateRenderable ? uploadedTemplateForCard : null,
       studentImage: fullPhotoUrl(student.photoUrl),
       className: resolveClassNameForIdCard(student),
       schoolName:
@@ -2556,7 +2879,42 @@ export default function SavedIdCardsList({
           : null) ??
         "mm",
     };
-  };
+  },
+    [
+      isAllSchoolStudents,
+      schoolAllStudentsData?.template,
+      templateStatus?.template,
+      sharedUploadedCanvasTemplate,
+    ],
+  );
+
+  const savedIdStudentListItemData = React.useMemo(
+    () => ({
+      students: studentsForList,
+      studentToCard,
+      studentHasRenderableSavedCard,
+      schoolAllStudentsData,
+      templateStatus,
+      isAllSchoolStudents,
+      isViewTemplateFlow,
+      isOnlineMode,
+      getTemplateName,
+      formatStudentClassForIdCard,
+      setSingleCardPreview,
+      setEditStudentData,
+      formatToDDMMYYYYDot,
+    }),
+    [
+      studentsForList,
+      studentToCard,
+      schoolAllStudentsData,
+      templateStatus,
+      isAllSchoolStudents,
+      isViewTemplateFlow,
+      isOnlineMode,
+      getTemplateName,
+    ],
+  );
 
   const getPreviewUrl = (student) => {
     const templateId = student.template?.templateId || student._id;
@@ -2568,7 +2926,40 @@ export default function SavedIdCardsList({
     return base;
   };
 
-  const cardsToPrint = studentsForPreviewPrint.map(studentToCard);
+  /** Building thousands of card objects on the main list screen freezes the UI; build only for preview/print. */
+  const needCardsForPrintLayout = showPreviewView || showPrintView;
+  const [cardsToPrint, setCardsToPrint] = useState([]);
+  useEffect(() => {
+    if (!needCardsForPrintLayout) {
+      setCardsToPrint([]);
+      return;
+    }
+    const students = studentsForPreviewPrint;
+    let cancelled = false;
+    if (students.length === 0) {
+      setCardsToPrint([]);
+      return;
+    }
+    const firstEnd = Math.min(PREVIEW_CARDS_CHUNK_SIZE, students.length);
+    const firstChunk = students
+      .slice(0, firstEnd)
+      .map((s) => studentToCard(s));
+    setCardsToPrint(firstChunk);
+    let index = firstEnd;
+    const pump = () => {
+      if (cancelled) return;
+      const end = Math.min(index + PREVIEW_CARDS_CHUNK_SIZE, students.length);
+      const slice = students.slice(index, end);
+      const chunk = slice.map((s) => studentToCard(s));
+      index = end;
+      setCardsToPrint((prev) => [...prev, ...chunk]);
+      if (index < students.length) requestAnimationFrame(pump);
+    };
+    if (index < students.length) requestAnimationFrame(pump);
+    return () => {
+      cancelled = true;
+    };
+  }, [needCardsForPrintLayout, studentsForPreviewPrint, studentToCard]);
   const cardsToPrintRef = useRef(cardsToPrint);
   cardsToPrintRef.current = cardsToPrint;
   const hasFabricCards = cardsToPrint.some((c) =>
@@ -2589,10 +2980,16 @@ export default function SavedIdCardsList({
       cardWidthMm = convertToMm(first.dimension.width, unit);
       cardHeightMm = convertToMm(first.dimension.height, unit);
     }
-    const usableW = pageWidthMm - 2 * PRINT_PAGE_MARGIN_MM;
-    const usableH = pageHeightMm - 2 * PRINT_PAGE_MARGIN_MM;
-    const gapH = previewGapHorizontalMm;
-    const gapV = previewGapVerticalMm;
+    if (!Number.isFinite(cardWidthMm) || cardWidthMm <= 0) {
+      cardWidthMm = DEFAULT_CARD_WIDTH_MM;
+    }
+    if (!Number.isFinite(cardHeightMm) || cardHeightMm <= 0) {
+      cardHeightMm = DEFAULT_CARD_HEIGHT_MM;
+    }
+    const usableW = layoutPageWidthMm - 2 * PRINT_PAGE_MARGIN_MM;
+    const usableH = layoutPageHeightMm - 2 * PRINT_PAGE_MARGIN_MM;
+    const gapH = layoutPreviewGapHorizontalMm;
+    const gapV = layoutPreviewGapVerticalMm;
     const cols = Math.max(
       1,
       Math.floor((usableW + gapH) / (cardWidthMm + gapH)),
@@ -2606,7 +3003,13 @@ export default function SavedIdCardsList({
       ? Math.ceil(cardsToPrint.length / cardsPerPage)
       : 0;
     return { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages };
-  }, [cardsToPrint, pageWidthMm, pageHeightMm, previewGapHorizontalMm, previewGapVerticalMm]);
+  }, [
+    cardsToPrint,
+    layoutPageWidthMm,
+    layoutPageHeightMm,
+    layoutPreviewGapHorizontalMm,
+    layoutPreviewGapVerticalMm,
+  ]);
 
   const { cardWidthMm, cardHeightMm, cols, rows, cardsPerPage, totalPages } =
     printLayout;
@@ -2626,6 +3029,90 @@ export default function SavedIdCardsList({
   }, [cardsToPrint, cardsPerPage]);
 
   const spreadPagesCount = previewSpreadPages.length;
+  const [visiblePreviewSpreadPagesCount, setVisiblePreviewSpreadPagesCount] =
+    useState(0);
+  const previewLayoutRenderKey = `${layoutPageWidthMm}|${layoutPageHeightMm}|${layoutPreviewGapHorizontalMm}|${layoutPreviewGapVerticalMm}|${cardsPerPage}|${cardsToPrint.length}`;
+  const lastPreviewLayoutRenderKeyRef = useRef(null);
+  const layoutJustChangedForPreview =
+    lastPreviewLayoutRenderKeyRef.current !== previewLayoutRenderKey;
+  const shouldRenderAllPreviewSpreadPages =
+    exporting ||
+    pendingExportFormat !== null ||
+    seeAllJpegDialogOpen ||
+    showPrintView;
+  const effectiveVisiblePreviewSpreadPagesCount =
+    shouldRenderAllPreviewSpreadPages
+      ? spreadPagesCount
+      : layoutJustChangedForPreview
+        ? Math.min(PREVIEW_PAGES_RENDER_CHUNK_SIZE, spreadPagesCount)
+        : visiblePreviewSpreadPagesCount;
+  const visiblePreviewSpreadPages = React.useMemo(() => {
+    if (shouldRenderAllPreviewSpreadPages) return previewSpreadPages;
+    return previewSpreadPages.slice(0, effectiveVisiblePreviewSpreadPagesCount);
+  }, [
+    previewSpreadPages,
+    shouldRenderAllPreviewSpreadPages,
+    effectiveVisiblePreviewSpreadPagesCount,
+  ]);
+  const previewPagesStillRendering =
+    showPreviewView &&
+    !shouldRenderAllPreviewSpreadPages &&
+    effectiveVisiblePreviewSpreadPagesCount < spreadPagesCount;
+
+  useLayoutEffect(() => {
+    lastPreviewLayoutRenderKeyRef.current = previewLayoutRenderKey;
+  }, [previewLayoutRenderKey]);
+
+  useEffect(() => {
+    if (!showPreviewView) {
+      setVisiblePreviewSpreadPagesCount(0);
+      return;
+    }
+    if (spreadPagesCount <= 0) {
+      setVisiblePreviewSpreadPagesCount(0);
+      return;
+    }
+    if (shouldRenderAllPreviewSpreadPages) {
+      setVisiblePreviewSpreadPagesCount(spreadPagesCount);
+      return;
+    }
+    let cancelled = false;
+    let timeoutId = null;
+    let rafId = null;
+    let renderedCount = Math.min(PREVIEW_PAGES_RENDER_CHUNK_SIZE, spreadPagesCount);
+    setVisiblePreviewSpreadPagesCount(renderedCount);
+
+    const pump = () => {
+      if (cancelled) return;
+      renderedCount = Math.min(
+        spreadPagesCount,
+        renderedCount + PREVIEW_PAGES_RENDER_CHUNK_SIZE,
+      );
+      setVisiblePreviewSpreadPagesCount(renderedCount);
+      if (renderedCount < spreadPagesCount) {
+        timeoutId = window.setTimeout(() => {
+          rafId = requestAnimationFrame(pump);
+        }, PREVIEW_PAGES_RENDER_DELAY_MS);
+      }
+    };
+
+    if (renderedCount < spreadPagesCount) {
+      timeoutId = window.setTimeout(() => {
+        rafId = requestAnimationFrame(pump);
+      }, PREVIEW_PAGES_RENDER_DELAY_MS);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [showPreviewView, spreadPagesCount, shouldRenderAllPreviewSpreadPages]);
+
+  const previewPrintCardsStillLoading =
+    needCardsForPrintLayout &&
+    studentsForPreviewPrint.length > 0 &&
+    cardsToPrint.length < studentsForPreviewPrint.length;
 
   useEffect(() => {
     if (!showPreviewView) return;
@@ -2641,7 +3128,15 @@ export default function SavedIdCardsList({
       void raf2;
     });
     return () => cancelAnimationFrame(raf1);
-  }, [showPreviewView, pageWidthMm, pageHeightMm, cols, rows, previewGapHorizontalMm, previewGapVerticalMm]);
+  }, [
+    showPreviewView,
+    layoutPageWidthMm,
+    layoutPageHeightMm,
+    cols,
+    rows,
+    layoutPreviewGapHorizontalMm,
+    layoutPreviewGapVerticalMm,
+  ]);
 
   const pageSizeSummary = React.useMemo(() => {
     const u = pageSizeUnit === "px" ? "px" : pageSizeUnit;
@@ -2758,20 +3253,30 @@ export default function SavedIdCardsList({
               onChange={(e) => {
                 const raw = e.target.value;
                 setCustomPageWidthInput(raw);
-
-                const parsed = parseUnitInput(raw);
-                if (!Number.isFinite(parsed)) return; // allow empty while editing
-
+                scheduleWidthMmCommitFromInput(raw);
+              }}
+              onFocus={() => setIsEditingPageWidth(true)}
+              onBlur={() => {
+                if (pageWidthInputCommitTimeoutRef.current !== null) {
+                  window.clearTimeout(pageWidthInputCommitTimeoutRef.current);
+                  pageWidthInputCommitTimeoutRef.current = null;
+                }
+                const parsed = parseUnitInput(customPageWidthInput);
+                if (!Number.isFinite(parsed)) {
+                  setCustomPageWidthInput(
+                    String(mmToUnit(customPageWidthMm, pageSizeUnit)),
+                  );
+                  setIsEditingPageWidth(false);
+                  return;
+                }
                 const nextMm = clampPageMm(
                   convertToMm(parsed, pageSizeUnit),
                   A4_WIDTH_MM,
                 );
                 setCustomPageWidthMm(nextMm);
-                // Normalize to the clamped value (keeps preview + input consistent).
                 setCustomPageWidthInput(String(mmToUnit(nextMm, pageSizeUnit)));
+                setIsEditingPageWidth(false);
               }}
-              onFocus={() => setIsEditingPageWidth(true)}
-              onBlur={() => setIsEditingPageWidth(false)}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
@@ -2795,20 +3300,30 @@ export default function SavedIdCardsList({
               onChange={(e) => {
                 const raw = e.target.value;
                 setCustomPageHeightInput(raw);
-
-                const parsed = parseUnitInput(raw);
-                if (!Number.isFinite(parsed)) return; // allow empty while editing
-
+                scheduleHeightMmCommitFromInput(raw);
+              }}
+              onFocus={() => setIsEditingPageHeight(true)}
+              onBlur={() => {
+                if (pageHeightInputCommitTimeoutRef.current !== null) {
+                  window.clearTimeout(pageHeightInputCommitTimeoutRef.current);
+                  pageHeightInputCommitTimeoutRef.current = null;
+                }
+                const parsed = parseUnitInput(customPageHeightInput);
+                if (!Number.isFinite(parsed)) {
+                  setCustomPageHeightInput(
+                    String(mmToUnit(customPageHeightMm, pageSizeUnit)),
+                  );
+                  setIsEditingPageHeight(false);
+                  return;
+                }
                 const nextMm = clampPageMm(
                   convertToMm(parsed, pageSizeUnit),
                   A4_HEIGHT_MM,
                 );
                 setCustomPageHeightMm(nextMm);
-                // Normalize to the clamped value (keeps preview + input consistent).
                 setCustomPageHeightInput(String(mmToUnit(nextMm, pageSizeUnit)));
+                setIsEditingPageHeight(false);
               }}
-              onFocus={() => setIsEditingPageHeight(true)}
-              onBlur={() => setIsEditingPageHeight(false)}
               style={{ ...pageSizeControlStyle, width: 88 }}
             />
           </label>
@@ -2863,15 +3378,33 @@ export default function SavedIdCardsList({
           min={mmToUnit(MIN_PREVIEW_GAP_MM, previewGapUnit)}
           max={mmToUnit(MAX_PREVIEW_GAP_MM, previewGapUnit)}
           step={getGapStepForUnit(previewGapUnit)}
-          value={mmToUnit(previewGapHorizontalMm, previewGapUnit)}
+          value={previewGapHorizontalInput}
           onChange={(e) => {
-            const parsed = parseUnitInput(e.target.value);
-            if (!Number.isFinite(parsed)) return;
+            const raw = e.target.value;
+            setPreviewGapHorizontalInput(raw);
+            scheduleHorizontalPreviewGapCommitFromInput(raw);
+          }}
+          onFocus={() => setIsEditingPreviewGapHorizontal(true)}
+          onBlur={() => {
+            if (previewGapHorizontalCommitTimeoutRef.current !== null) {
+              window.clearTimeout(previewGapHorizontalCommitTimeoutRef.current);
+              previewGapHorizontalCommitTimeoutRef.current = null;
+            }
+            const parsed = parseUnitInput(previewGapHorizontalInput);
+            if (!Number.isFinite(parsed)) {
+              setPreviewGapHorizontalInput(
+                String(mmToUnit(previewGapHorizontalMm, previewGapUnit)),
+              );
+              setIsEditingPreviewGapHorizontal(false);
+              return;
+            }
             const nextMm = clampPreviewGapMm(
               convertToMm(parsed, previewGapUnit),
               PRINT_GAP_MM,
             );
             setPreviewGapHorizontalMm(nextMm);
+            setPreviewGapHorizontalInput(String(mmToUnit(nextMm, previewGapUnit)));
+            setIsEditingPreviewGapHorizontal(false);
           }}
           style={{ ...pageSizeControlStyle, width: 72 }}
         />
@@ -2892,15 +3425,33 @@ export default function SavedIdCardsList({
           min={mmToUnit(MIN_PREVIEW_GAP_MM, previewGapUnit)}
           max={mmToUnit(MAX_PREVIEW_GAP_MM, previewGapUnit)}
           step={getGapStepForUnit(previewGapUnit)}
-          value={mmToUnit(previewGapVerticalMm, previewGapUnit)}
+          value={previewGapVerticalInput}
           onChange={(e) => {
-            const parsed = parseUnitInput(e.target.value);
-            if (!Number.isFinite(parsed)) return;
+            const raw = e.target.value;
+            setPreviewGapVerticalInput(raw);
+            scheduleVerticalPreviewGapCommitFromInput(raw);
+          }}
+          onFocus={() => setIsEditingPreviewGapVertical(true)}
+          onBlur={() => {
+            if (previewGapVerticalCommitTimeoutRef.current !== null) {
+              window.clearTimeout(previewGapVerticalCommitTimeoutRef.current);
+              previewGapVerticalCommitTimeoutRef.current = null;
+            }
+            const parsed = parseUnitInput(previewGapVerticalInput);
+            if (!Number.isFinite(parsed)) {
+              setPreviewGapVerticalInput(
+                String(mmToUnit(previewGapVerticalMm, previewGapUnit)),
+              );
+              setIsEditingPreviewGapVertical(false);
+              return;
+            }
             const nextMm = clampPreviewGapMm(
               convertToMm(parsed, previewGapUnit),
               PRINT_GAP_MM,
             );
             setPreviewGapVerticalMm(nextMm);
+            setPreviewGapVerticalInput(String(mmToUnit(nextMm, previewGapUnit)));
+            setIsEditingPreviewGapVertical(false);
           }}
           style={{ ...pageSizeControlStyle, width: 72 }}
         />
@@ -3944,7 +4495,15 @@ export default function SavedIdCardsList({
 
   // —— View: Students list (schoolId + classId)
   const renderStudentsList = () => (
-    <>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        width: "100%",
+      }}
+    >
       <div
         style={{
           display: "flex",
@@ -4047,99 +4606,29 @@ export default function SavedIdCardsList({
           </div>
         )}
       {!loadingStudents && !errorStudents && studentsForList.length > 0 && (
-        <ul className="saved-idcards-list">
-          {studentsForList.map((student) => {
-            const card = studentToCard(student);
-            const hasUploadedPhoto = studentHasUploadedPhoto(student);
-            const canOpenPreview =
-              hasUploadedPhoto &&
-              studentHasRenderableSavedCard(
-                student,
-                isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
-                isAllSchoolStudents
-                  ? { allowRootTemplateFallback: false }
-                  : undefined,
-              );
-            return (
-              <li key={student._id} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <button
-                  type="button"
-                  className="saved-idcard-item"
-                  disabled={!canOpenPreview}
-                  title={
-                    !canOpenPreview
-                      ? !hasUploadedPhoto
-                        ? "Photo not uploaded for this student"
-                        : isViewTemplateFlow
-                          ? "No template data for this student"
-                          : "No saved ID card for this student"
-                      : undefined
-                  }
-                  style={{
-                    flex: 1,
-                    ...(hasUploadedPhoto
-                      ? {}
-                      : {
-                          backgroundColor: "rgba(255,255,255,0.08)",
-                          borderColor: "rgba(255,255,255,0.2)",
-                        }),
-                    ...(!canOpenPreview
-                      ? { opacity: 0.55, cursor: "not-allowed" }
-                      : {})
-                  }}
-                  onClick={() => {
-                    if (!canOpenPreview) return;
-                    setSingleCardPreview(card);
-                  }}
-                >
-                  <span className="saved-idcard-name">
-                    {student.studentName}
-                  </span>
-                  <span className="text-muted saved-idcard-meta">
-                    {canOpenPreview ? (
-                      <>
-                        {getTemplateName(card.templateId, card)} ·{" "}
-                        {student.admissionNo || student.rollNo || ""} ·{" "}
-                        {student.template?.status || ""}
-                      </>
-                    ) : !hasUploadedPhoto ? (
-                      <>
-                        {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
-                        {student.admissionNo || student.rollNo || ""} · Photo missing
-                      </>
-                    ) : (
-                      <>
-                        {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
-                        {student.admissionNo || student.rollNo || ""}
-                        {isAllSchoolStudents ? " · No saved card" : ""}
-                      </>
-                    )}
-                  </span>
-                </button>
-                {isOnlineMode && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ padding: "6px 12px", fontSize: "0.85rem", height: "auto" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const dobVal = student.dateOfBirth || student.dob || "";
-                      setEditStudentData({
-                        ...student,
-                        dateOfBirth: formatToDDMMYYYYDot(dobVal),
-                        dob: formatToDDMMYYYYDot(dobVal),
-                      });
-                    }}
-                  >
-                    Edit
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div
+          ref={savedIdStudentListWrapRef}
+          className="saved-idcards-list saved-idcards-list--virtual"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+          }}
+        >
+          <List
+            rowCount={studentsForList.length}
+            rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
+            rowComponent={VirtualizedSavedIdStudentRow}
+            rowProps={savedIdStudentListItemData}
+            overscanCount={6}
+            style={{
+              height: savedIdStudentListViewportHeight,
+              width: savedIdStudentListWidth,
+            }}
+          />
+        </div>
       )}
-    </>
+    </div>
   );
 
   const showSchools = schoolId == null;
@@ -4150,14 +4639,39 @@ export default function SavedIdCardsList({
 
   return (
     <>
-      <Header title={title} showBack backTo={backTo} />
-      <div className="card" style={{ maxWidth: 960 }}>
-        {showSchools && renderSchoolsList()}
-        {showClasses && renderClassesList()}
-        {showStudents && renderStudentsList()}
-      </div>
+      {showStudents ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            minHeight: "calc(100vh - 48px)",
+          }}
+        >
+          <Header title={title} showBack backTo={backTo} />
+          <div
+            className="card"
+            style={{
+              maxWidth: 960,
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {renderStudentsList()}
+          </div>
+        </div>
+      ) : (
+        <>
+          <Header title={title} showBack backTo={backTo} />
+          <div className="card" style={{ maxWidth: 960 }}>
+            {showSchools && renderSchoolsList()}
+            {showClasses && renderClassesList()}
+          </div>
+        </>
+      )}
 
-      {showPrintView && cardsToPrint.length > 0 && spreadPagesCount > 0 && (
+      {showPrintView && studentsForPreviewPrint.length > 0 && (
         <div className="print-overlay" aria-hidden="true">
           <div
             className="print-overlay-toolbar"
@@ -4173,42 +4687,51 @@ export default function SavedIdCardsList({
             {renderPageSizeControls("print")}
           </div>
           <div ref={printContentRef} className="print-pages-wrap">
-            {previewSpreadPages.map((desc) => {
-              const { batchIndex, side } = desc;
-              const isBackPage = side === "back";
-              const start = batchIndex * cardsPerPage;
-              const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
-              return (
-                <div
-                  key={`print-${batchIndex}-${side}`}
-                  className="print-page print-page-spread"
-                  style={{
-                    width: `${pageWidthMm}mm`,
-                    height: `${pageHeightMm}mm`,
-                    ["--card-w-mm"]: cardWidthMm,
-                    ["--card-h-mm"]: cardHeightMm,
-                    ["--cols"]: cols,
-                    ["--rows"]: rows,
-                  }}
-                >
+            {previewPrintCardsStillLoading && spreadPagesCount === 0 ? (
+              <p
+                className="text-muted print-hide-in-print"
+                style={{ padding: 24, color: "rgba(255,255,255,0.85)" }}
+              >
+                Preparing cards…
+              </p>
+            ) : (
+              previewSpreadPages.map((desc) => {
+                const { batchIndex, side } = desc;
+                const isBackPage = side === "back";
+                const start = batchIndex * cardsPerPage;
+                const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
+                return (
                   <div
-                    className="print-cards-grid"
+                    key={`print-${batchIndex}-${side}`}
+                    className="print-page print-page-spread"
                     style={{
-                      gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
-                      gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
-                      ...(isBackPage ? { direction: "rtl" } : {}),
+                      width: `${pageWidthMm}mm`,
+                      height: `${pageHeightMm}mm`,
+                      ["--card-w-mm"]: cardWidthMm,
+                      ["--card-h-mm"]: cardHeightMm,
+                      ["--cols"]: cols,
+                      ["--rows"]: rows,
                     }}
                   >
-                    {pageCards.map((card, index) => {
-                      const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
-                      return isBackPage
-                        ? renderBackOnlyForPrint(card, true, overlay)
-                        : renderCardForPrint(card, true, overlay);
-                    })}
+                    <div
+                      className="print-cards-grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
+                        gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
+                        ...(isBackPage ? { direction: "rtl" } : {}),
+                      }}
+                    >
+                      {pageCards.map((card, index) => {
+                        const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
+                        return isBackPage
+                          ? renderBackOnlyForPrint(card, true, overlay)
+                          : renderCardForPrint(card, true, overlay);
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
           <div className="print-btn-group">
             <button
@@ -4221,6 +4744,9 @@ export default function SavedIdCardsList({
             <button
               type="button"
               className="btn btn-primary print-hide-in-print"
+              disabled={
+                previewPrintCardsStillLoading || spreadPagesCount === 0
+              }
               onClick={() => window.print()}
             >
               Print Now
@@ -4229,7 +4755,7 @@ export default function SavedIdCardsList({
         </div>
       )}
 
-      {showPreviewView && cardsToPrint.length > 0 && spreadPagesCount > 0 && (
+      {showPreviewView && studentsForPreviewPrint.length > 0 && (
         <div className="preview-overlay" aria-hidden="true">
           <div
             className="preview-overlay-header"
@@ -4237,9 +4763,12 @@ export default function SavedIdCardsList({
           >
             <div style={{ flex: 1, minWidth: 0 }}>
               <h3 style={{ margin: 0 }}>
-                ID Cards Preview – {pageSizeSummary} ({spreadPagesCount} page
-                {spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then backs
-                only when the template has a back image)
+                ID Cards Preview – {pageSizeSummary}{" "}
+                {spreadPagesCount > 0
+                  ? `(${spreadPagesCount} page${spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then backs only when the template has a back image)${previewPrintCardsStillLoading ? " — loading more cards…" : ""}${previewPagesStillRendering ? ` — rendering pages ${effectiveVisiblePreviewSpreadPagesCount}/${spreadPagesCount}…` : ""}`
+                  : previewPrintCardsStillLoading
+                    ? "(preparing cards…)"
+                    : "(no pages)"}
               </h3>
               <div style={{ marginTop: 12 }}>
                 {renderPageSizeControls("preview")}
@@ -4261,7 +4790,11 @@ export default function SavedIdCardsList({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={exporting || chargingDownloadPoints}
+                  disabled={
+                    exporting ||
+                    chargingDownloadPoints ||
+                    previewPrintCardsStillLoading
+                  }
                   onClick={() => setShowDownloadMenuPreview((v) => !v)}
                 >
                   {chargingDownloadPoints
@@ -4293,7 +4826,11 @@ export default function SavedIdCardsList({
                         key={fmt}
                         type="button"
                         role="menuitem"
-                        disabled={exporting || chargingDownloadPoints}
+                        disabled={
+                          exporting ||
+                          chargingDownloadPoints ||
+                          previewPrintCardsStillLoading
+                        }
                         onClick={() => triggerExport(fmt)}
                         style={{
                           display: "block",
@@ -4341,51 +4878,64 @@ export default function SavedIdCardsList({
               ref={previewPagesWrapRef}
               style={{ paddingInline: 24, boxSizing: "content-box", margin: 0 }}
             >
-              {previewSpreadPages.map((desc) => {
-                const { batchIndex, side } = desc;
-                const isBackPage = side === "back";
-                const start = batchIndex * cardsPerPage;
-                const pageCards = cardsToPrint.slice(
-                  start,
-                  start + cardsPerPage,
-                );
-                return (
-                  <div
-                    key={`preview-${batchIndex}-${side}`}
-                    className={`print-page preview-page print-page-spread preview-page--center ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
-                    style={{
-                      width: `${pageWidthMm}mm`,
-                      height: `${pageHeightMm}mm`,
-                      backgroundColor: normalizeHexColor(
-                        previewPageBackgroundColor,
-                      ),
-                      ["--card-w-mm"]: cardWidthMm,
-                      ["--card-h-mm"]: cardHeightMm,
-                      ["--cols"]: cols,
-                      ["--rows"]: rows,
-                    }}
-                  >
-
+              {previewPrintCardsStillLoading && spreadPagesCount === 0 ? (
+                <p
+                  style={{
+                    padding: "48px 24px",
+                    color: "rgba(255,255,255,0.88)",
+                    fontSize: "1rem",
+                    margin: 0,
+                  }}
+                >
+                  Preparing cards…
+                </p>
+              ) : (
+                visiblePreviewSpreadPages.map((desc) => {
+                  const { batchIndex, side } = desc;
+                  const isBackPage = side === "back";
+                  const start = batchIndex * cardsPerPage;
+                  const pageCards = cardsToPrint.slice(
+                    start,
+                    start + cardsPerPage,
+                  );
+                  return (
                     <div
-                      className="print-cards-grid print-cards-grid--preview"
+                      key={`preview-${batchIndex}-${side}`}
+                      className={`print-page preview-page print-page-spread preview-page--center ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
                       style={{
-                        gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
-                        gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
-                        columnGap: `${previewGapHorizontalMm}mm`,
-                        rowGap: `${previewGapVerticalMm}mm`,
-                        ...(isBackPage ? { direction: "rtl" } : {}),
+                        width: `${pageWidthMm}mm`,
+                        height: `${pageHeightMm}mm`,
+                        backgroundColor: normalizeHexColor(
+                          previewPageBackgroundColor,
+                        ),
+                        ["--card-w-mm"]: cardWidthMm,
+                        ["--card-h-mm"]: cardHeightMm,
+                        ["--cols"]: cols,
+                        ["--rows"]: rows,
                       }}
                     >
-                      {pageCards.map((card, index) => {
-                        const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
-                        return isBackPage
-                          ? renderBackOnlyForPrint(card, true, overlay)
-                          : renderCardForPrint(card, true, overlay);
-                      })}
+
+                      <div
+                        className="print-cards-grid print-cards-grid--preview"
+                        style={{
+                          gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
+                          gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
+                          columnGap: `${layoutPreviewGapHorizontalMm}mm`,
+                          rowGap: `${layoutPreviewGapVerticalMm}mm`,
+                          ...(isBackPage ? { direction: "rtl" } : {}),
+                        }}
+                      >
+                        {pageCards.map((card, index) => {
+                          const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
+                          return isBackPage
+                            ? renderBackOnlyForPrint(card, true, overlay)
+                            : renderCardForPrint(card, true, overlay);
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
           {seeAllJpegDialogOpen && (

@@ -209,6 +209,7 @@
     "react-refresh": "^0.17.0",
     "react-router": "^6.30.3",
     "react-router-dom": "^6.30.3",
+    "react-window": "^2.2.7",
     "read-config-file": "^6.3.2",
     "readable-stream": "^3.6.2",
     "readdir-glob": "^1.1.3",

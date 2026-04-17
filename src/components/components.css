@@ -311,6 +311,12 @@
   gap: 8px;
 }
 
+/* react-window: spacing is baked into row height; outer box scrolls inside FixedSizeList */
+.saved-idcards-list.saved-idcards-list--virtual {
+  gap: 0;
+  display: block;
+}
+
 .saved-idcard-item {
   display: flex;
   flex-direction: column;

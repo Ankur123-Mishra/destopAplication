@@ -4,6 +4,7 @@
 import { API_BASE_URL } from "./config";
 import { getToken } from "./authStorage";
 import { sortStudentsByExcelRowOrder } from "../utils/studentListOrder";
+import { slimStudentsPayloadForClient } from "../utils/slimStudentTemplateForClient";
 
 function authHeaders() {
   const token = getToken();
@@ -74,10 +75,10 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
     const msg = data?.message || data?.error || res.statusText || 'Failed to load students';
     throw new Error(msg);
   }
-  return {
+  return slimStudentsPayloadForClient({
     ...data,
     students: sortStudentsByExcelRowOrder(data.students ?? []),
-  };
+  });
 }
 
 export async function updateStudent(studentId, data) {
@@ -179,10 +180,10 @@ export async function getStudentsBySchool(schoolId) {
   if (!res.ok) throw new Error(data?.message || data?.error || "Failed");
   const schoolStudents = Array.isArray(data.students) ? data.students : [];
   if (schoolStudents.length > 0) {
-    return {
+    return slimStudentsPayloadForClient({
       ...data,
       students: sortStudentsByExcelRowOrder(schoolStudents),
-    };
+    });
   }
 
   // Some projects occasionally return an empty school-level list even though
@@ -222,19 +223,19 @@ export async function getStudentsBySchool(schoolId) {
     });
 
     const mergedStudents = sortStudentsByExcelRowOrder(Array.from(deduped.values()));
-    return {
+    return slimStudentsPayloadForClient({
       ...data,
       ...(data?.template ? {} : fallbackTemplate ? { template: fallbackTemplate } : {}),
       students: mergedStudents,
-    };
+    });
   } catch {
     // Keep original response shape when fallback probing fails.
   }
 
-  return {
+  return slimStudentsPayloadForClient({
     ...data,
     students: sortStudentsByExcelRowOrder(schoolStudents),
-  };
+  });
 }
 
 export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {
