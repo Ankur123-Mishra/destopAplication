@@ -23,7 +23,14 @@ import {
   USE_DATA_EXPORT_RENDERER_PRIMARY,
   cardSupportsDataExportBack,
   cardSupportsDataExportRenderer,
-  renderCardSideToDataUrl,
+  renderCardSideToBlob,
+  getCardExportPreset,
+  getPageExportPreset,
+  canRenderSpreadPageDataOnly,
+  renderSpreadPageToJpegBlob,
+  renderSpreadPageToPngBlob,
+  renderSpreadPageToCanvas,
+  blobToDataUrl,
 } from "../utils/dataExportCanvasRenderer";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
@@ -62,6 +69,10 @@ const PREVIEW_PAGES_RENDER_CHUNK_SIZE = 1;
 const PREVIEW_PAGES_RENDER_DELAY_MS = 16;
 /** Stable fallback so `studentsForPreviewPrint` / card-building effects are not invalidated every render. */
 const EMPTY_STUDENTS = [];
+
+async function uint8FromBlob(blob) {
+  return new Uint8Array(await blob.arrayBuffer());
+}
 
 function fullPhotoUrl(url) {
   if (!url || typeof url !== "string") return url;
@@ -1101,8 +1112,14 @@ async function saveJpegsToFolderWithFilePicker(
     );
     const fh = await sub.getFileHandle(safe, { create: true });
     const w = await fh.createWritable();
-    const blob = await (await fetch(f.dataUrl)).blob();
-    await w.write(blob);
+    if (f.blob instanceof Blob) {
+      await w.write(f.blob);
+    } else if (f.dataBytes instanceof Uint8Array) {
+      await w.write(f.dataBytes);
+    } else {
+      const blob = await (await fetch(f.dataUrl)).blob();
+      await w.write(blob);
+    }
     await w.close();
   }
 }
@@ -1343,6 +1360,9 @@ async function buildPreviewFrontAndBackJpegFiles(
     bulk,
     ...(bulk ? { jpegQuality: PREVIEW_EXPORT_JPEG_QUALITY_BULK } : {}),
   };
+  const hasFabricInBatch = cards.some((c) =>
+    String(c.templateId || "").startsWith("fabric-"),
+  );
 
   const frontEls = getFrontCardCellElements(wrap);
   const backEls = getBackCardCellElements(wrap);
@@ -1363,9 +1383,19 @@ async function buildPreviewFrontAndBackJpegFiles(
   const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
   const totalSteps = cards.length + backExportCount;
   const useNativeCapture = canUseElectronNativeCapture();
-  /** Parallel html2canvas for large exports; Electron native capture is serialized (scrollIntoView per shot). */
+  const allCanvasDataCards =
+    !hasFabricInBatch &&
+    cards.every((c) => cardSupportsDataExportRenderer(c)) &&
+    cards
+      .filter((c) => cardExportsBackJpeg(c))
+      .every((c) => cardSupportsDataExportBack(c));
+  /** Data renderer: higher parallelism; DOM capture stays lower (native serializes). */
   const captureConcurrency = useNativeCapture
     ? 1
+    : allCanvasDataCards
+      ? bulk
+        ? Math.min(16, Math.max(8, Math.ceil(cards.length / 80)))
+        : 6
     : bulk
       ? cards.length > 200
         ? 8
@@ -1375,7 +1405,7 @@ async function buildPreviewFrontAndBackJpegFiles(
       : 2;
 
   async function captureCell(el, label, index1, card, side) {
-    let dataUrl;
+    let payload;
     let lastErr;
     for (let attempt = 0; attempt < maxCaptureAttempts; attempt++) {
       if (shouldAbort()) throw new ExportCancelledError();
@@ -1387,34 +1417,43 @@ async function buildPreviewFrontAndBackJpegFiles(
             : cardSupportsDataExportBack(card));
         if (useData) {
           try {
+            const preset = getCardExportPreset({
+              bulk,
+              megaBulkPage: Boolean(captureFlags.megaBulkPage),
+            });
             const q =
               typeof captureFlags.jpegQuality === "number"
                 ? captureFlags.jpegQuality
                 : PREVIEW_EXPORT_JPEG_QUALITY;
-            dataUrl = await renderCardSideToDataUrl(card, side, {
+            const blob = await renderCardSideToBlob(card, side, {
               mime: "image/jpeg",
               quality: q,
-              pixelScale: bulk ? 2 : 2.5,
+              pixelScale: preset.pixelScale,
             });
+            payload = { dataBytes: await uint8FromBlob(blob) };
           } catch (dataErr) {
             console.warn(
               "[export] Data canvas JPEG failed, using capture fallback.",
               dataErr,
             );
-            dataUrl = await rasterizeElementForExport(
+            payload = {
+              dataUrl: await rasterizeElementForExport(
+                el,
+                pageBackgroundColor,
+                captureFlags,
+                "jpeg",
+              ),
+            };
+          }
+        } else {
+          payload = {
+            dataUrl: await rasterizeElementForExport(
               el,
               pageBackgroundColor,
               captureFlags,
               "jpeg",
-            );
-          }
-        } else {
-          dataUrl = await rasterizeElementForExport(
-            el,
-            pageBackgroundColor,
-            captureFlags,
-            "jpeg",
-          );
+            ),
+          };
         }
         lastErr = undefined;
         break;
@@ -1424,17 +1463,17 @@ async function buildPreviewFrontAndBackJpegFiles(
         await delay(retryBaseMs * (attempt + 1));
       }
     }
-    if (!dataUrl) {
+    if (!payload) {
       throw lastErr || new Error(`Failed to capture ${label} card ${index1}`);
     }
-    return dataUrl;
+    return payload;
   }
   let step = 0;
-  const frontDataUrls = await mapWithConcurrency(
+  const frontPayloads = await mapWithConcurrency(
     frontEls,
     captureConcurrency,
     async (el, i) => {
-      const dataUrl = await captureCell(el, "front", i + 1, cards[i], "front");
+      const payload = await captureCell(el, "front", i + 1, cards[i], "front");
       step += 1;
       onProgress?.({
         label: "Capturing JPEGs (front)…",
@@ -1442,12 +1481,15 @@ async function buildPreviewFrontAndBackJpegFiles(
         total: totalSteps,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let i = 0; i < cards.length; i++) {
-    files.push({ filename: `${bases[i]}_front.jpg`, dataUrl: frontDataUrls[i] });
+    files.push({
+      filename: `${bases[i]}_front.jpg`,
+      ...frontPayloads[i],
+    });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   const backTasks = [];
@@ -1461,11 +1503,11 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     backTasks.push({ i, domIdx });
   }
-  const backDataUrls = await mapWithConcurrency(
+  const backPayloads = await mapWithConcurrency(
     backTasks,
     captureConcurrency,
     async ({ i, domIdx }) => {
-      const dataUrl = await captureCell(
+      const payload = await captureCell(
         backEls[domIdx],
         "back",
         i + 1,
@@ -1479,13 +1521,13 @@ async function buildPreviewFrontAndBackJpegFiles(
         total: totalSteps,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_back.jpg`, dataUrl: backDataUrls[t] });
+    files.push({ filename: `${bases[i]}_back.jpg`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -1495,12 +1537,16 @@ async function buildPreviewFrontAndBackJpegFiles(
  * Builds one JPEG per preview page (same page size as the preview),
  * e.g. page-001.jpg, page-002.jpg... This avoids the "thin width" issue
  * of stitching all pages into a single long image.
+ *
+ * @param {object|null} pageExportContext - When set with cards + layout, uses data→canvas for
+ *   canvas templates (fast); DOM capture remains per-page fallback.
  */
 async function buildPreviewPagesJpegFiles(
   pageNodes,
   pageBackgroundColor,
   onProgress,
   captureOpts = {},
+  pageExportContext = null,
 ) {
   const bulk = Boolean(captureOpts.bulk);
   const shouldAbort =
@@ -1521,32 +1567,100 @@ async function buildPreviewPagesJpegFiles(
         : {}),
   };
   const n = nodes.length;
+  const { cards, cardsPerPage, layout } = pageExportContext || {};
   const useNativeCapture = canUseElectronNativeCapture();
-  const pageConcurrency = useNativeCapture
-    ? 1
-    : !bulk
-      ? 2
-      : n > 150
-        ? 7
-        : n > 80
-          ? 6
-          : n > 40
-            ? 5
-            : 4;
+  const allSpreadsDataCapable =
+    USE_DATA_EXPORT_RENDERER_PRIMARY &&
+    cards?.length &&
+    layout &&
+    Number.isFinite(cardsPerPage) &&
+    nodes.every((node) => {
+      const bi = Number(node?.dataset?.batchIndex);
+      if (!Number.isFinite(bi)) return false;
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = bi * cardsPerPage;
+      const pageCards = cards.slice(start, start + cardsPerPage);
+      return canRenderSpreadPageDataOnly(pageCards, side);
+    });
+  const pageConcurrency =
+    allSpreadsDataCapable && !useNativeCapture
+      ? bulk
+        ? Math.min(16, Math.max(8, Math.ceil(n / 20)))
+        : 4
+      : useNativeCapture
+        ? 1
+        : !bulk
+          ? 2
+          : n > 150
+            ? 7
+            : n > 80
+              ? 6
+              : n > 40
+                ? 5
+                : 4;
   if (nodes.length === 0) return [];
   const files = [];
   let pagesDone = 0;
-  const pageDataUrls = await mapWithConcurrency(
+  const pagePayloads = await mapWithConcurrency(
     nodes,
     pageConcurrency,
     async (node) => {
       if (shouldAbort()) throw new ExportCancelledError();
-      const dataUrl = await rasterizeElementForExport(
-        node,
-        pageBackgroundColor,
-        captureFlags,
-        "jpeg",
-      );
+      let payload;
+      const bi = Number(node?.dataset?.batchIndex);
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+      const pageCards =
+        Number.isFinite(start) && cards?.length
+          ? cards.slice(start, start + cardsPerPage)
+          : [];
+      const useDataSpread =
+        USE_DATA_EXPORT_RENDERER_PRIMARY &&
+        layout &&
+        pageCards.length > 0 &&
+        canRenderSpreadPageDataOnly(pageCards, side);
+      if (useDataSpread) {
+        try {
+          const preset = getPageExportPreset({ bulk, megaBulkPage });
+          const blob = await renderSpreadPageToJpegBlob(
+            pageCards,
+            side,
+            layout,
+            pageBackgroundColor,
+            {
+              bulk,
+              megaBulkPage,
+              jpegQuality:
+                typeof captureFlags.jpegQuality === "number"
+                  ? captureFlags.jpegQuality
+                  : preset.jpegQuality,
+            },
+          );
+          payload = { dataBytes: await uint8FromBlob(blob) };
+        } catch (e) {
+          console.warn(
+            "[export] Data canvas page JPEG failed, using capture fallback.",
+            e,
+          );
+          payload = {
+            dataUrl: await rasterizeElementForExport(
+              node,
+              pageBackgroundColor,
+              captureFlags,
+              "jpeg",
+            ),
+          };
+        }
+      } else {
+        payload = {
+          dataUrl: await rasterizeElementForExport(
+            node,
+            pageBackgroundColor,
+            captureFlags,
+            "jpeg",
+          ),
+        };
+      }
       pagesDone += 1;
       onProgress?.({
         label: "Capturing JPEG pages…",
@@ -1554,13 +1668,13 @@ async function buildPreviewPagesJpegFiles(
         total: nodes.length,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let i = 0; i < nodes.length; i++) {
     const idx = String(i + 1).padStart(3, "0");
-    files.push({ filename: `page-${idx}.jpg`, dataUrl: pageDataUrls[i] });
+    files.push({ filename: `page-${idx}.jpg`, ...pagePayloads[i] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -1586,6 +1700,9 @@ async function buildPreviewFrontAndBackPngFiles(
   const retryBaseMs = bulk ? 40 : 300;
   const maxCaptureAttempts = bulk ? 2 : 3;
   const captureFlags = { bulk };
+  const hasFabricInBatch = cards.some((c) =>
+    String(c.templateId || "").startsWith("fabric-"),
+  );
 
   const frontEls = getFrontCardCellElements(wrap);
   const backEls = getBackCardCellElements(wrap);
@@ -1606,8 +1723,18 @@ async function buildPreviewFrontAndBackPngFiles(
   const backExportCount = cards.filter((c) => cardExportsBackJpeg(c)).length;
   const totalSteps = cards.length + backExportCount;
   const useNativeCapture = canUseElectronNativeCapture();
+  const allCanvasDataCards =
+    !hasFabricInBatch &&
+    cards.every((c) => cardSupportsDataExportRenderer(c)) &&
+    cards
+      .filter((c) => cardExportsBackJpeg(c))
+      .every((c) => cardSupportsDataExportBack(c));
   const captureConcurrency = useNativeCapture
     ? 1
+    : allCanvasDataCards
+      ? bulk
+        ? Math.min(14, Math.max(6, Math.ceil(cards.length / 80)))
+        : 5
     : bulk
       ? cards.length > 200
         ? 8
@@ -1617,7 +1744,7 @@ async function buildPreviewFrontAndBackPngFiles(
       : 2;
 
   async function captureCell(el, label, index1, card, side) {
-    let dataUrl;
+    let payload;
     let lastErr;
     for (let attempt = 0; attempt < maxCaptureAttempts; attempt++) {
       if (shouldAbort()) throw new ExportCancelledError();
@@ -1629,29 +1756,35 @@ async function buildPreviewFrontAndBackPngFiles(
             : cardSupportsDataExportBack(card));
         if (useData) {
           try {
-            dataUrl = await renderCardSideToDataUrl(card, side, {
+            const preset = getCardExportPreset({ bulk, megaBulkPage: false });
+            const blob = await renderCardSideToBlob(card, side, {
               mime: "image/png",
-              pixelScale: bulk ? 2 : 2.5,
+              pixelScale: preset.pixelScale,
             });
+            payload = { dataBytes: await uint8FromBlob(blob) };
           } catch (dataErr) {
             console.warn(
               "[export] Data canvas PNG failed, using capture fallback.",
               dataErr,
             );
-            dataUrl = await rasterizeElementForExport(
+            payload = {
+              dataUrl: await rasterizeElementForExport(
+                el,
+                pageBackgroundColor,
+                captureFlags,
+                "png",
+              ),
+            };
+          }
+        } else {
+          payload = {
+            dataUrl: await rasterizeElementForExport(
               el,
               pageBackgroundColor,
               captureFlags,
               "png",
-            );
-          }
-        } else {
-          dataUrl = await rasterizeElementForExport(
-            el,
-            pageBackgroundColor,
-            captureFlags,
-            "png",
-          );
+            ),
+          };
         }
         lastErr = undefined;
         break;
@@ -1661,18 +1794,18 @@ async function buildPreviewFrontAndBackPngFiles(
         await delay(retryBaseMs * (attempt + 1));
       }
     }
-    if (!dataUrl) {
+    if (!payload) {
       throw lastErr || new Error(`Failed to capture ${label} card ${index1}`);
     }
-    return dataUrl;
+    return payload;
   }
 
   let step = 0;
-  const frontDataUrls = await mapWithConcurrency(
+  const frontPayloads = await mapWithConcurrency(
     frontEls,
     captureConcurrency,
     async (el, i) => {
-      const dataUrl = await captureCell(el, "front", i + 1, cards[i], "front");
+      const payload = await captureCell(el, "front", i + 1, cards[i], "front");
       step += 1;
       onProgress?.({
         label: "Capturing PNGs (front)…",
@@ -1680,12 +1813,12 @@ async function buildPreviewFrontAndBackPngFiles(
         total: totalSteps,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let i = 0; i < cards.length; i++) {
-    files.push({ filename: `${bases[i]}_front.png`, dataUrl: frontDataUrls[i] });
+    files.push({ filename: `${bases[i]}_front.png`, ...frontPayloads[i] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
 
@@ -1698,11 +1831,11 @@ async function buildPreviewFrontAndBackPngFiles(
     }
     backTasks.push({ i, domIdx });
   }
-  const backDataUrls = await mapWithConcurrency(
+  const backPayloads = await mapWithConcurrency(
     backTasks,
     captureConcurrency,
     async ({ i, domIdx }) => {
-      const dataUrl = await captureCell(
+      const payload = await captureCell(
         backEls[domIdx],
         "back",
         i + 1,
@@ -1716,13 +1849,13 @@ async function buildPreviewFrontAndBackPngFiles(
         total: totalSteps,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_back.png`, dataUrl: backDataUrls[t] });
+    files.push({ filename: `${bases[i]}_back.png`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -1733,6 +1866,7 @@ async function buildPreviewPagesPngFiles(
   pageBackgroundColor,
   onProgress,
   captureOpts = {},
+  pageExportContext = null,
 ) {
   const bulk = Boolean(captureOpts.bulk);
   const shouldAbort =
@@ -1745,32 +1879,92 @@ async function buildPreviewPagesPngFiles(
     bulk && nodes.length >= MEGA_BULK_PAGE_THRESHOLD;
   const captureFlags = { bulk, megaBulkPage };
   const n = nodes.length;
+  const { cards, cardsPerPage, layout } = pageExportContext || {};
   const useNativeCapture = canUseElectronNativeCapture();
-  const pageConcurrency = useNativeCapture
-    ? 1
-    : !bulk
-      ? 2
-      : n > 150
-        ? 7
-        : n > 80
-          ? 6
-          : n > 40
-            ? 5
-            : 4;
+  const allSpreadsDataCapable =
+    USE_DATA_EXPORT_RENDERER_PRIMARY &&
+    cards?.length &&
+    layout &&
+    Number.isFinite(cardsPerPage) &&
+    nodes.every((node) => {
+      const bi = Number(node?.dataset?.batchIndex);
+      if (!Number.isFinite(bi)) return false;
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = bi * cardsPerPage;
+      const pageCards = cards.slice(start, start + cardsPerPage);
+      return canRenderSpreadPageDataOnly(pageCards, side);
+    });
+  const pageConcurrency =
+    allSpreadsDataCapable && !useNativeCapture
+      ? bulk
+        ? Math.min(14, Math.max(6, Math.ceil(n / 20)))
+        : 4
+      : useNativeCapture
+        ? 1
+        : !bulk
+          ? 2
+          : n > 150
+            ? 7
+            : n > 80
+              ? 6
+              : n > 40
+                ? 5
+                : 4;
   if (nodes.length === 0) return [];
   const files = [];
   let pagesDone = 0;
-  const pageDataUrls = await mapWithConcurrency(
+  const pagePayloads = await mapWithConcurrency(
     nodes,
     pageConcurrency,
     async (node) => {
       if (shouldAbort()) throw new ExportCancelledError();
-      const dataUrl = await rasterizeElementForExport(
-        node,
-        pageBackgroundColor,
-        captureFlags,
-        "png",
-      );
+      let payload;
+      const bi = Number(node?.dataset?.batchIndex);
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+      const pageCards =
+        Number.isFinite(start) && cards?.length
+          ? cards.slice(start, start + cardsPerPage)
+          : [];
+      const useDataSpread =
+        USE_DATA_EXPORT_RENDERER_PRIMARY &&
+        layout &&
+        pageCards.length > 0 &&
+        canRenderSpreadPageDataOnly(pageCards, side);
+      if (useDataSpread) {
+        try {
+          const blob = await renderSpreadPageToPngBlob(
+            pageCards,
+            side,
+            layout,
+            pageBackgroundColor,
+            { bulk, megaBulkPage },
+          );
+          payload = { dataBytes: await uint8FromBlob(blob) };
+        } catch (e) {
+          console.warn(
+            "[export] Data canvas page PNG failed, using capture fallback.",
+            e,
+          );
+          payload = {
+            dataUrl: await rasterizeElementForExport(
+              node,
+              pageBackgroundColor,
+              captureFlags,
+              "png",
+            ),
+          };
+        }
+      } else {
+        payload = {
+          dataUrl: await rasterizeElementForExport(
+            node,
+            pageBackgroundColor,
+            captureFlags,
+            "png",
+          ),
+        };
+      }
       pagesDone += 1;
       onProgress?.({
         label: "Capturing PNG pages…",
@@ -1778,13 +1972,13 @@ async function buildPreviewPagesPngFiles(
         total: nodes.length,
       });
       if (betweenMs > 0) await delay(betweenMs);
-      return dataUrl;
+      return payload;
     },
     shouldAbort,
   );
   for (let i = 0; i < nodes.length; i++) {
     const idx = String(i + 1).padStart(3, "0");
-    files.push({ filename: `page-${idx}.png`, dataUrl: pageDataUrls[i] });
+    files.push({ filename: `page-${idx}.png`, ...pagePayloads[i] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -1817,10 +2011,16 @@ async function downloadJpegsAsZipFolder(
       /[<>:"/\\|?*\x00-\x1f]/g,
       "_",
     );
-    const s = String(f.dataUrl || "");
-    const comma = s.indexOf(",");
-    const base64 = comma >= 0 ? s.slice(comma + 1) : s;
-    root.file(safeName, base64, { base64: true });
+    if (f.blob instanceof Blob) {
+      root.file(safeName, f.blob);
+    } else if (f.dataBytes instanceof Uint8Array) {
+      root.file(safeName, f.dataBytes);
+    } else {
+      const s = String(f.dataUrl || "");
+      const comma = s.indexOf(",");
+      const base64 = comma >= 0 ? s.slice(comma + 1) : s;
+      root.file(safeName, base64, { base64: true });
+    }
   }
   onProgress?.({
     label: "Saving ZIP file…",
@@ -1923,11 +2123,19 @@ async function saveJpegExportToFolder(
             current: i + 1,
             total: files.length,
           });
-          const wr = await el.writeJpegFile({
+          const f = files[i];
+          const payload = {
             directoryPath: dir,
-            filename: files[i].filename,
-            dataUrl: files[i].dataUrl,
-          });
+            filename: f.filename,
+          };
+          if (f.dataBytes instanceof Uint8Array) {
+            payload.dataBytes = f.dataBytes;
+          } else if (f.blob instanceof Blob) {
+            payload.dataBytes = await uint8FromBlob(f.blob);
+          } else {
+            payload.dataUrl = f.dataUrl;
+          }
+          const wr = await el.writeJpegFile(payload);
           if (!wr.success) {
             throw new Error(
               wr.error || `Failed to write ${files[i].filename}`,
@@ -2005,10 +2213,16 @@ async function downloadPngsAsZipFolder(
       /[<>:"/\\|?*\x00-\x1f]/g,
       "_",
     );
-    const s = String(f.dataUrl || "");
-    const comma = s.indexOf(",");
-    const base64 = comma >= 0 ? s.slice(comma + 1) : s;
-    root.file(safeName, base64, { base64: true });
+    if (f.blob instanceof Blob) {
+      root.file(safeName, f.blob);
+    } else if (f.dataBytes instanceof Uint8Array) {
+      root.file(safeName, f.dataBytes);
+    } else {
+      const s = String(f.dataUrl || "");
+      const comma = s.indexOf(",");
+      const base64 = comma >= 0 ? s.slice(comma + 1) : s;
+      root.file(safeName, base64, { base64: true });
+    }
   }
   onProgress?.({
     label: "Saving ZIP file…",
@@ -2106,11 +2320,19 @@ async function savePngExportToFolder(
             current: i + 1,
             total: files.length,
           });
-          const wr = await el.writePngFile({
+          const f = files[i];
+          const payload = {
             directoryPath: dir,
-            filename: files[i].filename,
-            dataUrl: files[i].dataUrl,
-          });
+            filename: f.filename,
+          };
+          if (f.dataBytes instanceof Uint8Array) {
+            payload.dataBytes = f.dataBytes;
+          } else if (f.blob instanceof Blob) {
+            payload.dataBytes = await uint8FromBlob(f.blob);
+          } else {
+            payload.dataUrl = f.dataUrl;
+          }
+          const wr = await el.writePngFile(payload);
           if (!wr.success) {
             throw new Error(
               wr.error || `Failed to write ${files[i].filename}`,
@@ -2159,6 +2381,7 @@ async function exportPreviewPagesAsFiles(
   shouldAbort = null,
   /** Same predicate as JPEG `useFastBulkCapture`: many cards / pages / all-school → faster raster + no per-file download delay. */
   fastBulkCapture = false,
+  spreadDataExportContext = null,
 ) {
   if (!pageElements?.length) return;
   const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
@@ -2177,18 +2400,37 @@ async function exportPreviewPagesAsFiles(
     ? PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA
     : PREVIEW_EXPORT_JPEG_QUALITY;
   const useNativeCapture = canUseElectronNativeCapture();
+  const { cards, cardsPerPage, layout } = spreadDataExportContext || {};
+  const allSpreadsDataCapable =
+    USE_DATA_EXPORT_RENDERER_PRIMARY &&
+    cards?.length &&
+    layout &&
+    Number.isFinite(cardsPerPage) &&
+    pageElements.every((node) => {
+      const bi = Number(node?.dataset?.batchIndex);
+      if (!Number.isFinite(bi)) return false;
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = bi * cardsPerPage;
+      const pageCards = cards.slice(start, start + cardsPerPage);
+      return canRenderSpreadPageDataOnly(pageCards, side);
+    });
   /** Match buildPreviewPagesJpegFiles: more parallel work when there are many full pages. */
-  const rasterCaptureConcurrency = useNativeCapture
-    ? 1
-    : !bulk
-      ? 2
-      : pageCount > 150
-        ? 7
-        : pageCount > 80
-          ? 6
-          : pageCount > 40
-            ? 5
-            : 4;
+  const rasterCaptureConcurrency =
+    allSpreadsDataCapable && !useNativeCapture
+      ? bulk
+        ? Math.min(16, Math.max(8, Math.ceil(pageCount / 20)))
+        : 4
+      : useNativeCapture
+        ? 1
+        : !bulk
+          ? 2
+          : pageCount > 150
+            ? 7
+            : pageCount > 80
+              ? 6
+              : pageCount > 40
+                ? 5
+                : 4;
 
   if (format === "pdf") {
     const safeSub =
@@ -2262,11 +2504,45 @@ async function exportPreviewPagesAsFiles(
       pageElements,
       rasterCaptureConcurrency,
       async (element, i) => {
-        const canvas = await html2canvasForExport(
-          element,
-          pageBackgroundColor,
-          captureOpts,
-        );
+        const bi = Number(element?.dataset?.batchIndex);
+        const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
+        const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+        const pageCards =
+          Number.isFinite(start) && cards?.length
+            ? cards.slice(start, start + cardsPerPage)
+            : [];
+        let canvas;
+        if (
+          layout &&
+          pageCards.length > 0 &&
+          canRenderSpreadPageDataOnly(pageCards, side)
+        ) {
+          try {
+            canvas = await renderSpreadPageToCanvas(
+              pageCards,
+              side,
+              layout,
+              pageBackgroundColor,
+              captureOpts,
+            );
+          } catch (e) {
+            console.warn(
+              "[export] Data canvas PDF page failed, using DOM capture.",
+              e,
+            );
+            canvas = await html2canvasForExport(
+              element,
+              pageBackgroundColor,
+              captureOpts,
+            );
+          }
+        } else {
+          canvas = await html2canvasForExport(
+            element,
+            pageBackgroundColor,
+            captureOpts,
+          );
+        }
         if (abortFn()) throw new ExportCancelledError();
         pagesCaptured += 1;
         emitProgress({
@@ -2328,20 +2604,84 @@ async function exportPreviewPagesAsFiles(
     pageElements,
     rasterCaptureConcurrency,
     async (element, i) => {
-      const dataUrl = await rasterizeElementForExport(
-        element,
-        pageBackgroundColor,
-        {
-          ...captureOpts,
-          jpegQuality:
-            format === "png"
-              ? undefined
-              : typeof captureOpts.jpegQuality === "number"
-                ? captureOpts.jpegQuality
-                : pageRasterJpegQ,
-        },
-        format === "png" ? "png" : "jpeg",
-      );
+      const bi = Number(element?.dataset?.batchIndex);
+      const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+      const pageCards =
+        Number.isFinite(start) && cards?.length
+          ? cards.slice(start, start + cardsPerPage)
+          : [];
+      const useDataSpread =
+        USE_DATA_EXPORT_RENDERER_PRIMARY &&
+        layout &&
+        pageCards.length > 0 &&
+        canRenderSpreadPageDataOnly(pageCards, side);
+      let dataUrl;
+      if (useDataSpread) {
+        try {
+          if (format === "png") {
+            const blob = await renderSpreadPageToPngBlob(
+              pageCards,
+              side,
+              layout,
+              pageBackgroundColor,
+              captureOpts,
+            );
+            dataUrl = await blobToDataUrl(blob);
+          } else {
+            const preset = getPageExportPreset({ bulk, megaBulkPage });
+            const blob = await renderSpreadPageToJpegBlob(
+              pageCards,
+              side,
+              layout,
+              pageBackgroundColor,
+              {
+                bulk,
+                megaBulkPage,
+                jpegQuality:
+                  typeof captureOpts.jpegQuality === "number"
+                    ? captureOpts.jpegQuality
+                    : pageRasterJpegQ ?? preset.jpegQuality,
+              },
+            );
+            dataUrl = await blobToDataUrl(blob);
+          }
+        } catch (e) {
+          console.warn(
+            "[export] Data canvas page file export failed, using DOM capture.",
+            e,
+          );
+          dataUrl = await rasterizeElementForExport(
+            element,
+            pageBackgroundColor,
+            {
+              ...captureOpts,
+              jpegQuality:
+                format === "png"
+                  ? undefined
+                  : typeof captureOpts.jpegQuality === "number"
+                    ? captureOpts.jpegQuality
+                    : pageRasterJpegQ,
+            },
+            format === "png" ? "png" : "jpeg",
+          );
+        }
+      } else {
+        dataUrl = await rasterizeElementForExport(
+          element,
+          pageBackgroundColor,
+          {
+            ...captureOpts,
+            jpegQuality:
+              format === "png"
+                ? undefined
+                : typeof captureOpts.jpegQuality === "number"
+                  ? captureOpts.jpegQuality
+                  : pageRasterJpegQ,
+          },
+          format === "png" ? "png" : "jpeg",
+        );
+      }
       if (abortFn()) throw new ExportCancelledError();
       pagesCaptured += 1;
       emitProgress({
@@ -3922,6 +4262,21 @@ export default function SavedIdCardsList({
           if (!wrap) continue;
           const nodes = wrap.querySelectorAll(".print-page.preview-page");
           const cards = cardsToPrintRef.current;
+          const pageExportContext = {
+            cards,
+            cardsPerPage,
+            layout: {
+              pageWidthMm: layoutPageWidthMm,
+              pageHeightMm: layoutPageHeightMm,
+              marginMm: PRINT_PAGE_MARGIN_MM,
+              gapHm: layoutPreviewGapHorizontalMm,
+              gapVm: layoutPreviewGapVerticalMm,
+              cols,
+              rows,
+              cardWidthMm,
+              cardHeightMm,
+            },
+          };
           if (
             nodes.length <= 0 ||
             spreadPagesCount <= 0 ||
@@ -4024,6 +4379,7 @@ export default function SavedIdCardsList({
                   previewPageBackgroundColor,
                   onProg,
                   jpegCaptureOpts,
+                  pageExportContext,
                 );
                 files.push(...pageFiles);
               } catch (e) {
@@ -4141,6 +4497,7 @@ export default function SavedIdCardsList({
               previewPageBackgroundColor,
               onProg,
               { bulk: fastBulkPreviewExport, shouldAbort: isAborted },
+              pageExportContext,
             );
             files.push(...pageFiles);
             progressThrottle?.flush();
@@ -4180,6 +4537,7 @@ export default function SavedIdCardsList({
             onProg,
             isAborted,
             fastBulkPreviewExport,
+            pageExportContext,
           );
           progressThrottle?.flush();
           captured = true;
@@ -4229,6 +4587,14 @@ export default function SavedIdCardsList({
     cardsPerPage,
     pageWidthMm,
     pageHeightMm,
+    layoutPageWidthMm,
+    layoutPageHeightMm,
+    layoutPreviewGapHorizontalMm,
+    layoutPreviewGapVerticalMm,
+    cols,
+    rows,
+    cardWidthMm,
+    cardHeightMm,
     classId,
     schoolId,
     isAllSchoolStudents,
@@ -5269,6 +5635,8 @@ export default function SavedIdCardsList({
                   return (
                     <div
                       key={`preview-${batchIndex}-${side}`}
+                      data-batch-index={String(batchIndex)}
+                      data-spread-side={side}
                       className={`print-page preview-page print-page-spread preview-page--center ${isBackPage ? "preview-page--back" : "preview-page--front"}`}
                       style={{
                         width: `${pageWidthMm}mm`,

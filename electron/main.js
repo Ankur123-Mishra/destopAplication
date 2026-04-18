@@ -207,10 +207,19 @@ function registerJpegExportIpcHandlers() {
         if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
           name += '.jpg';
         }
-        const dataUrl = String(f.dataUrl || '');
-        const comma = dataUrl.indexOf(',');
-        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-        const buffer = Buffer.from(base64, 'base64');
+        let buffer;
+        if (f.dataBytes instanceof Uint8Array) {
+          buffer = Buffer.from(
+            f.dataBytes.buffer,
+            f.dataBytes.byteOffset,
+            f.dataBytes.byteLength,
+          );
+        } else {
+          const dataUrl = String(f.dataUrl || '');
+          const comma = dataUrl.indexOf(',');
+          const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+          buffer = Buffer.from(base64, 'base64');
+        }
         await fs.writeFile(path.join(dir, name), buffer);
       }
       return { success: true, folderPath: dir };
@@ -238,8 +247,8 @@ function registerJpegExportIpcHandlers() {
 
   ipcMain.handle('write-jpeg-file', async (event, payload) => {
     try {
-      const { directoryPath, filename, dataUrl } = payload || {};
-      if (!directoryPath || !dataUrl) {
+      const { directoryPath, filename, dataUrl, dataBytes } = payload || {};
+      if (!directoryPath || (!dataUrl && !(dataBytes instanceof Uint8Array))) {
         return { success: false, error: 'Invalid file payload' };
       }
       let name = path
@@ -248,10 +257,19 @@ function registerJpegExportIpcHandlers() {
       if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
         name += '.jpg';
       }
-      const dataUrlStr = String(dataUrl);
-      const comma = dataUrlStr.indexOf(',');
-      const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
-      const buffer = Buffer.from(base64, 'base64');
+      let buffer;
+      if (dataBytes instanceof Uint8Array) {
+        buffer = Buffer.from(
+          dataBytes.buffer,
+          dataBytes.byteOffset,
+          dataBytes.byteLength,
+        );
+      } else {
+        const dataUrlStr = String(dataUrl);
+        const comma = dataUrlStr.indexOf(',');
+        const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
+        buffer = Buffer.from(base64, 'base64');
+      }
       await fs.writeFile(path.join(directoryPath, name), buffer);
       return { success: true };
     } catch (error) {
@@ -314,10 +332,19 @@ function registerJpegExportIpcHandlers() {
         if (!name.toLowerCase().endsWith('.png')) {
           name += '.png';
         }
-        const dataUrl = String(f.dataUrl || '');
-        const comma = dataUrl.indexOf(',');
-        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-        const buffer = Buffer.from(base64, 'base64');
+        let buffer;
+        if (f.dataBytes instanceof Uint8Array) {
+          buffer = Buffer.from(
+            f.dataBytes.buffer,
+            f.dataBytes.byteOffset,
+            f.dataBytes.byteLength,
+          );
+        } else {
+          const dataUrl = String(f.dataUrl || '');
+          const comma = dataUrl.indexOf(',');
+          const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+          buffer = Buffer.from(base64, 'base64');
+        }
         await fs.writeFile(path.join(dir, name), buffer);
       }
       return { success: true, folderPath: dir };
@@ -345,8 +372,8 @@ function registerJpegExportIpcHandlers() {
 
   ipcMain.handle('write-png-file', async (event, payload) => {
     try {
-      const { directoryPath, filename, dataUrl } = payload || {};
-      if (!directoryPath || !dataUrl) {
+      const { directoryPath, filename, dataUrl, dataBytes } = payload || {};
+      if (!directoryPath || (!dataUrl && !(dataBytes instanceof Uint8Array))) {
         return { success: false, error: 'Invalid file payload' };
       }
       let name = path
@@ -355,10 +382,19 @@ function registerJpegExportIpcHandlers() {
       if (!name.toLowerCase().endsWith('.png')) {
         name += '.png';
       }
-      const dataUrlStr = String(dataUrl);
-      const comma = dataUrlStr.indexOf(',');
-      const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
-      const buffer = Buffer.from(base64, 'base64');
+      let buffer;
+      if (dataBytes instanceof Uint8Array) {
+        buffer = Buffer.from(
+          dataBytes.buffer,
+          dataBytes.byteOffset,
+          dataBytes.byteLength,
+        );
+      } else {
+        const dataUrlStr = String(dataUrl);
+        const comma = dataUrlStr.indexOf(',');
+        const base64 = comma >= 0 ? dataUrlStr.slice(comma + 1) : dataUrlStr;
+        buffer = Buffer.from(base64, 'base64');
+      }
       await fs.writeFile(path.join(directoryPath, name), buffer);
       return { success: true };
     } catch (error) {

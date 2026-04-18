@@ -23,6 +23,25 @@ const MM_TO_CSS_PX = 96 / 25.4;
 
 const imageCache = new Map();
 
+/** Fast = bulk jobs; balanced = default; high = small batches (sharper, slower). */
+export const EXPORT_RENDER_PRESET = {
+  fast: { pixelScale: 1.65, jpegQuality: 0.82, pagePixelScale: 1.35 },
+  balanced: { pixelScale: 2, jpegQuality: 0.9, pagePixelScale: 1.65 },
+  high: { pixelScale: 2.5, jpegQuality: 0.94, pagePixelScale: 2 },
+};
+
+export function getCardExportPreset({ bulk, megaBulkPage } = {}) {
+  if (megaBulkPage) return EXPORT_RENDER_PRESET.fast;
+  if (bulk) return EXPORT_RENDER_PRESET.balanced;
+  return EXPORT_RENDER_PRESET.high;
+}
+
+export function getPageExportPreset({ bulk, megaBulkPage } = {}) {
+  if (megaBulkPage) return EXPORT_RENDER_PRESET.fast;
+  if (bulk) return { ...EXPORT_RENDER_PRESET.balanced, pagePixelScale: 1.5 };
+  return EXPORT_RENDER_PRESET.high;
+}
+
 function convertDimensionToMm(value, unit) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
@@ -207,18 +226,34 @@ function loadImageCached(src) {
   if (!src) return Promise.reject(new Error("Missing image URL"));
   const hit = imageCache.get(src);
   if (hit) return hit;
-  const p = new Promise((resolve, reject) => {
+  const p = loadImageUncached(src);
+  imageCache.set(src, p);
+  return p;
+}
+
+/** Prefer createImageBitmap (decode once); fall back to HTMLImageElement. */
+async function loadImageUncached(src) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const res = await fetch(src, { mode: "cors", credentials: "omit" });
+      const blob = await res.blob();
+      return await createImageBitmap(blob);
+    } catch (_) {
+      /* fall through */
+    }
+  }
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.onload = () => {
-      imageCache.set(src, Promise.resolve(img));
-      resolve(img);
-    };
+    img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(`Image failed to load: ${src}`));
     img.src = src;
   });
-  imageCache.set(src, p);
-  return p;
+}
+
+function drawImageSource(ctx, source, dx, dy, dw, dh) {
+  if (!source) return;
+  ctx.drawImage(source, dx, dy, dw, dh);
 }
 
 function canvasToBlob(canvas, mime, quality) {
@@ -350,7 +385,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, wPx, hPx);
-  ctx.drawImage(bg, 0, 0, wPx, hPx);
+  drawImageSource(ctx, bg, 0, 0, wPx, hPx);
 
   for (const el of tpl.elements) {
     if (el.type === "photo" && data.studentImage) {
@@ -360,7 +395,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
         const py = (el.y / 100) * hPx;
         const pw = (el.width / 100) * wPx;
         const ph = (el.height / 100) * hPx;
-        ctx.drawImage(photo, px, py, pw, ph);
+        drawImageSource(ctx, photo, px, py, pw, ph);
       } catch (_) {
         /* skip broken photo */
       }
@@ -416,4 +451,155 @@ export async function renderCardSideToBlob(card, side, options = {}) {
     mime,
     mime === "image/jpeg" ? q : undefined,
   );
+}
+
+function hasFabricCard(c) {
+  return Boolean(c && String(c.templateId || "").startsWith("fabric-"));
+}
+
+/**
+ * True when every card on this spread can be drawn via data canvas (no Fabric, correct template side).
+ */
+export function canRenderSpreadPageDataOnly(pageCards, side) {
+  if (!pageCards?.length) return false;
+  for (const c of pageCards) {
+    if (hasFabricCard(c)) return false;
+    if (side === "back") {
+      if (!cardSupportsDataExportBack(c)) return false;
+    } else if (!cardSupportsDataExportRenderer(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * One printable sheet: background + grid of card sides (matches preview layout).
+ * @param {object} layout pageWidthMm, pageHeightMm, marginMm, gapHm, gapVm, cols, rows, cardWidthMm, cardHeightMm
+ */
+export async function renderSpreadPageToCanvas(
+  pageCards,
+  side,
+  layout,
+  pageBgHex,
+  options = {},
+) {
+  const {
+    pageWidthMm,
+    pageHeightMm,
+    marginMm,
+    gapHm,
+    gapVm,
+    cols,
+    rows,
+    cardWidthMm,
+    cardHeightMm,
+  } = layout;
+  const { bulk, megaBulkPage, pagePixelScale: optPagePs, pixelScale: optCardPs, ...restOpt } =
+    options;
+  const pagePreset = getPageExportPreset({ bulk, megaBulkPage });
+  const pagePixelScale =
+    typeof optPagePs === "number" ? optPagePs : pagePreset.pagePixelScale;
+  const cardPreset = getCardExportPreset({ bulk, megaBulkPage });
+  const cardPixelScale =
+    typeof optCardPs === "number" ? optCardPs : cardPreset.pixelScale;
+
+  const pageWPx = Math.max(
+    2,
+    Math.round(pageWidthMm * MM_TO_CSS_PX * pagePixelScale),
+  );
+  const pageHPx = Math.max(
+    2,
+    Math.round(pageHeightMm * MM_TO_CSS_PX * pagePixelScale),
+  );
+  const mmToPx = pageWPx / pageWidthMm;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = pageWPx;
+  canvas.height = pageHPx;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2d context unavailable");
+
+  const bg = normalizeHexForCanvas(pageBgHex);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, pageWPx, pageHPx);
+
+  const marginPx = marginMm * mmToPx;
+  const cwPx = cardWidthMm * mmToPx;
+  const chPx = cardHeightMm * mmToPx;
+  const gapHPx = gapHm * mmToPx;
+  const gapVPx = gapVm * mmToPx;
+  const gridW = cols * cwPx + Math.max(0, cols - 1) * gapHPx;
+  const gridH = rows * chPx + Math.max(0, rows - 1) * gapVPx;
+  const innerW = pageWPx - 2 * marginPx;
+  const innerH = pageHPx - 2 * marginPx;
+  const startX = marginPx + Math.max(0, (innerW - gridW) / 2);
+  const startY = marginPx + Math.max(0, (innerH - gridH) / 2);
+
+  const cardOpts = {
+    ...restOpt,
+    bulk,
+    megaBulkPage,
+    pixelScale: cardPixelScale,
+    quality: cardPreset.jpegQuality,
+    mime: "image/jpeg",
+  };
+
+  const cardCanvases = await Promise.all(
+    pageCards.map((c) => renderCardSideToCanvas(c, side, cardOpts)),
+  );
+
+  for (let i = 0; i < pageCards.length; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const ci = side === "back" ? cols - 1 - col : col;
+    const x = startX + ci * (cwPx + gapHPx);
+    const y = startY + row * (chPx + gapVPx);
+    const cc = cardCanvases[i];
+    drawImageSource(ctx, cc, x, y, cwPx, chPx);
+  }
+
+  return canvas;
+}
+
+function normalizeHexForCanvas(hex) {
+  if (typeof hex !== "string" || !/^#?[0-9a-fA-F]{3,8}$/.test(hex.trim())) {
+    return "#ffffff";
+  }
+  let s = hex.trim();
+  if (!s.startsWith("#")) s = `#${s}`;
+  if (s.length === 4) {
+    const r = s[1];
+    const g = s[2];
+    const b = s[3];
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return s.length >= 7 ? s.slice(0, 7) : "#ffffff";
+}
+
+export async function renderSpreadPageToJpegBlob(pageCards, side, layout, pageBgHex, options) {
+  const canvas = await renderSpreadPageToCanvas(
+    pageCards,
+    side,
+    layout,
+    pageBgHex,
+    options,
+  );
+  const preset = getPageExportPreset(options);
+  const q =
+    typeof options?.jpegQuality === "number"
+      ? options.jpegQuality
+      : preset.jpegQuality ?? EXPORT_RENDER_PRESET.balanced.jpegQuality;
+  return canvasToBlob(canvas, "image/jpeg", q);
+}
+
+export async function renderSpreadPageToPngBlob(pageCards, side, layout, pageBgHex, options) {
+  const canvas = await renderSpreadPageToCanvas(
+    pageCards,
+    side,
+    layout,
+    pageBgHex,
+    options,
+  );
+  return canvasToBlob(canvas, "image/png");
 }
