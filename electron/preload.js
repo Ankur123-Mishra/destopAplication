@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electron', {
   ensurePngExportDir: (payload) =>
     ipcRenderer.invoke('ensure-png-export-dir', payload),
   writePngFile: (payload) => ipcRenderer.invoke('write-png-file', payload),
+  captureViewRect: (payload) => ipcRenderer.invoke('capture-view-rect', payload),
+  printToPdf: (payload) => ipcRenderer.invoke('print-to-pdf', payload),
   createCropOutputFolder: (sourceFolderPath) => ipcRenderer.invoke('create-crop-output-folder', sourceFolderPath),
   cropImages: (data) => ipcRenderer.invoke('crop-images', data),
   cropImagesIndividually: (data) => ipcRenderer.invoke('crop-images-individually', data),

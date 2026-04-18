@@ -183,6 +183,12 @@ function registerJpegExportIpcHandlers() {
   try {
     ipcMain.removeHandler('write-png-file');
   } catch (_) {}
+  try {
+    ipcMain.removeHandler('capture-view-rect');
+  } catch (_) {}
+  try {
+    ipcMain.removeHandler('print-to-pdf');
+  } catch (_) {}
 
   ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
     try {
@@ -357,6 +363,90 @@ function registerJpegExportIpcHandlers() {
       return { success: true };
     } catch (error) {
       console.error('write-png-file:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  /**
+   * Rasterize a viewport rectangle using Chromium compositor (faster than html2canvas for complex DOM/canvas).
+   * Rect is in physical pixels; renderer supplies getBoundingClientRect × devicePixelRatio.
+   */
+  ipcMain.handle('capture-view-rect', async (event, payload) => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return { success: false, error: 'No window' };
+      }
+      const {
+        x = 0,
+        y = 0,
+        width = 1,
+        height = 1,
+        format = 'png',
+        jpegQuality,
+      } = payload || {};
+      const rect = {
+        x: Math.round(Number(x) || 0),
+        y: Math.round(Number(y) || 0),
+        width: Math.max(1, Math.round(Number(width) || 1)),
+        height: Math.max(1, Math.round(Number(height) || 1)),
+      };
+      const image = await mainWindow.webContents.capturePage(rect);
+      const qRaw = Number(jpegQuality);
+      const q =
+        Number.isFinite(qRaw) && qRaw > 0
+          ? Math.min(100, Math.max(1, Math.round(qRaw <= 1 ? qRaw * 100 : qRaw)))
+          : 92;
+      const wantJpeg = format === 'jpeg' || format === 'jpg';
+      const buffer = wantJpeg ? image.toJPEG(q) : image.toPNG();
+      const mime = wantJpeg ? 'image/jpeg' : 'image/png';
+      return {
+        success: true,
+        mime,
+        dataBase64: buffer.toString('base64'),
+      };
+    } catch (error) {
+      console.error('capture-view-rect:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  /**
+   * Multi-page PDF from the live DOM using Chromium print (respects @media print / @page; no html2canvas).
+   */
+  ipcMain.handle('print-to-pdf', async (event, payload) => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return { success: false, error: 'No window' };
+      }
+      const {
+        printBackground = true,
+        preferCSSPageSize = true,
+        pageWidthMicrons,
+        pageHeightMicrons,
+      } = payload || {};
+      const options = {
+        printBackground,
+        preferCSSPageSize,
+        marginsType: 0,
+      };
+      if (
+        typeof pageWidthMicrons === 'number' &&
+        typeof pageHeightMicrons === 'number' &&
+        pageWidthMicrons > 0 &&
+        pageHeightMicrons > 0
+      ) {
+        options.pageSize = {
+          width: Math.round(pageWidthMicrons),
+          height: Math.round(pageHeightMicrons),
+        };
+      }
+      const pdfBuffer = await mainWindow.webContents.printToPDF(options);
+      return {
+        success: true,
+        dataBytes: new Uint8Array(pdfBuffer),
+      };
+    } catch (error) {
+      console.error('print-to-pdf:', error);
       return { success: false, error: error.message };
     }
   });

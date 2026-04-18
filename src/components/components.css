@@ -315,6 +315,11 @@
 .saved-idcards-list.saved-idcards-list--virtual {
   gap: 0;
   display: block;
+  height: 100%;
+  min-height: 500px;
+  overflow: hidden;
+  width: 100% !important;
+  box-sizing: border-box;
 }
 
 .saved-idcard-item {
