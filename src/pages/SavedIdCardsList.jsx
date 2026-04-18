@@ -411,6 +411,7 @@ function studentHasRenderableSavedCard(
   return false;
 }
 
+
 function studentHasUploadedPhoto(s) {
   if (!s || typeof s !== "object") return false;
   if (typeof s.photoUrl !== "string") return false;
@@ -631,6 +632,18 @@ const FAST_EXPORT_PROGRESS_UPDATES_PER_SEC = 3;
 const MEGA_BULK_PAGE_THRESHOLD = 35;
 /** Slightly lower quality for huge page-only exports — much faster encode, still fine for print preview. */
 const PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA = 0.88;
+
+/** PDF export only: JPEG embedded in jsPDF pages (does not affect standalone JPG/PNG file export). */
+const PDF_EXPORT_EMBED_JPEG_QUALITY = PREVIEW_EXPORT_JPEG_QUALITY;
+const PDF_EXPORT_EMBED_JPEG_QUALITY_BULK = 0.92;
+const PDF_EXPORT_EMBED_JPEG_QUALITY_MEGA = 0.86;
+/**
+ * At or above this spread page count, skip Electron `printToPDF` and use the renderer/jsPDF path
+ * (native print is less predictable for large batches).
+ */
+const PDF_EXPORT_SKIP_NATIVE_PRINT_MIN_PAGES = 12;
+/** When native print is allowed, only for at most this many pages (small jobs). */
+const PDF_EXPORT_NATIVE_PRINT_MAX_PAGES = 8;
 
 /**
  * Large preview exports: avoid duplicate work (per-card + full page in one run). JPEG defaults to
@@ -2368,18 +2381,201 @@ async function savePngExportToFolder(
   return { fallbackDownloads: true };
 }
 
-/** Captures preview page DOM nodes to JPG/PNG (one file per page) or a single multi-page PDF. */
-async function exportPreviewPagesAsFiles(
+/**
+ * Preview PDF fast pipeline (default): sequential pages, data render first, DOM fallback per page.
+ * Disable with `localStorage.setItem('pdfExportFastMode', '0')` to use legacy parallel assembly.
+ */
+function isPdfExportFastModeEnabled() {
+  try {
+    return (
+      typeof localStorage === "undefined" ||
+      localStorage.getItem("pdfExportFastMode") !== "0"
+    );
+  } catch {
+    return true;
+  }
+}
+
+function pdfExportRasterConcurrency(
   pageElements,
-  format,
+  pageCount,
+  bulk,
+  spreadDataExportContext,
+) {
+  const useNativeCapture = canUseElectronNativeCapture();
+  const { cards, cardsPerPage, layout } = spreadDataExportContext || {};
+  const allSpreadsDataCapable =
+    USE_DATA_EXPORT_RENDERER_PRIMARY &&
+    cards?.length &&
+    layout &&
+    Number.isFinite(cardsPerPage) &&
+    pageElements.every((node) => {
+      const bi = Number(node?.dataset?.batchIndex);
+      if (!Number.isFinite(bi)) return false;
+      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = bi * cardsPerPage;
+      const pageCards = cards.slice(start, start + cardsPerPage);
+      return canRenderSpreadPageDataOnly(pageCards, side);
+    });
+  return allSpreadsDataCapable && !useNativeCapture
+    ? bulk
+      ? Math.min(16, Math.max(8, Math.ceil(pageCount / 20)))
+      : 4
+    : useNativeCapture
+      ? 1
+      : !bulk
+        ? 2
+        : pageCount > 150
+          ? 7
+          : pageCount > 80
+            ? 6
+            : pageCount > 40
+              ? 5
+              : 4;
+}
+
+/** Legacy PDF path: parallel page rasterization then one write (used when fast mode flag is off). */
+async function exportPreviewPdfLegacyParallelAssembly({
+  pageElements,
   pageWidthMm,
   pageHeightMm,
-  fileBaseName,
+  subfolderName,
+  pageBackgroundColor,
+  captureOpts,
+  spreadDataExportContext,
+  emitProgress,
+  abortFn,
+}) {
+  const pageCount = pageElements.length;
+  const { cards, cardsPerPage, layout } = spreadDataExportContext || {};
+  const safeSub =
+    String(subfolderName)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim()
+      .slice(0, 120) || "id-cards";
+  const el =
+    typeof window !== "undefined" && window.electron ? window.electron : null;
+  const rasterCaptureConcurrency = pdfExportRasterConcurrency(
+    pageElements,
+    pageCount,
+    Boolean(captureOpts.bulk),
+    spreadDataExportContext,
+  );
+  const pdf = new jsPDF({
+    unit: "mm",
+    format: [pageWidthMm, pageHeightMm],
+    orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
+  });
+  let pagesCaptured = 0;
+  const canvases = await mapWithConcurrency(
+    pageElements,
+    rasterCaptureConcurrency,
+    async (element) => {
+      const bi = Number(element?.dataset?.batchIndex);
+      const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+      const pageCards =
+        Number.isFinite(start) && cards?.length
+          ? cards.slice(start, start + cardsPerPage)
+          : [];
+      let canvas;
+      if (
+        layout &&
+        pageCards.length > 0 &&
+        canRenderSpreadPageDataOnly(pageCards, side)
+      ) {
+        try {
+          canvas = await renderSpreadPageToCanvas(
+            pageCards,
+            side,
+            layout,
+            pageBackgroundColor,
+            captureOpts,
+          );
+        } catch (e) {
+          console.warn(
+            "[export] Data canvas PDF page failed, using DOM capture.",
+            e,
+          );
+          canvas = await html2canvasForExport(
+            element,
+            pageBackgroundColor,
+            captureOpts,
+          );
+        }
+      } else {
+        canvas = await html2canvasForExport(
+          element,
+          pageBackgroundColor,
+          captureOpts,
+        );
+      }
+      if (abortFn()) throw new ExportCancelledError();
+      pagesCaptured += 1;
+      emitProgress({
+        label: "Creating PDF…",
+        current: pagesCaptured,
+        total: pageCount,
+      });
+      return canvas;
+    },
+    abortFn,
+  );
+  const orientShort = pageHeightMm >= pageWidthMm ? "p" : "l";
+  for (let i = 0; i < pageCount; i++) {
+    if (abortFn()) throw new ExportCancelledError();
+    const canvas = canvases[i];
+    if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], orientShort);
+    pdf.addImage(
+      canvas,
+      "JPEG",
+      0,
+      0,
+      pageWidthMm,
+      pageHeightMm,
+      undefined,
+      "FAST",
+    );
+  }
+  if (
+    el?.selectOutputFolder &&
+    el?.savePdfExportFile &&
+    typeof el.selectOutputFolder === "function" &&
+    typeof el.savePdfExportFile === "function"
+  ) {
+    emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
+    const pick = await el.selectOutputFolder();
+    if (abortFn()) throw new ExportCancelledError();
+    if (!pick?.success || !pick?.folderPath) return;
+    emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
+    const pdfBytes = pdf.output("arraybuffer");
+    const result = await el.savePdfExportFile({
+      parentFolderPath: pick.folderPath,
+      subfolderName: safeSub,
+      filename: `${safeSub}.pdf`,
+      dataBytes: new Uint8Array(pdfBytes),
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || "Could not save PDF file.");
+    }
+    if (el.openFolder) await el.openFolder(pick.folderPath);
+    return;
+  }
+  pdf.save(`${safeSub}.pdf`);
+}
+
+/**
+ * Preview download: multi-page PDF only. JPG/PNG use `buildPreviewPagesJpegFiles` / `buildPreviewPagesPngFiles` etc.
+ * Per page: data JPEG blob → jsPDF; on failure DOM capture; sequential by default (low memory).
+ */
+async function exportPreviewPdfFromPreview(
+  pageElements,
+  pageWidthMm,
+  pageHeightMm,
   subfolderName,
   pageBackgroundColor = DEFAULT_PREVIEW_PAGE_BG,
   onProgress = null,
   shouldAbort = null,
-  /** Same predicate as JPEG `useFastBulkCapture`: many cards / pages / all-school → faster raster + no per-file download delay. */
   fastBulkCapture = false,
   spreadDataExportContext = null,
 ) {
@@ -2396,358 +2592,197 @@ async function exportPreviewPagesAsFiles(
     pageCount >= FAST_PREVIEW_EXPORT_THRESHOLD_PAGES;
   const megaBulkPage = bulk && pageCount >= MEGA_BULK_PAGE_THRESHOLD;
   const captureOpts = { bulk, megaBulkPage };
-  const pageRasterJpegQ = megaBulkPage
-    ? PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA
-    : PREVIEW_EXPORT_JPEG_QUALITY;
-  const useNativeCapture = canUseElectronNativeCapture();
+  const pdfEmbedJpegQuality = megaBulkPage
+    ? PDF_EXPORT_EMBED_JPEG_QUALITY_MEGA
+    : bulk
+      ? PDF_EXPORT_EMBED_JPEG_QUALITY_BULK
+      : PDF_EXPORT_EMBED_JPEG_QUALITY;
   const { cards, cardsPerPage, layout } = spreadDataExportContext || {};
-  const allSpreadsDataCapable =
-    USE_DATA_EXPORT_RENDERER_PRIMARY &&
-    cards?.length &&
-    layout &&
-    Number.isFinite(cardsPerPage) &&
-    pageElements.every((node) => {
-      const bi = Number(node?.dataset?.batchIndex);
-      if (!Number.isFinite(bi)) return false;
-      const side = node?.dataset?.spreadSide === "back" ? "back" : "front";
-      const start = bi * cardsPerPage;
-      const pageCards = cards.slice(start, start + cardsPerPage);
-      return canRenderSpreadPageDataOnly(pageCards, side);
-    });
-  /** Match buildPreviewPagesJpegFiles: more parallel work when there are many full pages. */
-  const rasterCaptureConcurrency =
-    allSpreadsDataCapable && !useNativeCapture
-      ? bulk
-        ? Math.min(16, Math.max(8, Math.ceil(pageCount / 20)))
-        : 4
-      : useNativeCapture
-        ? 1
-        : !bulk
-          ? 2
-          : pageCount > 150
-            ? 7
-            : pageCount > 80
-              ? 6
-              : pageCount > 40
-                ? 5
-                : 4;
+  const safeSub =
+    String(subfolderName)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim()
+      .slice(0, 120) || "id-cards";
+  const el =
+    typeof window !== "undefined" && window.electron ? window.electron : null;
 
-  if (format === "pdf") {
-    const safeSub =
-      String(subfolderName)
-        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-        .trim()
-        .slice(0, 120) || "id-cards";
-    const el =
-      typeof window !== "undefined" && window.electron
-        ? window.electron
-        : null;
+  const mayTryElectronNativePrint =
+    pageCount < PDF_EXPORT_SKIP_NATIVE_PRINT_MIN_PAGES &&
+    pageCount <= PDF_EXPORT_NATIVE_PRINT_MAX_PAGES;
 
-    let nativePdfBytes = null;
-    if (
-      canUseElectronPrintToPdf() &&
-      el?.printToPdf &&
-      el?.selectOutputFolder &&
-      el?.savePdfExportFile
-    ) {
-      document.body.classList.add("id-preview-pdf-export");
-      try {
-        await new Promise((r) =>
-          requestAnimationFrame(() => requestAnimationFrame(r)),
-        );
-        await abortableDelay(150, abortFn);
-        if (abortFn()) throw new ExportCancelledError();
-        emitProgress({ label: "Generating PDF…", current: 0, total: 1 });
-        const pdfRes = await el.printToPdf({
-          printBackground: true,
-          preferCSSPageSize: true,
-          pageWidthMicrons: Math.round(pageWidthMm * 1000),
-          pageHeightMicrons: Math.round(pageHeightMm * 1000),
-        });
-        if (abortFn()) throw new ExportCancelledError();
-        if (pdfRes?.success && pdfRes.dataBytes?.length) {
-          nativePdfBytes = pdfRes.dataBytes;
-        }
-      } catch (err) {
-        console.warn("Chromium printToPDF failed, falling back to canvas PDF.", err);
-      } finally {
-        document.body.classList.remove("id-preview-pdf-export");
-      }
-    }
-
-    if (nativePdfBytes) {
-      emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
-      const pick = await el.selectOutputFolder();
-      if (abortFn()) throw new ExportCancelledError();
-      if (!pick?.success || !pick?.folderPath) return;
-      emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
-      const result = await el.savePdfExportFile({
-        parentFolderPath: pick.folderPath,
-        subfolderName: safeSub,
-        filename: `${safeSub}.pdf`,
-        dataBytes: nativePdfBytes,
-      });
-      if (!result?.success) {
-        throw new Error(result?.error || "Could not save PDF file.");
-      }
-      if (el.openFolder) await el.openFolder(pick.folderPath);
-      return;
-    }
-
-    const pdf = new jsPDF({
-      unit: "mm",
-      format: [pageWidthMm, pageHeightMm],
-      orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
-    });
-    let pagesCaptured = 0;
-    const canvases = await mapWithConcurrency(
-      pageElements,
-      rasterCaptureConcurrency,
-      async (element, i) => {
-        const bi = Number(element?.dataset?.batchIndex);
-        const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
-        const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
-        const pageCards =
-          Number.isFinite(start) && cards?.length
-            ? cards.slice(start, start + cardsPerPage)
-            : [];
-        let canvas;
-        if (
-          layout &&
-          pageCards.length > 0 &&
-          canRenderSpreadPageDataOnly(pageCards, side)
-        ) {
-          try {
-            canvas = await renderSpreadPageToCanvas(
-              pageCards,
-              side,
-              layout,
-              pageBackgroundColor,
-              captureOpts,
-            );
-          } catch (e) {
-            console.warn(
-              "[export] Data canvas PDF page failed, using DOM capture.",
-              e,
-            );
-            canvas = await html2canvasForExport(
-              element,
-              pageBackgroundColor,
-              captureOpts,
-            );
-          }
-        } else {
-          canvas = await html2canvasForExport(
-            element,
-            pageBackgroundColor,
-            captureOpts,
-          );
-        }
-        if (abortFn()) throw new ExportCancelledError();
-        pagesCaptured += 1;
-        emitProgress({
-          label: "Creating PDF…",
-          current: pagesCaptured,
-          total: pageCount,
-        });
-        return canvas;
-      },
-      abortFn,
-    );
-    for (let i = 0; i < pageCount; i++) {
-      if (abortFn()) throw new ExportCancelledError();
-      const canvas = canvases[i];
-      if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], pageHeightMm >= pageWidthMm ? "p" : "l");
-      pdf.addImage(
-        canvas,
-        "JPEG",
-        0,
-        0,
-        pageWidthMm,
-        pageHeightMm,
-        undefined,
-        "FAST",
+  let nativePdfBytes = null;
+  if (
+    mayTryElectronNativePrint &&
+    canUseElectronPrintToPdf() &&
+    el?.printToPdf &&
+    el?.selectOutputFolder &&
+    el?.savePdfExportFile
+  ) {
+    document.body.classList.add("id-preview-pdf-export");
+    try {
+      await new Promise((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(r)),
       );
-    }
-    if (
-      el?.selectOutputFolder &&
-      el?.savePdfExportFile &&
-      typeof el.selectOutputFolder === "function" &&
-      typeof el.savePdfExportFile === "function"
-    ) {
-      emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
-      const pick = await el.selectOutputFolder();
+      await abortableDelay(150, abortFn);
       if (abortFn()) throw new ExportCancelledError();
-      if (!pick?.success || !pick?.folderPath) return;
-      emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
-      const pdfBytes = pdf.output("arraybuffer");
-      const result = await el.savePdfExportFile({
-        parentFolderPath: pick.folderPath,
-        subfolderName: safeSub,
-        filename: `${safeSub}.pdf`,
-        dataBytes: new Uint8Array(pdfBytes),
+      emitProgress({ label: "Generating PDF…", current: 0, total: 1 });
+      const pdfRes = await el.printToPdf({
+        printBackground: true,
+        preferCSSPageSize: true,
+        pageWidthMicrons: Math.round(pageWidthMm * 1000),
+        pageHeightMicrons: Math.round(pageHeightMm * 1000),
       });
-      if (!result?.success) {
-        throw new Error(result?.error || "Could not save PDF file.");
+      if (abortFn()) throw new ExportCancelledError();
+      if (pdfRes?.success && pdfRes.dataBytes?.length) {
+        nativePdfBytes = pdfRes.dataBytes;
       }
-      if (el.openFolder) await el.openFolder(pick.folderPath);
-      return;
+    } catch (err) {
+      console.warn("Chromium printToPDF failed, falling back to jsPDF export.", err);
+    } finally {
+      document.body.classList.remove("id-preview-pdf-export");
     }
-    pdf.save(`${safeSub}.pdf`);
+  }
+
+  if (nativePdfBytes) {
+    emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
+    const pick = await el.selectOutputFolder();
+    if (abortFn()) throw new ExportCancelledError();
+    if (!pick?.success || !pick?.folderPath) return;
+    emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
+    const result = await el.savePdfExportFile({
+      parentFolderPath: pick.folderPath,
+      subfolderName: safeSub,
+      filename: `${safeSub}.pdf`,
+      dataBytes: nativePdfBytes,
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || "Could not save PDF file.");
+    }
+    if (el.openFolder) await el.openFolder(pick.folderPath);
     return;
   }
 
-  const ext = format === "png" ? "png" : "jpg";
-  const betweenDownloadsMs = bulk ? 0 : 300;
-  let pagesCaptured = 0;
-  const pageRasterUrls = await mapWithConcurrency(
-    pageElements,
-    rasterCaptureConcurrency,
-    async (element, i) => {
-      const bi = Number(element?.dataset?.batchIndex);
-      const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
-      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
-      const pageCards =
-        Number.isFinite(start) && cards?.length
-          ? cards.slice(start, start + cardsPerPage)
-          : [];
-      const useDataSpread =
-        USE_DATA_EXPORT_RENDERER_PRIMARY &&
-        layout &&
-        pageCards.length > 0 &&
-        canRenderSpreadPageDataOnly(pageCards, side);
-      let dataUrl;
-      if (useDataSpread) {
-        try {
-          if (format === "png") {
-            const blob = await renderSpreadPageToPngBlob(
-              pageCards,
-              side,
-              layout,
-              pageBackgroundColor,
-              captureOpts,
-            );
-            dataUrl = await blobToDataUrl(blob);
-          } else {
-            const preset = getPageExportPreset({ bulk, megaBulkPage });
-            const blob = await renderSpreadPageToJpegBlob(
-              pageCards,
-              side,
-              layout,
-              pageBackgroundColor,
-              {
-                bulk,
-                megaBulkPage,
-                jpegQuality:
-                  typeof captureOpts.jpegQuality === "number"
-                    ? captureOpts.jpegQuality
-                    : pageRasterJpegQ ?? preset.jpegQuality,
-              },
-            );
-            dataUrl = await blobToDataUrl(blob);
-          }
-        } catch (e) {
-          console.warn(
-            "[export] Data canvas page file export failed, using DOM capture.",
-            e,
-          );
-          dataUrl = await rasterizeElementForExport(
-            element,
-            pageBackgroundColor,
-            {
-              ...captureOpts,
-              jpegQuality:
-                format === "png"
-                  ? undefined
-                  : typeof captureOpts.jpegQuality === "number"
-                    ? captureOpts.jpegQuality
-                    : pageRasterJpegQ,
-            },
-            format === "png" ? "png" : "jpeg",
-          );
-        }
-      } else {
-        dataUrl = await rasterizeElementForExport(
-          element,
-          pageBackgroundColor,
-          {
-            ...captureOpts,
-            jpegQuality:
-              format === "png"
-                ? undefined
-                : typeof captureOpts.jpegQuality === "number"
-                  ? captureOpts.jpegQuality
-                  : pageRasterJpegQ,
-          },
-          format === "png" ? "png" : "jpeg",
-        );
-      }
-      if (abortFn()) throw new ExportCancelledError();
-      pagesCaptured += 1;
-      emitProgress({
-        label:
-          format === "png"
-            ? "Capturing PNG pages…"
-            : "Capturing JPEG pages…",
-        current: pagesCaptured,
-        total: pageCount,
-      });
-      return dataUrl;
-    },
-    abortFn,
-  );
-  if (format === "png") {
-    const el =
-      typeof window !== "undefined" && window.electron
-        ? window.electron
-        : null;
-    if (
-      el?.selectOutputFolder &&
-      el?.savePngExportFolder &&
-      typeof el.selectOutputFolder === "function" &&
-      typeof el.savePngExportFolder === "function"
-    ) {
-      emitProgress({ label: "Choose folder to save PNG files…", current: 0, total: 1 });
-      const pick = await el.selectOutputFolder();
-      if (abortFn()) throw new ExportCancelledError();
-      if (!pick?.success || !pick?.folderPath) return;
-      const safeSub =
-        String(subfolderName)
-          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-          .trim()
-          .slice(0, 120) || "id-cards";
-      const files = [];
-      for (let i = 0; i < pageCount; i++) {
-        if (abortFn()) throw new ExportCancelledError();
-        files.push({
-          filename: `${fileBaseName}-page-${i + 1}.png`,
-          dataUrl: pageRasterUrls[i],
-        });
-      }
-      emitProgress({ label: "Writing PNG files…", current: 0, total: 1 });
-      const result = await el.savePngExportFolder({
-        parentFolderPath: pick.folderPath,
-        subfolderName: safeSub,
-        files,
-      });
-      if (!result?.success) {
-        throw new Error(result?.error || "Could not save PNG files.");
-      }
-      if (el.openFolder) await el.openFolder(pick.folderPath);
-      return;
-    }
+  if (!isPdfExportFastModeEnabled()) {
+    await exportPreviewPdfLegacyParallelAssembly({
+      pageElements,
+      pageWidthMm,
+      pageHeightMm,
+      subfolderName,
+      pageBackgroundColor,
+      captureOpts,
+      spreadDataExportContext,
+      emitProgress,
+      abortFn,
+    });
+    return;
   }
+
+  const pdf = new jsPDF({
+    unit: "mm",
+    format: [pageWidthMm, pageHeightMm],
+    orientation: pageHeightMm >= pageWidthMm ? "portrait" : "landscape",
+  });
+  const orientShort = pageHeightMm >= pageWidthMm ? "p" : "l";
+
   for (let i = 0; i < pageCount; i++) {
     if (abortFn()) throw new ExportCancelledError();
-    const url = pageRasterUrls[i];
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${fileBaseName}-page-${i + 1}.${ext}`;
-    a.click();
-    if (betweenDownloadsMs > 0) {
-      await abortableDelay(betweenDownloadsMs, abortFn, 80);
+    const element = pageElements[i];
+    const bi = Number(element?.dataset?.batchIndex);
+    const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
+    const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+    const pageCards =
+      Number.isFinite(start) && cards?.length
+        ? cards.slice(start, start + cardsPerPage)
+        : [];
+
+    let imageForPdf = null;
+    const dataOk =
+      USE_DATA_EXPORT_RENDERER_PRIMARY &&
+      layout &&
+      pageCards.length > 0 &&
+      canRenderSpreadPageDataOnly(pageCards, side);
+
+    if (dataOk) {
+      try {
+        const blob = await renderSpreadPageToJpegBlob(
+          pageCards,
+          side,
+          layout,
+          pageBackgroundColor,
+          {
+            bulk,
+            megaBulkPage,
+            jpegQuality: pdfEmbedJpegQuality,
+          },
+        );
+        imageForPdf = await blobToDataUrl(blob);
+      } catch (e) {
+        console.warn(
+          "[export] PDF data render failed for page, trying DOM capture.",
+          e,
+        );
+      }
     }
+
+    if (!imageForPdf) {
+      try {
+        imageForPdf = await html2canvasForExport(
+          element,
+          pageBackgroundColor,
+          captureOpts,
+        );
+      } catch (e2) {
+        throw new Error(
+          `Could not build PDF page ${i + 1} of ${pageCount}. Wait for the preview to finish loading, then try again.`,
+        );
+      }
+    }
+
+    if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], orientShort);
+    pdf.addImage(
+      imageForPdf,
+      "JPEG",
+      0,
+      0,
+      pageWidthMm,
+      pageHeightMm,
+      undefined,
+      "FAST",
+    );
+    imageForPdf = null;
+
+    emitProgress({
+      label: "Creating PDF…",
+      current: i + 1,
+      total: pageCount,
+    });
   }
+
+  if (
+    el?.selectOutputFolder &&
+    el?.savePdfExportFile &&
+    typeof el.selectOutputFolder === "function" &&
+    typeof el.savePdfExportFile === "function"
+  ) {
+    emitProgress({ label: "Choose folder to save PDF…", current: 0, total: 1 });
+    const pick = await el.selectOutputFolder();
+    if (abortFn()) throw new ExportCancelledError();
+    if (!pick?.success || !pick?.folderPath) return;
+    emitProgress({ label: "Writing PDF file…", current: 0, total: 1 });
+    const pdfBytes = pdf.output("arraybuffer");
+    const result = await el.savePdfExportFile({
+      parentFolderPath: pick.folderPath,
+      subfolderName: safeSub,
+      filename: `${safeSub}.pdf`,
+      dataBytes: new Uint8Array(pdfBytes),
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || "Could not save PDF file.");
+    }
+    if (el.openFolder) await el.openFolder(pick.folderPath);
+    return;
+  }
+  pdf.save(`${safeSub}.pdf`);
 }
 
 export default function SavedIdCardsList({
@@ -4186,8 +4221,6 @@ export default function SavedIdCardsList({
         setExporting(true);
         setExportProgress({ label: "Preparing…", current: 0, total: 1 });
       });
-      const fileBaseName = `id-cards-${isAllSchoolStudents ? "all-students" : classId || schoolId || "export"
-        }-${Date.now()}`;
       const subfolderName = isAllSchoolStudents
         ? String(
           selectedSchool?.schoolName ||
@@ -4283,6 +4316,27 @@ export default function SavedIdCardsList({
             nodes.length !== spreadPagesCount
           ) {
             continue;
+          }
+          if (format === "pdf") {
+            setExportProgress({
+              label: "Creating PDF…",
+              current: 0,
+              total: 1,
+            });
+            await exportPreviewPdfFromPreview(
+              Array.from(nodes),
+              pageWidthMm,
+              pageHeightMm,
+              subfolderName,
+              previewPageBackgroundColor,
+              onProg,
+              isAborted,
+              fastBulkPreviewExport,
+              pageExportContext,
+            );
+            progressThrottle?.flush();
+            captured = true;
+            break;
           }
           if (format === "jpg") {
             const rawJpegMode = jpegExportMode ?? "both";
@@ -4516,32 +4570,6 @@ export default function SavedIdCardsList({
             captured = true;
             break;
           }
-          setExportProgress({
-            label:
-              format === "pdf"
-                ? "Creating PDF…"
-                : format === "png"
-                  ? "Capturing PNG pages…"
-                  : "Exporting…",
-            current: 0,
-            total: 1,
-          });
-          await exportPreviewPagesAsFiles(
-            Array.from(nodes),
-            format,
-            pageWidthMm,
-            pageHeightMm,
-            fileBaseName,
-            subfolderName,
-            previewPageBackgroundColor,
-            onProg,
-            isAborted,
-            fastBulkPreviewExport,
-            pageExportContext,
-          );
-          progressThrottle?.flush();
-          captured = true;
-          break;
         }
         if (
           !captured &&
