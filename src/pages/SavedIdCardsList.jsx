@@ -19,6 +19,12 @@ import { API_BASE_URL } from "../api/config";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { flushSync } from "react-dom";
+import {
+  USE_DATA_EXPORT_RENDERER_PRIMARY,
+  cardSupportsDataExportBack,
+  cardSupportsDataExportRenderer,
+  renderCardSideToDataUrl,
+} from "../utils/dataExportCanvasRenderer";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 const A4_WIDTH_MM = 210;
@@ -1220,17 +1226,38 @@ function canUseElectronPrintToPdf() {
 const EXPORT_NATIVE_CAPTURE_HIDE_CHROME_CLASS =
   "export-native-capture-hide-chrome";
 
+/**
+ * `webContents.capturePage(rect)` only snapshots **on-screen** pixels. Elements taller/wider than
+ * the viewport (typical full preview pages in mm) get clipped — truncated labels, wrong grid, blank fields.
+ * Those must use html2canvas, which rasterizes the full DOM subtree.
+ */
+function shouldUseHtml2CanvasInsteadOfNativeCapture(el) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return true;
+  const r = el.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return true;
+  const iw = window.innerWidth;
+  const ih = window.innerHeight;
+  const m = 6;
+  if (r.width > iw - m || r.height > ih - m) return true;
+  if (r.top < m || r.left < m) return true;
+  if (r.bottom > ih - m || r.right > iw - m) return true;
+  return false;
+}
+
 function getPhysicalRectForCapture(el) {
   if (!el || typeof el.getBoundingClientRect !== "function") return null;
   el.scrollIntoView({ block: "center", inline: "nearest" });
   const r = el.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  return {
-    x: Math.round(r.left * dpr),
-    y: Math.round(r.top * dpr),
-    width: Math.max(1, Math.round(r.width * dpr)),
-    height: Math.max(1, Math.round(r.height * dpr)),
-  };
+  const left = r.left * dpr;
+  const top = r.top * dpr;
+  const right = r.right * dpr;
+  const bottom = r.bottom * dpr;
+  const x = Math.floor(left);
+  const y = Math.floor(top);
+  const width = Math.max(1, Math.ceil(right) - x);
+  const height = Math.max(1, Math.ceil(bottom) - y);
+  return { x, y, width, height };
 }
 
 async function electronCaptureElementToDataUrl(
@@ -1264,21 +1291,25 @@ async function electronCaptureElementToDataUrl(
   }
 }
 
-/** Electron: Chromium compositor capture (fast). Browser: html2canvas. */
+/** Electron: fast viewport capture when the node fully fits on screen; else html2canvas (full DOM raster). */
 async function rasterizeElementForExport(
   el,
   pageBackgroundColor,
   captureOpts = {},
   outputFormat = "jpeg",
 ) {
-  if (canUseElectronNativeCapture()) {
-    const q =
-      typeof captureOpts.jpegQuality === "number"
-        ? captureOpts.jpegQuality
-        : outputFormat === "png"
-          ? undefined
-          : PREVIEW_EXPORT_JPEG_QUALITY;
-    return electronCaptureElementToDataUrl(el, outputFormat, q);
+  const q =
+    typeof captureOpts.jpegQuality === "number"
+      ? captureOpts.jpegQuality
+      : outputFormat === "png"
+        ? undefined
+        : PREVIEW_EXPORT_JPEG_QUALITY;
+  if (canUseElectronNativeCapture() && !shouldUseHtml2CanvasInsteadOfNativeCapture(el)) {
+    try {
+      return await electronCaptureElementToDataUrl(el, outputFormat, q);
+    } catch (e) {
+      console.warn("Native capture failed, using html2canvas.", e);
+    }
   }
   return html2canvasWithFallback(
     el,
@@ -1343,18 +1374,48 @@ async function buildPreviewFrontAndBackJpegFiles(
           : 5
       : 2;
 
-  async function captureCell(el, label, index1) {
+  async function captureCell(el, label, index1, card, side) {
     let dataUrl;
     let lastErr;
     for (let attempt = 0; attempt < maxCaptureAttempts; attempt++) {
       if (shouldAbort()) throw new ExportCancelledError();
       try {
-        dataUrl = await rasterizeElementForExport(
-          el,
-          pageBackgroundColor,
-          captureFlags,
-          "jpeg",
-        );
+        const useData =
+          USE_DATA_EXPORT_RENDERER_PRIMARY &&
+          (side === "front"
+            ? cardSupportsDataExportRenderer(card)
+            : cardSupportsDataExportBack(card));
+        if (useData) {
+          try {
+            const q =
+              typeof captureFlags.jpegQuality === "number"
+                ? captureFlags.jpegQuality
+                : PREVIEW_EXPORT_JPEG_QUALITY;
+            dataUrl = await renderCardSideToDataUrl(card, side, {
+              mime: "image/jpeg",
+              quality: q,
+              pixelScale: bulk ? 2 : 2.5,
+            });
+          } catch (dataErr) {
+            console.warn(
+              "[export] Data canvas JPEG failed, using capture fallback.",
+              dataErr,
+            );
+            dataUrl = await rasterizeElementForExport(
+              el,
+              pageBackgroundColor,
+              captureFlags,
+              "jpeg",
+            );
+          }
+        } else {
+          dataUrl = await rasterizeElementForExport(
+            el,
+            pageBackgroundColor,
+            captureFlags,
+            "jpeg",
+          );
+        }
         lastErr = undefined;
         break;
       } catch (e) {
@@ -1373,7 +1434,7 @@ async function buildPreviewFrontAndBackJpegFiles(
     frontEls,
     captureConcurrency,
     async (el, i) => {
-      const dataUrl = await captureCell(el, "front", i + 1);
+      const dataUrl = await captureCell(el, "front", i + 1, cards[i], "front");
       step += 1;
       onProgress?.({
         label: "Capturing JPEGs (front)…",
@@ -1404,7 +1465,13 @@ async function buildPreviewFrontAndBackJpegFiles(
     backTasks,
     captureConcurrency,
     async ({ i, domIdx }) => {
-      const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
+      const dataUrl = await captureCell(
+        backEls[domIdx],
+        "back",
+        i + 1,
+        cards[i],
+        "back",
+      );
       step += 1;
       onProgress?.({
         label: "Capturing JPEGs (back)…",
@@ -1549,18 +1616,43 @@ async function buildPreviewFrontAndBackPngFiles(
           : 5
       : 2;
 
-  async function captureCell(el, label, index1) {
+  async function captureCell(el, label, index1, card, side) {
     let dataUrl;
     let lastErr;
     for (let attempt = 0; attempt < maxCaptureAttempts; attempt++) {
       if (shouldAbort()) throw new ExportCancelledError();
       try {
-        dataUrl = await rasterizeElementForExport(
-          el,
-          pageBackgroundColor,
-          captureFlags,
-          "png",
-        );
+        const useData =
+          USE_DATA_EXPORT_RENDERER_PRIMARY &&
+          (side === "front"
+            ? cardSupportsDataExportRenderer(card)
+            : cardSupportsDataExportBack(card));
+        if (useData) {
+          try {
+            dataUrl = await renderCardSideToDataUrl(card, side, {
+              mime: "image/png",
+              pixelScale: bulk ? 2 : 2.5,
+            });
+          } catch (dataErr) {
+            console.warn(
+              "[export] Data canvas PNG failed, using capture fallback.",
+              dataErr,
+            );
+            dataUrl = await rasterizeElementForExport(
+              el,
+              pageBackgroundColor,
+              captureFlags,
+              "png",
+            );
+          }
+        } else {
+          dataUrl = await rasterizeElementForExport(
+            el,
+            pageBackgroundColor,
+            captureFlags,
+            "png",
+          );
+        }
         lastErr = undefined;
         break;
       } catch (e) {
@@ -1580,7 +1672,7 @@ async function buildPreviewFrontAndBackPngFiles(
     frontEls,
     captureConcurrency,
     async (el, i) => {
-      const dataUrl = await captureCell(el, "front", i + 1);
+      const dataUrl = await captureCell(el, "front", i + 1, cards[i], "front");
       step += 1;
       onProgress?.({
         label: "Capturing PNGs (front)…",
@@ -1610,7 +1702,13 @@ async function buildPreviewFrontAndBackPngFiles(
     backTasks,
     captureConcurrency,
     async ({ i, domIdx }) => {
-      const dataUrl = await captureCell(backEls[domIdx], "back", i + 1);
+      const dataUrl = await captureCell(
+        backEls[domIdx],
+        "back",
+        i + 1,
+        cards[i],
+        "back",
+      );
       step += 1;
       onProgress?.({
         label: "Capturing PNGs (back)…",

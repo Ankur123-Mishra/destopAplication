@@ -130,7 +130,7 @@ const FONT_FAMILY_STACKS = {
   'ubuntu-italic': '"Ubuntu Italic", "Ubuntu", sans-serif',
 };
 
-function fontFamilyCssForElement(el) {
+export function fontFamilyCssForElement(el) {
   if (el?.type !== 'text') return undefined;
   const key = el.fontFamily;
   if (key == null || key === '') return undefined;
