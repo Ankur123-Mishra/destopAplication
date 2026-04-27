@@ -1054,7 +1054,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         elements: frontElementsToSave,
         ...(templateUploadMode === 'both' && back ? { backElements: backElementsToSave ?? [] } : {}),
       };
-      const savedId = saveUploadedTemplate(toSave);
+      const savedId = await saveUploadedTemplate(toSave);
 
       try {
         const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);

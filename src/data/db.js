@@ -25,3 +25,11 @@ db.version(3).stores({
   classes: 'id, schoolId, className, section',
   students: 'id, schoolId, classId, studentId, photoNo, excelRowOrder, studentName, hasTemplate',
 });
+
+// Uploaded ID card templates (large PNG data URLs) — IndexedDB avoids localStorage quota errors.
+db.version(4).stores({
+  schools: 'id, schoolName, syncStatus, mongoId, lastSyncedAt',
+  classes: 'id, schoolId, className, section',
+  students: 'id, schoolId, classId, studentId, photoNo, excelRowOrder, studentName, hasTemplate',
+  uploadedIdCardTemplates: 'id, schoolId',
+});
