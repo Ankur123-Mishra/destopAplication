@@ -426,30 +426,50 @@ function preloadImageSrc(src) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    const im = new Image();
-    const done = () => resolve();
-    im.onload = done;
-    im.onerror = done;
-    im.src = src;
+    try {
+      const im = new Image();
+      const done = () => resolve();
+      im.onload = done;
+      im.onerror = done;
+      im.src = src;
+    } catch {
+      resolve();
+    }
   });
 }
 
-/** Decode student photo + template art before mounting preview cells so layout and image appear together. */
-function preloadCardVisualAssets(card) {
-  if (!card || typeof card !== "object") return Promise.resolve();
-  const urls = [];
-  if (card.studentImage) urls.push(card.studentImage);
-  if (card.colorCodeImage) urls.push(card.colorCodeImage);
-  const ut = card.uploadedTemplate;
-  if (ut) {
-    if (ut.frontImage) urls.push(ut.frontImage);
-    if (ut.backImage) urls.push(ut.backImage);
+/** Max cards decoded in parallel — large data-URL batches OOM the Electron renderer if unbounded. */
+const PREVIEW_CARD_PRELOAD_PARALLEL = 4;
+
+/** Decode student photo + template art before mounting preview cells (sequential URLs per card to cap memory). */
+async function preloadCardVisualAssets(card) {
+  if (!card || typeof card !== "object") return;
+  try {
+    const urls = [];
+    if (card.studentImage) urls.push(card.studentImage);
+    if (card.colorCodeImage) urls.push(card.colorCodeImage);
+    const ut = card.uploadedTemplate;
+    if (ut) {
+      if (ut.frontImage) urls.push(ut.frontImage);
+      if (ut.backImage) urls.push(ut.backImage);
+    }
+    if (card.templateId?.startsWith("fabric-")) {
+      const ft = getFabricTemplateById(card.templateId);
+      if (ft?.backgroundDataUrl) urls.push(ft.backgroundDataUrl);
+    }
+    for (const u of urls) {
+      await preloadImageSrc(u);
+    }
+  } catch {
+    /* ignore — show preview even if preload fails */
   }
-  if (card.templateId?.startsWith("fabric-")) {
-    const ft = getFabricTemplateById(card.templateId);
-    if (ft?.backgroundDataUrl) urls.push(ft.backgroundDataUrl);
+}
+
+async function preloadChunkCardsLimited(cards) {
+  for (let i = 0; i < cards.length; i += PREVIEW_CARD_PRELOAD_PARALLEL) {
+    const slice = cards.slice(i, i + PREVIEW_CARD_PRELOAD_PARALLEL);
+    await Promise.all(slice.map((c) => preloadCardVisualAssets(c)));
   }
-  return Promise.all(urls.map(preloadImageSrc));
 }
 
 /** Virtual list row height (must match CSS: card padding + two lines + list gap). */
@@ -3756,11 +3776,12 @@ export default function SavedIdCardsList({
     if (!schoolId || studentsForList.length === 0) return;
 
     if (!previewNeedsBulkPhotoData) {
-      setBulkPhotoHydrationStatus("ready");
+      setBulkPhotoHydrationStatus((s) => (s === "ready" ? s : "ready"));
       return;
     }
 
     let cancelled = false;
+    setBulkPhotoDetailPayload(null);
     setBulkPhotoHydrationStatus("loading");
     (async () => {
       try {
@@ -4053,28 +4074,37 @@ export default function SavedIdCardsList({
 
     let cancelled = false;
 
-    const preloadChunkCards = (cards) =>
-      Promise.all(cards.map((c) => preloadCardVisualAssets(c)));
-
     const run = async () => {
       const buildChunk = (slice) => slice.map((s) => studentToCard(s));
 
       const pushChunk = async (start, end, isFirst) => {
         const slice = students.slice(start, end);
         const chunk = buildChunk(slice);
-        await preloadChunkCards(chunk);
+        try {
+          await preloadChunkCardsLimited(chunk);
+        } catch (e) {
+          console.error(e);
+        }
         if (cancelled) return;
         if (isFirst) setCardsToPrint(chunk);
         else setCardsToPrint((prev) => [...prev, ...chunk]);
       };
 
-      const firstEnd = Math.min(PREVIEW_CARDS_CHUNK_SIZE, students.length);
-      await pushChunk(0, firstEnd, true);
-      let index = firstEnd;
-      while (index < students.length) {
-        const end = Math.min(index + PREVIEW_CARDS_CHUNK_SIZE, students.length);
-        await pushChunk(index, end, false);
-        index = end;
+      try {
+        const firstEnd = Math.min(PREVIEW_CARDS_CHUNK_SIZE, students.length);
+        await pushChunk(0, firstEnd, true);
+        let index = firstEnd;
+        while (index < students.length) {
+          const end = Math.min(
+            index + PREVIEW_CARDS_CHUNK_SIZE,
+            students.length,
+          );
+          await pushChunk(index, end, false);
+          index = end;
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) setCardsToPrint([]);
       }
     };
 
