@@ -72,22 +72,25 @@ export async function syncAllBackgroundData(onProgress) {
       const classMap = {};
       localClasses.forEach(c => { classMap[c.id] = c; });
       
-      const excelRows = localStudents.map(student => {
-         const cls = classMap[student.classId];
-         return {
-           "STD": cls ? cls.className : "",
-           "Division": cls ? cls.section : "",
-           "Photo.No": student.photoNo || student.studentId || "",
-           "Student Name": student.studentName || "",
-           "RegNo": student.admissionNo || "",
-           "RollNo": student.rollNo || "",
-           "DOB": student.dateOfBirth || "",
-           "Mobil.No": student.phone || "",
-           "Gender": student.gender || "",
-           "BloodGroup": student.bloodGroup || "",
-           "Address": student.address || "",
-           "Fathers Name": student.fatherName || ""
-         };
+      const excelRows = localStudents.map((student) => {
+        const cls = classMap[student.classId];
+        return {
+          STD: cls ? cls.className : '',
+          Division: cls ? cls.section : '',
+          'Student Id': student.studentId || '',
+          'Photo.No': student.photoNo || '',
+          'Student Name': student.studentName || '',
+          RegNo: student.admissionNo || '',
+          RollNo: student.rollNo || '',
+          DOB: student.dateOfBirth || '',
+          'Mobil.No': student.phone || '',
+          Email: student.email || '',
+          Gender: student.gender || '',
+          BloodGroup: student.bloodGroup || '',
+          Address: student.address || '',
+          'Fathers Name': student.fatherName || '',
+          UniqueCode: student.uniqueCode || '',
+        };
       });
       
       if (excelRows.length === 0) {

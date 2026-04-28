@@ -8,7 +8,8 @@ function mapApiStudent(apiStudent) {
   return {
     id: apiStudent._id,
     name: apiStudent.studentName,
-    studentId: apiStudent.admissionNo || apiStudent.rollNo || apiStudent.uniqueCode || '—',
+    studentId:
+      apiStudent.studentId || apiStudent.admissionNo || apiStudent.rollNo || apiStudent.uniqueCode || '—',
     status: apiStudent.status,
     photoUrl: apiStudent.photoUrl,
   };

@@ -80,7 +80,7 @@ function mapApiStudent(s) {
   return {
     id: s._id,
     name: s.studentName,
-    studentId: studentPhotoMatchKey(s),
+    studentId: String(s.studentId || s.admissionNo || s.rollNo || s.uniqueCode || '').trim(),
     admissionNo: s.admissionNo || '',
     rollNo: s.rollNo != null ? String(s.rollNo).trim() : '',
     uniqueCode: s.uniqueCode || '',
@@ -267,7 +267,7 @@ export default function ClassWiseUploadedPhotos() {
       e.target.value = '';
       return;
     }
-    // Folder images named by photoNo / student ID (e.g. 240.png or 240_cropped.png). Upload one-by-one to avoid 413.
+    // Folder images named by photo number (or legacy admission/roll) — basename must match studentPhotoMatchKey.
     const fileMap = {};
     for (let i = 0; i < files.length; i++) {
       addPhotoFileToMap(fileMap, files[i]);
@@ -275,16 +275,18 @@ export default function ClassWiseUploadedPhotos() {
     const pairs = []; // { student, file }
     const noMatch = [];
     students.forEach((student) => {
-      const idKey = String(student.studentId ?? '').trim().toLowerCase();
-      const file = idKey ? fileMap[idKey] : null;
+      const matchKey = String(studentPhotoMatchKey(student) ?? '').trim().toLowerCase();
+      const file = matchKey && matchKey !== '—' ? fileMap[matchKey] : null;
       if (file) {
         pairs.push({ student, file });
       } else {
-        noMatch.push(student.studentId || student.name);
+        noMatch.push(studentPhotoMatchKey(student) || student.name);
       }
     });
     if (pairs.length === 0) {
-      alert('No matching photos found. Folder images should be named by Student ID (e.g. 100012.jpeg, 100013.webp).');
+      alert(
+        'No matching photos found. Name image files by Photo No when present (e.g. 1756.jpg), otherwise admission / roll / unique code.',
+      );
       e.target.value = '';
       return;
     }

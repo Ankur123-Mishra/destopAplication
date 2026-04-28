@@ -4,7 +4,11 @@ import * as XLSX from 'xlsx';
 import { nanoid } from 'nanoid';
 import { getUploadedTemplates } from '../data/uploadedTemplatesStorage';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
-import { slimStudentTemplateField } from '../utils/slimStudentTemplateForClient';
+import {
+  slimStudentTemplateField,
+  stripStudentRowMediaForListView,
+} from '../utils/slimStudentTemplateForClient';
+import { normalizeColorCodeBasename } from '../utils/imageUpload';
 
 export { sortStudentsByExcelRowOrder };
 
@@ -30,6 +34,11 @@ function mapStudentRowForApi(s, schoolRef) {
     row.template = slimStudentTemplateField(row.template);
   }
   return row;
+}
+
+function finalizeListStudentRow(row, retainPhotos) {
+  if (retainPhotos) return row;
+  return stripStudentRowMediaForListView(row);
 }
 
 function getStudentsForSchoolInOrder(schoolId) {
@@ -188,7 +197,8 @@ export async function getClassesBySchool(schoolId) {
   return { classes: classesList.map(c => ({ ...c, _id: c.id })) };
 }
 
-export async function getTemplatesStatus(schoolId, classId) {
+export async function getTemplatesStatus(schoolId, classId, options = {}) {
+  const retainPhotos = options.retainPhotos !== false;
   const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
@@ -199,18 +209,23 @@ export async function getTemplatesStatus(schoolId, classId) {
     total: studentsList.length, 
     withTemplates, 
     withoutTemplates, 
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
+    students: studentsList.map((s) =>
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+    ),
     summary: { withTemplates, withoutTemplates }
   };
 }
 
-export async function getStudentsBySchoolAndClass(schoolId, classId) {
+export async function getStudentsBySchoolAndClass(schoolId, classId, options = {}) {
+  const retainPhotos = options.retainPhotos !== false;
   const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
+    students: studentsList.map((s) =>
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+    ),
     ...(template ? { template } : {}),
   };
 }
@@ -220,15 +235,28 @@ export async function updateStudent(studentId, data) {
   return { message: "Student updated locally", studentId };
 }
 
-export async function getStudentsBySchool(schoolId) {
+export async function getStudentsBySchool(schoolId, options = {}) {
+  const retainPhotos = options.retainPhotos !== false;
   const studentsList = await getStudentsForSchoolInOrder(schoolId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
-    students: studentsList.map((s) => mapStudentRowForApi(s, schoolRef)),
+    students: studentsList.map((s) =>
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+    ),
     ...(template ? { template } : {}),
   };
+}
+
+/** Full student row (including data-URL photos) for preview after list rows were memory-stripped. */
+export async function getStudentRecordForPreview(studentId) {
+  if (!studentId) return null;
+  const s = await db.students.get(studentId);
+  if (!s) return null;
+  const schoolDoc = await db.schools.get(s.schoolId);
+  const schoolRef = buildOfflineSchoolRef(schoolDoc);
+  return mapStudentRowForApi(s, schoolRef);
 }
 
 export async function bulkSaveTemplates(templateId, studentIds) {
@@ -291,6 +319,20 @@ export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {
       resolve({ message: "Photo uploaded locally", photoUrl: dataUrl });
     };
     reader.onerror = () => reject(new Error("Failed to read photo file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Color badge PNG from Excel-linked file (`0.png`, etc.) — keeps PNG/transparency vs student photo JPEG path. */
+export async function uploadStudentColorCodeImage(studentId, file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result;
+      await db.students.update(studentId, { colorCodeImageUrl: dataUrl });
+      resolve({ message: "Color code image stored locally", colorCodeImageUrl: dataUrl });
+    };
+    reader.onerror = () => reject(new Error("Failed to read color code image"));
     reader.readAsDataURL(file);
   });
 }
@@ -362,65 +404,86 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
         const newClasses = [];
         const newStudents = [];
 
-        // Helper to find a matching column ignoring case/spaces
+        // Match Excel headers (ignore case / spaces / dots). First `names` entry wins so mappings stay predictable.
         const getCol = (row, ...names) => {
+          const normToValue = new Map();
           for (const key of Object.keys(row)) {
-            const normKey = key.replace(/[\s.]+/g, '').toLowerCase();
-            for (const name of names) {
-              if (normKey === name.replace(/[\s.]+/g, '').toLowerCase()) {
-                return row[key];
-              }
-            }
+            const normKey = String(key || '').replace(/[\s._]+/g, '').toLowerCase();
+            if (!normKey || normToValue.has(normKey)) continue;
+            normToValue.set(normKey, row[key]);
           }
-          return "";
+          for (const name of names) {
+            const n = String(name || '').replace(/[\s._]+/g, '').toLowerCase();
+            if (normToValue.has(n)) return normToValue.get(n);
+          }
+          return '';
         };
-        const knownColumnNorms = new Set([
-          'srno',
-          'sr.no',
-          'sirial',
-          'serial',
-          'photo',
-          'photo.no',
-          'photono',
-          'studentname',
-          'student name',
-          'gender',
-          'birthdate',
-          'dob',
-          'class',
-          'std',
-          'course',
-          'coursename',
-          'program',
-          'programname',
-          'stream',
-          'division',
-          'section',
-          'regno',
-          'admissionno',
-          'rollno',
-          'bloodgroup',
-          'address',
-          'mobil.no',
-          'mobile',
-          'mobileno',
-          'phone',
-          'fathersname',
-          "father'sname",
-          'fathername',
-          'fatherprimarycontact',
-          'fathercontact',
-          'fathermobile',
-          'fatherphone',
-          'mothername',
-          "mother'sname",
-          'motherprimarycontact',
-          'mothercontact',
-          'mothermobile',
-          'motherphone',
-          'house',
-          'marking',
-        ].map((x) => String(x).replace(/[\s.]+/g, '').toLowerCase()));
+        const knownColumnNorms = new Set(
+          [
+            'srno',
+            'sr.no',
+            'sno',
+            'sirial',
+            'serial',
+            'serialno',
+            'photo',
+            'photo.no',
+            'photono',
+            'studentname',
+            'student name',
+            'studentid',
+            'studentno',
+            'gender',
+            'birthdate',
+            'dob',
+            'class',
+            'std',
+            'course',
+            'coursename',
+            'program',
+            'programname',
+            'stream',
+            'division',
+            'section',
+            'regno',
+            'admissionno',
+            'rollno',
+            'uniquecode',
+            'enrollmentid',
+            'enrollmentno',
+            'bloodgroup',
+            'address',
+            'mobil.no',
+            'mobile',
+            'mobileno',
+            'phone',
+            'tel',
+            'telephone',
+            'email',
+            'fathersname',
+            "father'sname",
+            'fathername',
+            'fatherprimarycontact',
+            'fathercontact',
+            'fathermobile',
+            'fatherphone',
+            'mothername',
+            "mother'sname",
+            'motherprimarycontact',
+            'mothercontact',
+            'mothermobile',
+            'motherphone',
+            'house',
+            'marking',
+            /* Excel color badge column — stored on row, not duplicate in extraFields */
+            'colorcode',
+            'colorcodepng',
+            /* UI-only / metadata-style columns — not merged into student extraFields */
+            'photoformat',
+            'photoformate',
+            'photoformet',
+          ].map((x) => String(x).replace(/[\s._]+/g, '').toLowerCase()),
+        );
 
         for (let sheetRowIndex = 0; sheetRowIndex < json.length; sheetRowIndex++) {
           const row = json[sheetRowIndex];
@@ -447,10 +510,60 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             newClasses.push(classRecord);
           }
 
-          const photoNo = String(getCol(row, "Photo.No", "PhotoNo", "Photo")).trim();
+          const photoNo = String(
+            getCol(row, 'Photo.No', 'Photo. No', 'PhotoNo', 'Photo', 'Photo Number', 'PhotoNumber'),
+          ).trim();
+          const explicitStudentId = String(
+            getCol(
+              row,
+              'Student Id',
+              'Student ID',
+              'StudentId',
+              'STUDENT ID',
+              'Student Code',
+              'StudentCode',
+              'Enrollment Id',
+              'Enrollment ID',
+              'EnrollmentId',
+            ),
+          ).trim();
+          const admissionNoVal = String(
+            getCol(row, 'RegNo', 'Admission No', 'AdmissionNo', 'Admission Number', 'Sr.No', 'Sr No'),
+          ).trim();
+          const rollNoVal = String(
+            getCol(
+              row,
+              'Roll No',
+              'RollNo',
+              'S. No.',
+              'S.No.',
+              'S No',
+              'Sr. No.',
+              'Sr No',
+              'SrNo',
+              'Sirial',
+              'Serial',
+              'Serial No',
+              'SerialNo',
+            ),
+          ).trim();
+          const uniqueCodeVal = String(
+            getCol(row, 'Unique Code', 'UniqueCode', 'Unique ID', 'UniqueId', 'Barcode', 'UID'),
+          ).trim();
+          const colorCodeRaw = String(
+            getCol(
+              row,
+              'Color Code',
+              'Color Code Png',
+              'Color Code PNG',
+              'Color Code .png',
+              'ColorCodePng',
+              'ColorCodePNG',
+            ),
+          ).trim();
           const extraFields = {};
           Object.entries(row).forEach(([header, value]) => {
-            const norm = String(header || '').replace(/[\s.]+/g, '').toLowerCase();
+            const norm = String(header || '').replace(/[\s._]+/g, '').toLowerCase();
             if (!norm || knownColumnNorms.has(norm)) return;
             if (value == null) return;
             const stringValue = String(value).trim();
@@ -467,22 +580,56 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             section,
             /** 0-based index in parsed sheet (XLSX row order) — used to preserve Excel sequence in UI */
             excelRowOrder: sheetRowIndex,
-            studentName: getCol(row, "Student Name", "StudentName"),
-            admissionNo: String(getCol(row, "RegNo", "AdmissionNo", "Sr.No")),
-            rollNo: String(getCol(row, "RollNo", "SrNo", "Sirial", "Serial")),
-            studentId: photoNo,
-            photoNo: photoNo, 
-            dateOfBirth: getCol(row, "DOB", "BirthDate"),
-            phone: getCol(row, "Mobil.No", "Mobile", "MobileNo", "Phone"),
-            address: getCol(row, "Address"),
-            gender: getCol(row, "Gender"),
-            bloodGroup: getCol(row, "BloodGroup"),
-            fatherName: getCol(row, "Fathers Name", "FatherName", "Father's Name"),
-            fatherPrimaryContact: getCol(row, "Father Primary Contact", "FatherContact", "Father Mobile", "Father Phone"),
-            motherName: getCol(row, "Mother Name", "MotherName", "Mother's Name"),
-            motherPrimaryContact: getCol(row, "Mother Primary Contact", "MotherContact", "Mother Mobile", "Mother Phone"),
-            house: getCol(row, "House"),
-            marking: getCol(row, "Marking"),
+            studentName: getCol(row, 'Student Name', 'StudentName', 'Name'),
+            admissionNo: admissionNoVal,
+            rollNo: rollNoVal,
+            /** ID-card “Student ID” text — never the photo number; photo file match uses `photoNo`. */
+            studentId: explicitStudentId || admissionNoVal || rollNoVal || uniqueCodeVal || '',
+            photoNo,
+            dateOfBirth: getCol(row, 'DOB', 'Dob', 'BirthDate', 'Birth Date', 'Date of Birth'),
+            phone: getCol(
+              row,
+              'Mobile',
+              'Mobil.No',
+              'MobileNo',
+              'Phone',
+              'Tel',
+              'Telephone',
+              'Contact',
+              'Contact No',
+            ),
+            email: getCol(row, 'Email', 'E-mail', 'EMail'),
+            address: getCol(row, 'Address'),
+            gender: getCol(row, 'Gender'),
+            bloodGroup: getCol(row, 'BloodGroup', 'Blood Group'),
+            uniqueCode: uniqueCodeVal,
+            fatherName: getCol(
+              row,
+              'Father Name',
+              'Fathers Name',
+              'FatherName',
+              "Father's Name",
+              'Father',
+            ),
+            fatherPrimaryContact: getCol(
+              row,
+              'Father Primary Contact',
+              'FatherContact',
+              'Father Mobile',
+              'Father Phone',
+              'Father Tel',
+            ),
+            motherName: getCol(row, 'Mother Name', 'MotherName', "Mother's Name"),
+            motherPrimaryContact: getCol(
+              row,
+              'Mother Primary Contact',
+              'MotherContact',
+              'Mother Mobile',
+              'Mother Phone',
+            ),
+            house: getCol(row, 'House'),
+            marking: getCol(row, 'Marking'),
+            ...(colorCodeRaw ? { colorCodeKey: normalizeColorCodeBasename(colorCodeRaw) } : {}),
             extraFields,
             status: 'Active',
             photoUrl: null

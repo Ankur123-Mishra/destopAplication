@@ -180,10 +180,19 @@
   outline: none !important;
 }
 
-.idcard-canvas-el.selected {
+/* Photos paint under text so overlapping labels stay readable; selected pops to top. */
+.idcard-canvas-el.idcard-canvas-photo:not(.idcard-render-only) {
+  z-index: 1;
+}
+
+.idcard-canvas-el.idcard-canvas-text:not(.idcard-render-only) {
+  z-index: 2;
+}
+
+.idcard-canvas-el.selected:not(.idcard-render-only) {
   outline: 1px solid var(--accent, #2563eb); /* Slight accent when clicked/selected */
   outline-offset: 0px;
-  z-index: 2;
+  z-index: 10;
 }
 
 /* Text (editor): dotted + selected solid — same chhota vertical inset; native outline off */
@@ -242,6 +251,11 @@
   display: block;
 }
 
+/* Excel color PNG badges (often transparent) — keep full icon visible in the box */
+.idcard-canvas-photo.idcard-canvas-colorcode img {
+  object-fit: contain;
+}
+
 .idcard-canvas-photo-placeholder {
   position: absolute;
   inset: 0;
@@ -251,6 +265,11 @@
   background: rgba(0, 0, 0, 0.1);
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+/* Photo unchecked in sidebar: no image, no box tint, no placeholder text — still draggable. */
+.idcard-canvas-photo.idcard-canvas-photo--off-template {
+  background: transparent !important;
 }
 
 .idcard-canvas-resize-handle {

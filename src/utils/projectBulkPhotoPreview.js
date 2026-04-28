@@ -11,6 +11,9 @@ function toFullPhotoUrl(url) {
 /** schoolId (API _id) → Map(studentId → display url: blob: or https) */
 const previewBySchool = new Map();
 
+/** House / color-badge PNG — same immediate-blob pattern as student photos (Dexie write can lag). */
+const colorPreviewBySchool = new Map();
+
 const listeners = new Set();
 
 function notify() {
@@ -31,6 +34,11 @@ export function subscribeProjectBulkPhotoPreview(listener) {
 export function getProjectBulkPreviewUrl(schoolId, studentId) {
   if (!schoolId || !studentId) return null;
   return previewBySchool.get(schoolId)?.get(studentId) ?? null;
+}
+
+export function getProjectBulkColorCodePreviewUrl(schoolId, studentId) {
+  if (!schoolId || !studentId) return null;
+  return colorPreviewBySchool.get(schoolId)?.get(studentId) ?? null;
 }
 
 /**
@@ -57,6 +65,44 @@ export function registerProjectBulkLocalPreviews(schoolId, pairs) {
   notify();
 }
 
+/**
+ * Register blob previews for color/house PNG files from project folder (parallel to student photos).
+ */
+export function registerProjectBulkLocalColorPreviews(schoolId, pairs) {
+  if (!schoolId || !pairs?.length) return;
+  let schoolMap = colorPreviewBySchool.get(schoolId);
+  if (!schoolMap) {
+    schoolMap = new Map();
+    colorPreviewBySchool.set(schoolId, schoolMap);
+  }
+  for (const { studentId, file } of pairs) {
+    if (!studentId || !file) continue;
+    const url = URL.createObjectURL(file);
+    const prev = schoolMap.get(studentId);
+    if (typeof prev === 'string' && prev.startsWith('blob:')) {
+      URL.revokeObjectURL(prev);
+    }
+    schoolMap.set(studentId, url);
+  }
+  notify();
+}
+
+/** After color PNG is stored locally (data URL), replace blob preview. */
+export function setProjectBulkColorPreviewServerUrl(schoolId, studentId, dataUrl) {
+  if (!schoolId || !studentId || !dataUrl) return;
+  let schoolMap = colorPreviewBySchool.get(schoolId);
+  if (!schoolMap) {
+    schoolMap = new Map();
+    colorPreviewBySchool.set(schoolId, schoolMap);
+  }
+  const prev = schoolMap.get(studentId);
+  if (typeof prev === 'string' && prev.startsWith('blob:')) {
+    URL.revokeObjectURL(prev);
+  }
+  schoolMap.set(studentId, toFullPhotoUrl(dataUrl));
+  notify();
+}
+
 /** After a single upload succeeds — replace blob with server URL and revoke blob. */
 export function setProjectBulkPreviewServerUrl(schoolId, studentId, photoUrlFromApi) {
   if (!schoolId || !studentId || !photoUrlFromApi) return;
@@ -75,12 +121,22 @@ export function setProjectBulkPreviewServerUrl(schoolId, studentId, photoUrlFrom
 
 export function revokeProjectBulkPreviewsForSchool(schoolId) {
   const schoolMap = previewBySchool.get(schoolId);
-  if (!schoolMap) return;
-  for (const url of schoolMap.values()) {
-    if (typeof url === 'string' && url.startsWith('blob:')) {
-      URL.revokeObjectURL(url);
+  if (schoolMap) {
+    for (const url of schoolMap.values()) {
+      if (typeof url === 'string' && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+      }
     }
+    previewBySchool.delete(schoolId);
   }
-  previewBySchool.delete(schoolId);
+  const colorMap = colorPreviewBySchool.get(schoolId);
+  if (colorMap) {
+    for (const url of colorMap.values()) {
+      if (typeof url === 'string' && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+      }
+    }
+    colorPreviewBySchool.delete(schoolId);
+  }
   notify();
 }

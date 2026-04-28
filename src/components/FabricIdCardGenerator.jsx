@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Canvas, FabricImage } from 'fabric';
+import { Canvas, FabricImage, FabricText, Textbox } from 'fabric';
 import QRCode from 'qrcode';
+import {
+  fitFabricAddressTextbox,
+  replaceFabricTextWithAddressTextbox,
+} from '../utils/fabricAddressTextFit';
 
 const CANVAS_WIDTH = 506;
 const CANVAS_HEIGHT = 319;
@@ -15,7 +19,45 @@ export default function FabricIdCardGenerator({
   const fabricCanvasRef = useRef(null);
   const [ready, setReady] = useState(false);
 
-  const { name, studentId, className, schoolName, studentImage } = studentData;
+  const { name, studentId, className, schoolName, studentImage, address } = studentData;
+
+  const applyAddressAndDataToCanvas = (canvas) => {
+    /** Other fields before address so placeholders stay in sync before wrap/fit logic. */
+    for (const obj of canvas.getObjects()) {
+      const df = obj.dataField;
+      if (!df || df === 'address') continue;
+      if (studentData[df] == null) continue;
+      if (obj instanceof FabricText && !(obj instanceof Textbox)) {
+        obj.set('text', String(studentData[df]));
+      }
+    }
+
+    const addr =
+      studentData.address != null && String(studentData.address).trim() !== ''
+        ? String(studentData.address)
+        : null;
+
+    const snapshot = [...canvas.getObjects()];
+    for (const obj of snapshot) {
+      if (obj.dataField !== 'address' || addr == null) continue;
+      if (obj instanceof Textbox) {
+        const w = Math.max(48, obj.getScaledWidth());
+        obj.set({
+          text: addr,
+          splitByGrapheme: false,
+          width: w,
+          scaleX: 1,
+          scaleY: 1,
+        });
+        fitFabricAddressTextbox(obj, canvas);
+      } else if (obj instanceof FabricText) {
+        const tb = replaceFabricTextWithAddressTextbox(canvas, obj, addr);
+        fitFabricAddressTextbox(tb, canvas);
+      }
+    }
+
+    canvas.requestRenderAll();
+  };
 
   useEffect(() => {
     if (!canvasRef.current || !templateJson) return;
@@ -48,7 +90,12 @@ export default function FabricIdCardGenerator({
         const customType = obj.customType;
         const dataField = obj.dataField;
 
-        if (obj.type === 'text' && dataField && studentData[dataField] != null) {
+        if (
+          obj.type === 'text' &&
+          dataField &&
+          dataField !== 'address' &&
+          studentData[dataField] != null
+        ) {
           obj.set('text', String(studentData[dataField]));
         }
 
@@ -83,7 +130,7 @@ export default function FabricIdCardGenerator({
         }
       }
       toRemove.forEach((o) => canvas.remove(o));
-      canvas.requestRenderAll();
+      applyAddressAndDataToCanvas(canvas);
       setReady(true);
       onReady?.(canvas);
     };
@@ -97,15 +144,8 @@ export default function FabricIdCardGenerator({
 
   useEffect(() => {
     if (!ready || !fabricCanvasRef.current) return;
-    const canvas = fabricCanvasRef.current;
-    const objects = canvas.getObjects();
-    objects.forEach((obj) => {
-      if (obj.type === 'text' && obj.dataField && studentData[obj.dataField] != null) {
-        obj.set('text', String(studentData[obj.dataField]));
-      }
-    });
-    canvas.requestRenderAll();
-  }, [ready, name, studentId, className, schoolName]);
+    applyAddressAndDataToCanvas(fabricCanvasRef.current);
+  }, [ready, name, studentId, className, schoolName, address]);
 
   return (
     <div className="fabric-idcard-generator">

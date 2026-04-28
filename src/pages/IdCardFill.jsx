@@ -236,6 +236,7 @@ export default function IdCardFill() {
         <IdCardCanvasEditor
           templateImage={template.image}
           studentImage={student?.photoUrl || null}
+          colorCodeImage={student?.colorCodeImageUrl || null}
           initialElements={undefined}
           dimension={student?.dimension}
           dimensionUnit={student?.dimensionUnit}
@@ -268,7 +269,6 @@ export default function IdCardFill() {
             house: student?.house || '',
             marking: student?.marking || '',
             photoNo: student?.photoNo || '',
-            status: student?.status || '',
             uploadedVia: student?.uploadedVia || '',
             extraFields: student?.extraFields || {},
           }}

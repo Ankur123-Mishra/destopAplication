@@ -34,8 +34,38 @@ const FIELD_DEFS = [
   { key: 'house', label: 'House' },
   { key: 'marking', label: 'Marking' },
   { key: 'photoNo', label: 'Photo No' },
-  { key: 'status', label: 'Status' },
 ];
+
+/** App/DB metadata — not Excel columns; never show in template field list or “Bind to student field”. */
+const NON_IMPORT_FIELD_KEYS = new Set([
+  'id',
+  '_id',
+  '__v',
+  'status',
+  'uploadedVia',
+  'hasTemplate',
+  'excelRowOrder',
+  'schoolId',
+  'classId',
+  'createdAt',
+  'updatedAt',
+  'template',
+  'photoUrl',
+  'dimension',
+  'dimensionUnit',
+  'extraFields',
+  /** Shown via the house/color badge checkbox, not as a bindable text field */
+  'colorCodeImageUrl',
+  'colorCodeImage',
+  /** Excel / file-map keys for which PNG to load — not printable template fields */
+  'colorCodeKey',
+  'colorCodePng',
+  'colorCodeSheetValue',
+  'colorCodePngImage',
+  'photoFormat',
+  'photoFormate',
+  'photoFormet',
+]);
 
 const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
 
@@ -55,6 +85,40 @@ const DEFAULT_PHOTO_BOX_ASPECT_RATIO = 3 / 4;
 export const DEFAULT_PHOTO_BOX_WIDTH_PERCENT = DEFAULT_PHOTO_BOX_WIDTH_BASE_PERCENT;
 export const DEFAULT_PHOTO_BOX_HEIGHT_PERCENT =
   DEFAULT_PHOTO_BOX_WIDTH_BASE_PERCENT / DEFAULT_PHOTO_BOX_ASPECT_RATIO;
+
+/** Excel color-code badge (`0.png`) — draggable like the portrait photo box */
+const DEFAULT_COLORCODE_BOX_WIDTH_PERCENT = 14;
+const DEFAULT_COLORCODE_BOX_HEIGHT_PERCENT = 14;
+
+function isPhotoLikeCanvasEl(el) {
+  return el?.type === 'photo' || el?.type === 'colorCode';
+}
+
+function getPhotoLikeBoxPercentForBounds(el) {
+  if (el?.type === 'colorCode') {
+    return {
+      w: typeof el.width === 'number' ? el.width : DEFAULT_COLORCODE_BOX_WIDTH_PERCENT,
+      h: typeof el.height === 'number' ? el.height : DEFAULT_COLORCODE_BOX_HEIGHT_PERCENT,
+    };
+  }
+  return {
+    w: typeof el.width === 'number' ? el.width : DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
+    h: typeof el.height === 'number' ? el.height : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT,
+  };
+}
+
+/** Prop may be stale; merged template data / extraFields can carry the same URL (Dexie data URL). */
+function resolveColorCodeImageFromInitialData(initialData) {
+  if (!initialData || typeof initialData !== 'object') return null;
+  const top = initialData.colorCodeImage ?? initialData.colorCodeImageUrl;
+  if (typeof top === 'string' && top.trim()) return top;
+  const ex = initialData.extraFields;
+  if (ex && typeof ex === 'object') {
+    const v = ex.colorCodeImageUrl ?? ex.colorCodeImage;
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return null;
+}
 
 const DEFAULT_ELEMENTS = () => [
   {
@@ -215,11 +279,8 @@ function getTextElementNominalHeightPercentForBounds(el) {
 }
 
 function getElementBoxPercentForAlign(el) {
-  if (el.type === 'photo') {
-    return {
-      w: typeof el.width === 'number' ? el.width : DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
-      h: typeof el.height === 'number' ? el.height : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT,
-    };
+  if (isPhotoLikeCanvasEl(el)) {
+    return getPhotoLikeBoxPercentForBounds(el);
   }
   return {
     w: typeof el.width === 'number' && el.width > 0 ? el.width : 42,
@@ -229,7 +290,7 @@ function getElementBoxPercentForAlign(el) {
 
 /** Width % used for bounds (drag) — must match box width on template. */
 function getElementWidthPercentForBounds(el) {
-  if (el.type === 'photo') return typeof el.width === 'number' ? el.width : DEFAULT_PHOTO_BOX_WIDTH_PERCENT;
+  if (isPhotoLikeCanvasEl(el)) return getPhotoLikeBoxPercentForBounds(el).w;
   if (el.type === 'text') {
     return typeof el.width === 'number' && el.width > 0 ? el.width : 42;
   }
@@ -320,10 +381,14 @@ export default function IdCardCanvasEditor({
   previewSecondaryTemplateImage = null,
   /** When both sides exist, layout elements for the other side (shown next to the active side in Preview). */
   previewSecondaryElements = null,
+  /** `'front' | 'back'` — when `'back'`, dual-side preview lays out front first (left), then back. Omit when only one side. */
+  activeEditSide = null,
   /** Restore selection when remounting (e.g. switching front/back in parent). */
   initialSelectedId = null,
   onSelectedIdChange,
   studentImage,
+  /** Optional badge image (e.g. Excel color code `0` → `0.png`), same folder upload as student photos */
+  colorCodeImage,
   initialElements,
   initialData = {},
   /** Physical card size from API (e.g. school dimension) — stage matches this size in the given unit */
@@ -407,9 +472,32 @@ export default function IdCardCanvasEditor({
   const effectiveDimension = dimensionLocal?.dimension ?? dimension;
   const effectiveDimensionUnit = dimensionLocal?.dimensionUnit ?? dimensionUnit;
 
+  const effectiveColorCodeImage = useMemo(() => {
+    if (colorCodeImage != null && String(colorCodeImage).trim() !== '') return colorCodeImage;
+    return resolveColorCodeImageFromInitialData(initialData);
+  }, [colorCodeImage, initialData]);
+
   useEffect(() => {
     setPhotoUrl(studentImage);
   }, [studentImage]);
+
+  useEffect(() => {
+    if (!effectiveColorCodeImage) return;
+    setElements((prev) => {
+      if (prev.some((e) => e.type === 'colorCode')) return prev;
+      return [
+        ...prev,
+        {
+          type: 'colorCode',
+          id: 'colorCode',
+          x: 78,
+          y: 4,
+          width: DEFAULT_COLORCODE_BOX_WIDTH_PERCENT,
+          height: DEFAULT_COLORCODE_BOX_HEIGHT_PERCENT,
+        },
+      ];
+    });
+  }, [effectiveColorCodeImage]);
 
   useEffect(() => {
     if (!alignMenuOpen) return;
@@ -451,27 +539,14 @@ export default function IdCardCanvasEditor({
     if (!extra || typeof extra !== 'object') return [];
     const baseKeys = new Set(FIELD_DEFS.map((d) => d.key));
     return Object.keys(extra)
-      .filter((k) => !baseKeys.has(k))
+      .filter((k) => !baseKeys.has(k) && !NON_IMPORT_FIELD_KEYS.has(k))
       .map((k) => ({ key: k, label: humanizeFieldLabel(k) || String(k) }));
   }, [initialData]);
 
   const otherFieldDefs = useMemo(() => {
     const src = initialData || {};
     const baseKeys = new Set(FIELD_DEFS.map((d) => d.key));
-    const exclude = new Set([
-      'extraFields',
-      '_id',
-      '__v',
-      'id',
-      'template',
-      'photoUrl',
-      'dimension',
-      'dimensionUnit',
-      'schoolId',
-      'classId',
-      'createdAt',
-      'updatedAt',
-    ]);
+    const exclude = new Set([...NON_IMPORT_FIELD_KEYS, 'extraFields']);
     const out = [];
     for (const [k, v] of Object.entries(src)) {
       if (exclude.has(k) || baseKeys.has(k)) continue;
@@ -499,6 +574,38 @@ export default function IdCardCanvasEditor({
     }
     return merged;
   }, [extraFieldDefs, otherFieldDefs]);
+
+  /** Paint portrait first, then color badge, then text (stacking order). */
+  const elementsPaintOrder = useMemo(() => {
+    if (!Array.isArray(elements)) return [];
+    const photos = [];
+    const colorBadges = [];
+    const rest = [];
+    for (const el of elements) {
+      if (el?.type === 'photo') photos.push(el);
+      else if (el?.type === 'colorCode') colorBadges.push(el);
+      else rest.push(el);
+    }
+    return [...photos, ...colorBadges, ...rest];
+  }, [elements]);
+
+  const photoShowOnTemplateChecked = useMemo(() => {
+    const photos = elements.filter((e) => e.type === 'photo');
+    if (!photos.length) return false;
+    return photos.every((e) => e.showOnTemplate !== false);
+  }, [elements]);
+
+  const colorBadgeShowOnTemplateChecked = useMemo(() => {
+    const badges = elements.filter((e) => e.type === 'colorCode');
+    if (!badges.length) {
+      // Same default as photo: if Excel/color URL exists, badge slot is “on” until an element says otherwise.
+      return Boolean(effectiveColorCodeImage);
+    }
+    return badges.every((e) => e.showOnTemplate !== false);
+  }, [elements, effectiveColorCodeImage]);
+
+  const showColorCodeTemplateToggle =
+    Boolean(effectiveColorCodeImage) || elements.some((e) => e.type === 'colorCode');
 
   const elementHasField = useCallback((fieldKey) => {
     return hasTextFieldBinding(elements, fieldKey);
@@ -635,16 +742,18 @@ export default function IdCardCanvasEditor({
         startX: e.clientX,
         startY: e.clientY,
         startWidth:
-          el.type === 'text' ? getTextBoxWidthPercentForRender(el) : el.type === 'photo' ? getElementWidthPercentForBounds(el) : el.width,
+          el.type === 'text'
+            ? getTextBoxWidthPercentForRender(el)
+            : isPhotoLikeCanvasEl(el)
+              ? getElementWidthPercentForBounds(el)
+              : el.width,
         startHeight:
           el.type === 'text'
             ? typeof el.height === 'number'
               ? el.height
               : getTextElementNominalHeightPercentForBounds(el)
-            : el.type === 'photo'
-              ? typeof el.height === 'number'
-                ? el.height
-                : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT
+            : isPhotoLikeCanvasEl(el)
+              ? getPhotoLikeBoxPercentForBounds(el).h
               : el.height,
       });
     } else {
@@ -687,12 +796,9 @@ export default function IdCardCanvasEditor({
           prev.map((el) => {
             if (el.id !== dragState.id) return el;
             const wPct = getElementWidthPercentForBounds(el);
-            const hPct =
-              el.type === 'photo'
-                ? typeof el.height === 'number'
-                  ? el.height
-                  : DEFAULT_PHOTO_BOX_HEIGHT_PERCENT
-                : getTextElementNominalHeightPercentForBounds(el);
+            const hPct = isPhotoLikeCanvasEl(el)
+              ? getPhotoLikeBoxPercentForBounds(el).h
+              : getTextElementNominalHeightPercentForBounds(el);
             return {
               ...el,
               x: Math.max(0, Math.min(100 - wPct, dragState.startElX + dx)),
@@ -772,12 +878,9 @@ export default function IdCardCanvasEditor({
         prev.map((el) => {
           if (el.id !== selectedId) return el;
           const wPct = getElementWidthPercentForBounds(el);
-          const hPct =
-            el.type === 'photo'
-              ? typeof el.height === 'number'
-                ? el.height
-                : 48
-              : getTextElementNominalHeightPercentForBounds(el);
+          const hPct = isPhotoLikeCanvasEl(el)
+            ? getPhotoLikeBoxPercentForBounds(el).h
+            : getTextElementNominalHeightPercentForBounds(el);
 
           const nextX = Math.max(0, Math.min(100 - wPct, el.x + dx));
           const nextY = Math.max(0, Math.min(100 - hPct, el.y + dy));
@@ -803,15 +906,22 @@ export default function IdCardCanvasEditor({
     hasSecondaryPreview &&
     Array.isArray(previewSecondaryElements) &&
     previewSecondaryElements.length > 0;
+  const previewDualSideFrontFirst =
+    hasSecondaryPreview && activeEditSide === 'back';
 
   const bindFieldDefs = useMemo(() => {
     const withValue = allFieldDefs.filter((f) => {
       if (HIDDEN_TEMPLATE_FIELD_KEYS.has(f.key)) return false;
+      if (NON_IMPORT_FIELD_KEYS.has(f.key)) return false;
       return String(getFieldValue(f.key) || '').trim() !== '';
     });
     const selectedKey = selectedEl?.type === 'text' ? selectedEl.dataField : '';
-    if (selectedKey && !withValue.some((f) => f.key === selectedKey)) {
-      withValue.push({ key: selectedKey, label: selectedKey });
+    if (
+      selectedKey &&
+      !NON_IMPORT_FIELD_KEYS.has(selectedKey) &&
+      !withValue.some((f) => f.key === selectedKey)
+    ) {
+      withValue.push({ key: selectedKey, label: humanizeFieldLabel(selectedKey) || selectedKey });
     }
     return withValue;
   }, [allFieldDefs, getFieldValue, selectedEl?.dataField, selectedEl?.type]);
@@ -907,6 +1017,7 @@ export default function IdCardCanvasEditor({
     onSave({
       elements,
       studentImage: photoUrl,
+      colorCodeImage: effectiveColorCodeImage,
       name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
       studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
       className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
@@ -993,7 +1104,13 @@ export default function IdCardCanvasEditor({
                   transform: `scale(${PREVIEW_DISPLAY_ZOOM})`,
                   transformOrigin: 'top center',
                   ...(hasSecondaryPreview
-                    ? { display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'center' }
+                    ? {
+                        display: 'flex',
+                        flexDirection: previewDualSideFrontFirst ? 'row-reverse' : 'row',
+                        gap: 14,
+                        alignItems: 'flex-start',
+                        justifyContent: 'center',
+                      }
                     : { display: 'grid', gap: 14, justifyItems: 'center' }),
                 }}
               >
@@ -1014,6 +1131,7 @@ export default function IdCardCanvasEditor({
                         data={{
                           ...initialData,
                           studentImage: photoUrl,
+                          colorCodeImage: effectiveColorCodeImage,
                           name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
                           studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
                           className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
@@ -1054,6 +1172,7 @@ export default function IdCardCanvasEditor({
                           data={{
                             ...initialData,
                             studentImage: photoUrl,
+                            colorCodeImage: effectiveColorCodeImage,
                             name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
                             studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
                             className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
@@ -1091,12 +1210,15 @@ export default function IdCardCanvasEditor({
                 }}
                 onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
               >
-          {elements.map((el) => {
+          {elementsPaintOrder.map((el) => {
             if (el.type === 'photo') {
+              const showPhotoOnCard = el.showOnTemplate !== false;
               return (
                 <div
                   key={el.id}
-                  className={`idcard-canvas-el idcard-canvas-photo ${selectedId === el.id ? 'selected' : ''}`}
+                  className={`idcard-canvas-el idcard-canvas-photo ${selectedId === el.id ? 'selected' : ''}${
+                    !showPhotoOnCard ? ' idcard-canvas-photo--off-template' : ''
+                  }`}
                   style={{
                     left: `${el.x}%`,
                     top: `${el.y}%`,
@@ -1105,11 +1227,45 @@ export default function IdCardCanvasEditor({
                   }}
                   onPointerDown={(e) => handlePointerDown(e, el.id, false)}
                 >
-                  {photoUrl ? (
-                    <img src={photoUrl} alt="" />
-                  ) : (
-                    <div className="idcard-canvas-photo-placeholder">Photo</div>
+                  {showPhotoOnCard ? (
+                    photoUrl ? (
+                      <img src={photoUrl} alt="" />
+                    ) : (
+                      <div className="idcard-canvas-photo-placeholder">Photo</div>
+                    )
+                  ) : null}
+                  {selectedId === el.id && (
+                    <div
+                      className="idcard-canvas-resize-handle"
+                      onPointerDown={(e) => handlePointerDown(e, el.id, true)}
+                    />
                   )}
+                </div>
+              );
+            }
+            if (el.type === 'colorCode') {
+              const showBadge = el.showOnTemplate !== false;
+              return (
+                <div
+                  key={el.id}
+                  className={`idcard-canvas-el idcard-canvas-photo idcard-canvas-colorcode ${selectedId === el.id ? 'selected' : ''}${
+                    !showBadge ? ' idcard-canvas-photo--off-template' : ''
+                  }`}
+                  style={{
+                    left: `${el.x}%`,
+                    top: `${el.y}%`,
+                    width: `${el.width}%`,
+                    height: `${el.height}%`,
+                  }}
+                  onPointerDown={(e) => handlePointerDown(e, el.id, false)}
+                >
+                  {showBadge ? (
+                    effectiveColorCodeImage ? (
+                      <img src={effectiveColorCodeImage} alt="" />
+                    ) : (
+                      <div className="idcard-canvas-photo-placeholder">Color</div>
+                    )
+                  ) : null}
                   {selectedId === el.id && (
                     <div
                       className="idcard-canvas-resize-handle"
@@ -1544,7 +1700,9 @@ export default function IdCardCanvasEditor({
                     Drag on canvas to move; drag the corner to resize. Or use the sliders (limited to template edges).
                   </p>
                   <div style={{ marginBottom: 10 }}>
-                    <label className="input-label">Photo box width (% of card)</label>
+                    <label className="input-label">
+                      {selectedEl.type === 'colorCode' ? 'House image box width (% of card)' : 'Photo box width (% of card)'}
+                    </label>
                     <input
                       type="range"
                       min={15}
@@ -1576,7 +1734,9 @@ export default function IdCardCanvasEditor({
                     </p>
                   </div>
                   <div>
-                    <label className="input-label">Photo box height (% of card)</label>
+                    <label className="input-label">
+                      {selectedEl.type === 'colorCode' ? 'House image box height (% of card)' : 'Photo box height (% of card)'}
+                    </label>
                     <input
                       type="range"
                       min={20}
@@ -1625,7 +1785,66 @@ export default function IdCardCanvasEditor({
           </div>
 
           <div style={{ marginBottom: 18 }}>
+            {elements.some((e) => e.type === 'photo') && (
+              <label
+                key="__student_photo_template__"
+                style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={photoShowOnTemplateChecked}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setElements((prev) => prev.map((x) => (x.type === 'photo' ? { ...x, showOnTemplate: on } : x)));
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: '0.95rem' }}>Student photo</strong>
+                  <span className="text-muted" style={{ display: 'block', fontSize: '0.8rem' }}>
+                    {photoShowOnTemplateChecked ? 'Shown on template' : 'Hidden on template (invisible on card)'}
+                  </span>
+                </span>
+              </label>
+            )}
+            {showColorCodeTemplateToggle && (
+              <label
+                key="__color_badge_template__"
+                style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={colorBadgeShowOnTemplateChecked}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setElements((prev) => {
+                      if (!prev.some((x) => x.type === 'colorCode')) {
+                        return [
+                          ...prev,
+                          {
+                            type: 'colorCode',
+                            id: 'colorCode',
+                            x: 78,
+                            y: 4,
+                            width: DEFAULT_COLORCODE_BOX_WIDTH_PERCENT,
+                            height: DEFAULT_COLORCODE_BOX_HEIGHT_PERCENT,
+                            showOnTemplate: on,
+                          },
+                        ];
+                      }
+                      return prev.map((x) => (x.type === 'colorCode' ? { ...x, showOnTemplate: on } : x));
+                    });
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: '0.95rem' }}>House image</strong>
+                  <span className="text-muted" style={{ display: 'block', fontSize: '0.8rem' }}>
+                    {colorBadgeShowOnTemplateChecked ? 'Shown on template' : 'Hidden on template (invisible on card)'}
+                  </span>
+                </span>
+              </label>
+            )}
             {allFieldDefs.map((f) => {
+              if (NON_IMPORT_FIELD_KEYS.has(f.key)) return null;
               // Only show fields that have actual values in the student data
               const val = getFieldValue(f.key);
               const hasValue = normalizeValue(val).trim() !== '';

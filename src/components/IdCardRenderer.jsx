@@ -225,7 +225,22 @@ function CanvasTemplateTextElement({ el, textContent, wrapMultiline, textBoxWCla
  */
 
 export default function IdCardRenderer({ templateId, data, size = 'normal', template: templateOverride }) {
-  const { studentImage, name, studentId, className, schoolName, dateOfBirth, address, email, phone, academyName, schoolLogo, signature, elements } = data || {};
+  const {
+    studentImage,
+    colorCodeImage,
+    name,
+    studentId,
+    className,
+    schoolName,
+    dateOfBirth,
+    address,
+    email,
+    phone,
+    academyName,
+    schoolLogo,
+    signature,
+    elements,
+  } = data || {};
   const sizeClass = size === 'small' ? 'idcard--small' : size === 'preview' ? 'idcard--preview' : '';
   const effectiveTemplateId = getInternalTemplateId(templateId);
   const template = templateOverride || getTemplateById(effectiveTemplateId);
@@ -234,14 +249,27 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
 
   /* Image template with custom canvas layout (saved from Canva-style editor or uploaded template) */
   const layoutElements = template?.elements ?? elements;
+  const layoutElementsPaintOrder = (() => {
+    if (!Array.isArray(layoutElements)) return [];
+    const photos = [];
+    const colorBadges = [];
+    const rest = [];
+    for (const el of layoutElements) {
+      if (el?.type === 'photo') photos.push(el);
+      else if (el?.type === 'colorCode') colorBadges.push(el);
+      else rest.push(el);
+    }
+    return [...photos, ...colorBadges, ...rest];
+  })();
   if (template?.image && layoutElements?.length) {
     return (
       <div className={`idcard idcard-image-template idcard-image-template-canvas ${sizeClass}`}>
         <div className="idcard-canvas-bg-wrap" aria-hidden="true">
           <img className="idcard-canvas-template-bg" src={template.image} alt="" draggable={false} />
         </div>
-        {layoutElements.map((el) => {
+        {layoutElementsPaintOrder.map((el) => {
           if (el.type === 'photo') {
+            if (el.showOnTemplate === false) return null;
             return (
               <div
                 key={el.id}
@@ -254,6 +282,23 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
                 }}
               >
                 {studentImage && <img src={studentImage} alt="" />}
+              </div>
+            );
+          }
+          if (el.type === 'colorCode') {
+            if (el.showOnTemplate === false) return null;
+            return (
+              <div
+                key={el.id}
+                className="idcard-canvas-el idcard-canvas-photo idcard-canvas-colorcode idcard-render-only"
+                style={{
+                  left: `${el.x}%`,
+                  top: `${el.y}%`,
+                  width: `${el.width}%`,
+                  height: `${el.height}%`,
+                }}
+              >
+                {colorCodeImage ? <img src={colorCodeImage} alt="" /> : null}
               </div>
             );
           }

@@ -64,7 +64,8 @@ export async function getClassesBySchool(schoolId) {
   return data;
 }
 
-export async function getStudentsBySchoolAndClass(schoolId, classId) {
+export async function getStudentsBySchoolAndClass(schoolId, classId, options = {}) {
+  const retainPhotos = options.retainPhotos !== false;
   const params = new URLSearchParams({ schoolId, classId });
   const res = await fetch(`${API_BASE_URL}/api/photographer/students?${params}`, {
     method: 'GET',
@@ -75,10 +76,13 @@ export async function getStudentsBySchoolAndClass(schoolId, classId) {
     const msg = data?.message || data?.error || res.statusText || 'Failed to load students';
     throw new Error(msg);
   }
-  return slimStudentsPayloadForClient({
-    ...data,
-    students: sortStudentsByExcelRowOrder(data.students ?? []),
-  });
+  return slimStudentsPayloadForClient(
+    {
+      ...data,
+      students: sortStudentsByExcelRowOrder(data.students ?? []),
+    },
+    { stripInlinePhotos: !retainPhotos },
+  );
 }
 
 export async function updateStudent(studentId, data) {
@@ -171,7 +175,9 @@ export function bulkUploadStudentsXls(schoolId, file) {
   });
 }
 
-export async function getStudentsBySchool(schoolId) {
+export async function getStudentsBySchool(schoolId, options = {}) {
+  const retainPhotos = options.retainPhotos !== false;
+  const slimOpts = { stripInlinePhotos: !retainPhotos };
   const res = await fetch(`${API_BASE_URL}/api/photographer/schools/${encodeURIComponent(schoolId)}/students`, {
     method: "GET",
     headers: authHeaders(),
@@ -180,10 +186,13 @@ export async function getStudentsBySchool(schoolId) {
   if (!res.ok) throw new Error(data?.message || data?.error || "Failed");
   const schoolStudents = Array.isArray(data.students) ? data.students : [];
   if (schoolStudents.length > 0) {
-    return slimStudentsPayloadForClient({
-      ...data,
-      students: sortStudentsByExcelRowOrder(schoolStudents),
-    });
+    return slimStudentsPayloadForClient(
+      {
+        ...data,
+        students: sortStudentsByExcelRowOrder(schoolStudents),
+      },
+      slimOpts,
+    );
   }
 
   // Some projects occasionally return an empty school-level list even though
@@ -202,7 +211,7 @@ export async function getStudentsBySchool(schoolId) {
       classes
         .map((cls) => cls?._id || cls?.id)
         .filter((id) => typeof id === "string" && id.trim() !== "")
-        .map((classId) => getStudentsBySchoolAndClass(schoolId, classId)),
+        .map((cid) => getStudentsBySchoolAndClass(schoolId, cid, options)),
     );
 
     const deduped = new Map();
@@ -223,19 +232,44 @@ export async function getStudentsBySchool(schoolId) {
     });
 
     const mergedStudents = sortStudentsByExcelRowOrder(Array.from(deduped.values()));
-    return slimStudentsPayloadForClient({
-      ...data,
-      ...(data?.template ? {} : fallbackTemplate ? { template: fallbackTemplate } : {}),
-      students: mergedStudents,
-    });
+    return slimStudentsPayloadForClient(
+      {
+        ...data,
+        ...(data?.template ? {} : fallbackTemplate ? { template: fallbackTemplate } : {}),
+        students: mergedStudents,
+      },
+      slimOpts,
+    );
   } catch {
     // Keep original response shape when fallback probing fails.
   }
 
-  return slimStudentsPayloadForClient({
-    ...data,
-    students: sortStudentsByExcelRowOrder(schoolStudents),
-  });
+  return slimStudentsPayloadForClient(
+    {
+      ...data,
+      students: sortStudentsByExcelRowOrder(schoolStudents),
+    },
+    slimOpts,
+  );
+}
+
+/** Resolve one student with photos for preview (list rows may omit heavy inline URLs). */
+export async function getStudentRecordForPreview(studentId, schoolId, classId) {
+  if (!studentId || !schoolId) return null;
+  if (classId && String(classId).trim() !== "" && classId !== "all") {
+    const res = await getStudentsBySchoolAndClass(schoolId, classId, {
+      retainPhotos: true,
+    });
+    return (
+      (res.students ?? []).find(
+        (x) => (x._id || x.id) === studentId,
+      ) ?? null
+    );
+  }
+  const res = await getStudentsBySchool(schoolId, { retainPhotos: true });
+  return (
+    (res.students ?? []).find((x) => (x._id || x.id) === studentId) ?? null
+  );
 }
 
 export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {

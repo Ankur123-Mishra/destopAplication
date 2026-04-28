@@ -51,13 +51,14 @@ export function compressImageForUpload(file) {
 }
 
 /**
- * API student object → string used to match folder filenames (photoNo, else admissionNo / rollNo / uniqueCode).
+ * Student row → basename key for matching image filenames (prefer Photo No, then Student ID, then other ids).
  */
-
 export function studentPhotoMatchKey(s) {
   if (s == null) return '—';
   const p = s.photoNo;
   if (p != null && String(p).trim() !== '') return String(p).trim();
+  const sid = s.studentId;
+  if (sid != null && String(sid).trim() !== '') return String(sid).trim();
   return String(s.admissionNo || s.rollNo || s.uniqueCode || '—').trim();
 }
 
@@ -78,4 +79,46 @@ export function addPhotoFileToMap(fileMap, file) {
   if (withoutCropped && withoutCropped !== nameWithoutExt) {
     fileMap[withoutCropped] = file;
   }
+}
+
+/**
+ * Basename key for Excel "Color Code" / "Color Code .png" cell (e.g. `0` → file `0.png`).
+ */
+export function normalizeColorCodeBasename(raw) {
+  if (raw == null || raw === '') return '';
+  let s = String(raw).trim();
+  if (!s) return '';
+  s = s.replace(/\.png$/i, '').trim();
+  return s.toLowerCase();
+}
+
+/**
+ * Read color code from Dexie/API student row (explicit field or extraFields from Excel).
+ */
+export function getStudentColorCodeBasename(student) {
+  if (!student || typeof student !== 'object') return '';
+  const direct = student.colorCodeKey ?? student.colorCodeSheetValue ?? student.colorCodePng;
+  if (direct != null && String(direct).trim() !== '') {
+    return normalizeColorCodeBasename(direct);
+  }
+  const ex = student.extraFields;
+  if (ex && typeof ex === 'object') {
+    const v = ex.colorCodePng ?? ex.colorCode ?? ex.colorcodepng ?? ex.colorCodeKey;
+    if (v != null && String(v).trim() !== '') return normalizeColorCodeBasename(v);
+  }
+  return '';
+}
+
+/** Map basename (lowercase) → File for `*.png` only (color badges: `0.png`, `1.png`, …). */
+export function buildColorCodePngFileMap(files) {
+  const map = {};
+  if (!Array.isArray(files)) return map;
+  for (const file of files) {
+    const name = file?.name || '';
+    if (!/\.png$/i.test(name)) continue;
+    const baseName = name.split(/[/\\]/).pop() || name;
+    const base = normalizeColorCodeBasename(baseName);
+    if (base) map[base] = file;
+  }
+  return map;
 }

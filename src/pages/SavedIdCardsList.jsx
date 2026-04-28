@@ -60,6 +60,8 @@ const PAGE_PRESET_DISPLAY_NAME = {
 };
 const PRINT_PAGE_MARGIN_MM = 4;
 const PRINT_GAP_MM = 4;
+/** Default horizontal/vertical gap between cards in the preview grid (mm). */
+const DEFAULT_PREVIEW_GRID_GAP_MM = 1;
 const DEFAULT_CARD_WIDTH_MM = 90;
 const DEFAULT_CARD_HEIGHT_MM = 57;
 /** Build preview/print card rows in slices so opening preview stays instant for large lists. */
@@ -257,7 +259,7 @@ function mergeExtraFieldsFromStudent(student) {
   fill("status", student.status);
   fill("fatherPrimaryContact", student.fatherPrimaryContact);
   fill("motherPrimaryContact", student.motherPrimaryContact);
-  fill("photoNo", student.photoNo ?? student.studentId);
+  fill("photoNo", student.photoNo ?? "");
   fill("studentName", student.studentName);
   return ex;
 }
@@ -414,8 +416,40 @@ function studentHasRenderableSavedCard(
 
 function studentHasUploadedPhoto(s) {
   if (!s || typeof s !== "object") return false;
-  if (typeof s.photoUrl !== "string") return false;
-  return s.photoUrl.trim() !== "";
+  if (s.hasPhoto === true) return true;
+  if (typeof s.photoUrl === "string" && s.photoUrl.trim() !== "") return true;
+  return false;
+}
+
+function preloadImageSrc(src) {
+  if (!src || typeof src !== "string" || !src.trim()) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const im = new Image();
+    const done = () => resolve();
+    im.onload = done;
+    im.onerror = done;
+    im.src = src;
+  });
+}
+
+/** Decode student photo + template art before mounting preview cells so layout and image appear together. */
+function preloadCardVisualAssets(card) {
+  if (!card || typeof card !== "object") return Promise.resolve();
+  const urls = [];
+  if (card.studentImage) urls.push(card.studentImage);
+  if (card.colorCodeImage) urls.push(card.colorCodeImage);
+  const ut = card.uploadedTemplate;
+  if (ut) {
+    if (ut.frontImage) urls.push(ut.frontImage);
+    if (ut.backImage) urls.push(ut.backImage);
+  }
+  if (card.templateId?.startsWith("fabric-")) {
+    const ft = getFabricTemplateById(card.templateId);
+    if (ft?.backgroundDataUrl) urls.push(ft.backgroundDataUrl);
+  }
+  return Promise.all(urls.map(preloadImageSrc));
 }
 
 /** Virtual list row height (must match CSS: card padding + two lines + list gap). */
@@ -433,10 +467,9 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
   templateStatus,
   isAllSchoolStudents,
   isViewTemplateFlow,
-  isOnlineMode,
   getTemplateName,
   formatStudentClassForIdCard,
-  setSingleCardPreview,
+  requestOpenCardPreview,
   setEditStudentData,
   formatToDDMMYYYYDot,
 }) {
@@ -484,7 +517,7 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
           }}
           onClick={() => {
             if (!canOpenPreview) return;
-            setSingleCardPreview(card);
+            void requestOpenCardPreview(student);
           }}
         >
           <span className="saved-idcard-name">{student.studentName}</span>
@@ -509,24 +542,27 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
             )}
           </span>
         </button>
-        {isOnlineMode && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ padding: "6px 12px", fontSize: "0.85rem", height: "auto" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              const dobVal = student.dateOfBirth || student.dob || "";
-              setEditStudentData({
-                ...student,
-                dateOfBirth: formatToDDMMYYYYDot(dobVal),
-                dob: formatToDDMMYYYYDot(dobVal),
-              });
-            }}
-          >
-            Edit
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{
+            flexShrink: 0,
+            padding: "6px 12px",
+            fontSize: "0.85rem",
+            height: "auto",
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const dobVal = student.dateOfBirth || student.dob || "";
+            setEditStudentData({
+              ...student,
+              dateOfBirth: formatToDDMMYYYYDot(dobVal),
+              dob: formatToDDMMYYYYDot(dobVal),
+            });
+          }}
+        >
+          Edit
+        </button>
       </div>
     </div>
   );
@@ -606,7 +642,7 @@ const PREVIEW_GAP_INPUT_DEBOUNCE_MS = 120;
 const MIN_PREVIEW_GAP_MM = 0;
 const MAX_PREVIEW_GAP_MM = 40;
 
-function clampPreviewGapMm(value, fallback = PRINT_GAP_MM) {
+function clampPreviewGapMm(value, fallback = DEFAULT_PREVIEW_GRID_GAP_MM) {
   const n =
     typeof value === "number"
       ? value
@@ -618,7 +654,7 @@ function clampPreviewGapMm(value, fallback = PRINT_GAP_MM) {
 const DEFAULT_PREVIEW_PAGE_BG = "#ffffff";
 
 /** Preview download: high-res capture + max JPEG quality (per-card, page ZIP, PDF raster). */
-const PREVIEW_EXPORT_HTML2CANVAS_SCALE = 6;
+const PREVIEW_EXPORT_HTML2CANVAS_SCALE = 7;
 const PREVIEW_EXPORT_JPEG_QUALITY = 1;
 /** Bulk ZIP / many cards: still sharp, faster `toDataURL` than 1.0. */
 const PREVIEW_EXPORT_JPEG_QUALITY_BULK = 0.94;
@@ -631,12 +667,12 @@ const FAST_EXPORT_PROGRESS_UPDATES_PER_SEC = 3;
 /** Full-page JPEG/PDF raster: above this, use lower scale + higher parallelism (full A4 at scale 4 is extremely slow). */
 const MEGA_BULK_PAGE_THRESHOLD = 35;
 /** Slightly lower quality for huge page-only exports — much faster encode, still fine for print preview. */
-const PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA = 0.88;
+const PREVIEW_EXPORT_PAGE_JPEG_QUALITY_MEGA = 0.92;
 
 /** PDF export only: JPEG embedded in jsPDF pages (does not affect standalone JPG/PNG file export). */
 const PDF_EXPORT_EMBED_JPEG_QUALITY = PREVIEW_EXPORT_JPEG_QUALITY;
 const PDF_EXPORT_EMBED_JPEG_QUALITY_BULK = 0.92;
-const PDF_EXPORT_EMBED_JPEG_QUALITY_MEGA = 0.86;
+const PDF_EXPORT_EMBED_JPEG_QUALITY_MEGA = 0.9;
 /**
  * At or above this spread page count, skip Electron `printToPDF` and use the renderer/jsPDF path
  * (native print is less predictable for large batches).
@@ -662,16 +698,16 @@ function getHtml2CanvasExportScaleAttempts(options = {}) {
     typeof window !== "undefined" && Number.isFinite(window.devicePixelRatio)
       ? window.devicePixelRatio
       : 1;
-  /* Mega bulk: cap ~1.5–2 — cost grows with scale². */
+  /* Mega bulk: cap ~2–2.25 — cost grows with scale². */
   if (bulk && megaBulkPage) {
-    const primary = Math.min(2, Math.max(1, Math.round(dpr)));
-    return [...new Set([primary, 1.5, 1])]
+    const primary = Math.min(2.25, Math.max(1.5, Math.round(dpr)));
+    return [...new Set([primary, 2, 1.75, 1.5, 1])]
       .filter((n) => n > 0)
       .sort((a, b) => b - a);
   }
   if (bulk) {
-    const primary = Math.min(2.5, Math.max(1, Math.round(1.25 * dpr)));
-    return [...new Set([primary, 2, 1.5, 1])]
+    const primary = Math.min(3.5, Math.max(1.5, Math.round(1.5 * dpr)));
+    return [...new Set([primary, 3, 2.5, 2, 1.5, 1])]
       .filter((n) => n > 0)
       .sort((a, b) => b - a);
   }
@@ -916,6 +952,20 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
   });
 }
 
+/** Corner crop marks sit half outside the card; html2canvas clips if any ancestor keeps overflow:hidden. */
+function relaxCaptureOverflowForCropMarks(clonedDoc) {
+  if (!clonedDoc?.querySelectorAll) return;
+  clonedDoc.querySelectorAll(".idcard-sheet-crop-mark").forEach((el) => {
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 24; depth += 1) {
+      const cls = node.classList;
+      if (cls?.contains("preview-overlay") || node === clonedDoc.body) break;
+      node.style.setProperty("overflow", "visible", "important");
+      node = node.parentElement;
+    }
+  });
+}
+
 /**
  * Clone-only hints so exported JPEG/PDF matches on-screen text and template art more closely.
  * Template art is rendered as a full-bleed <img> in IdCardRenderer (not CSS background-image).
@@ -946,6 +996,16 @@ function applyExportRenderHintsToClone(clonedDoc) {
     }
     .print-card-cell .idcard-image-template-overlay {
       transform: translateY(-0.4px) !important;
+    }
+    /* Sheet corner dots: explicit px size helps html2canvas; mm-only sizing can rasterize as 0. */
+    .idcard-sheet-crop-mark {
+      width: 7.56px !important;
+      height: 7.56px !important;
+      min-width: 7.56px !important;
+      min-height: 7.56px !important;
+      background-color: #000000 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
   `;
   clonedDoc.head.appendChild(style);
@@ -1146,6 +1206,7 @@ function makeHtml2CanvasOpts(pageBackgroundColor) {
     imageTimeout: 25000,
     onclone(clonedDoc) {
       relaxCaptureOverflowForWrappedCanvasText(clonedDoc);
+      relaxCaptureOverflowForCropMarks(clonedDoc);
       applyExportRenderHintsToClone(clonedDoc);
     },
   };
@@ -1481,30 +1542,6 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     return payload;
   }
-  let step = 0;
-  const frontPayloads = await mapWithConcurrency(
-    frontEls,
-    captureConcurrency,
-    async (el, i) => {
-      const payload = await captureCell(el, "front", i + 1, cards[i], "front");
-      step += 1;
-      onProgress?.({
-        label: "Capturing JPEGs (front)…",
-        current: step,
-        total: totalSteps,
-      });
-      if (betweenMs > 0) await delay(betweenMs);
-      return payload;
-    },
-    shouldAbort,
-  );
-  for (let i = 0; i < cards.length; i++) {
-    files.push({
-      filename: `${bases[i]}_front.jpg`,
-      ...frontPayloads[i],
-    });
-  }
-  if (shouldAbort()) throw new ExportCancelledError();
   const backTasks = [];
   for (let i = 0; i < cards.length; i++) {
     if (!cardExportsBackJpeg(cards[i])) continue;
@@ -1516,31 +1553,129 @@ async function buildPreviewFrontAndBackJpegFiles(
     }
     backTasks.push({ i, domIdx });
   }
-  const backPayloads = await mapWithConcurrency(
-    backTasks,
-    captureConcurrency,
-    async ({ i, domIdx }) => {
-      const payload = await captureCell(
-        backEls[domIdx],
-        "back",
-        i + 1,
-        cards[i],
-        "back",
-      );
-      step += 1;
-      onProgress?.({
-        label: "Capturing JPEGs (back)…",
-        current: step,
-        total: totalSteps,
+  /**
+   * Preview (non-bulk): front then back was ~2× wall time for dual-sided cards.
+   * Interleave jobs so front + back can rasterize together; keep front-then-back
+   * phases for bulk exports to limit peak memory from many html2canvas runs.
+   */
+  const useMergedFrontBackParallel = !bulk && backTasks.length > 0;
+  const mergedCaptureConcurrency = useNativeCapture
+    ? 1
+    : allCanvasDataCards
+      ? Math.min(8, Math.max(6, captureConcurrency))
+      : Math.min(6, Math.max(4, captureConcurrency));
+
+  let step = 0;
+  let frontPayloads;
+  let backPayloads;
+  if (useMergedFrontBackParallel) {
+    const mergedJobs = [];
+    for (let i = 0; i < cards.length; i++) {
+      mergedJobs.push({
+        side: "front",
+        cardIndex: i,
+        el: frontEls[i],
+        card: cards[i],
       });
-      if (betweenMs > 0) await delay(betweenMs);
-      return payload;
-    },
-    shouldAbort,
-  );
+    }
+    for (const { i, domIdx } of backTasks) {
+      mergedJobs.push({
+        side: "back",
+        cardIndex: i,
+        el: backEls[domIdx],
+        card: cards[i],
+      });
+    }
+    const mergedResults = await mapWithConcurrency(
+      mergedJobs,
+      mergedCaptureConcurrency,
+      async (job) => {
+        const payload = await captureCell(
+          job.el,
+          job.side,
+          job.cardIndex + 1,
+          job.card,
+          job.side,
+        );
+        step += 1;
+        onProgress?.({
+          label:
+            job.side === "front"
+              ? "Capturing JPEGs (front)…"
+              : "Capturing JPEGs (back)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return { ...job, payload };
+      },
+      shouldAbort,
+    );
+    frontPayloads = new Array(cards.length);
+    const backPayloadByIndex = new Map();
+    for (const r of mergedResults) {
+      if (r.side === "front") frontPayloads[r.cardIndex] = r.payload;
+      else backPayloadByIndex.set(r.cardIndex, r.payload);
+    }
+    backPayloads = backTasks.map(({ i }) => {
+      const p = backPayloadByIndex.get(i);
+      if (!p) {
+        throw new Error(`Back capture missing for card ${i + 1}.`);
+      }
+      return p;
+    });
+  } else {
+    frontPayloads = await mapWithConcurrency(
+      frontEls,
+      captureConcurrency,
+      async (el, i) => {
+        const payload = await captureCell(el, "front", i + 1, cards[i], "front");
+        step += 1;
+        onProgress?.({
+          label: "Capturing JPEGs (front)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return payload;
+      },
+      shouldAbort,
+    );
+    if (shouldAbort()) throw new ExportCancelledError();
+    backPayloads = await mapWithConcurrency(
+      backTasks,
+      captureConcurrency,
+      async ({ i, domIdx }) => {
+        const payload = await captureCell(
+          backEls[domIdx],
+          "back",
+          i + 1,
+          cards[i],
+          "back",
+        );
+        step += 1;
+        onProgress?.({
+          label: "Capturing JPEGs (back)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return payload;
+      },
+      shouldAbort,
+    );
+  }
+  for (let i = 0; i < cards.length; i++) {
+    files.push({
+      // 01/02 so default name-sorted folder views list front before back (…_back… sorts before …_front…)
+      filename: `${bases[i]}_01_front.jpg`,
+      ...frontPayloads[i],
+    });
+  }
+  if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_back.jpg`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_02_back.jpg`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -1813,28 +1948,6 @@ async function buildPreviewFrontAndBackPngFiles(
     return payload;
   }
 
-  let step = 0;
-  const frontPayloads = await mapWithConcurrency(
-    frontEls,
-    captureConcurrency,
-    async (el, i) => {
-      const payload = await captureCell(el, "front", i + 1, cards[i], "front");
-      step += 1;
-      onProgress?.({
-        label: "Capturing PNGs (front)…",
-        current: step,
-        total: totalSteps,
-      });
-      if (betweenMs > 0) await delay(betweenMs);
-      return payload;
-    },
-    shouldAbort,
-  );
-  for (let i = 0; i < cards.length; i++) {
-    files.push({ filename: `${bases[i]}_front.png`, ...frontPayloads[i] });
-  }
-  if (shouldAbort()) throw new ExportCancelledError();
-
   const backTasks = [];
   for (let i = 0; i < cards.length; i++) {
     if (!cardExportsBackJpeg(cards[i])) continue;
@@ -1844,31 +1957,120 @@ async function buildPreviewFrontAndBackPngFiles(
     }
     backTasks.push({ i, domIdx });
   }
-  const backPayloads = await mapWithConcurrency(
-    backTasks,
-    captureConcurrency,
-    async ({ i, domIdx }) => {
-      const payload = await captureCell(
-        backEls[domIdx],
-        "back",
-        i + 1,
-        cards[i],
-        "back",
-      );
-      step += 1;
-      onProgress?.({
-        label: "Capturing PNGs (back)…",
-        current: step,
-        total: totalSteps,
+  const useMergedFrontBackParallel = !bulk && backTasks.length > 0;
+  const mergedCaptureConcurrency = useNativeCapture
+    ? 1
+    : allCanvasDataCards
+      ? Math.min(8, Math.max(6, captureConcurrency))
+      : Math.min(6, Math.max(4, captureConcurrency));
+
+  let step = 0;
+  let frontPayloads;
+  let backPayloads;
+  if (useMergedFrontBackParallel) {
+    const mergedJobs = [];
+    for (let i = 0; i < cards.length; i++) {
+      mergedJobs.push({
+        side: "front",
+        cardIndex: i,
+        el: frontEls[i],
+        card: cards[i],
       });
-      if (betweenMs > 0) await delay(betweenMs);
-      return payload;
-    },
-    shouldAbort,
-  );
+    }
+    for (const { i, domIdx } of backTasks) {
+      mergedJobs.push({
+        side: "back",
+        cardIndex: i,
+        el: backEls[domIdx],
+        card: cards[i],
+      });
+    }
+    const mergedResults = await mapWithConcurrency(
+      mergedJobs,
+      mergedCaptureConcurrency,
+      async (job) => {
+        const payload = await captureCell(
+          job.el,
+          job.side,
+          job.cardIndex + 1,
+          job.card,
+          job.side,
+        );
+        step += 1;
+        onProgress?.({
+          label:
+            job.side === "front"
+              ? "Capturing PNGs (front)…"
+              : "Capturing PNGs (back)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return { ...job, payload };
+      },
+      shouldAbort,
+    );
+    frontPayloads = new Array(cards.length);
+    const backPayloadByIndex = new Map();
+    for (const r of mergedResults) {
+      if (r.side === "front") frontPayloads[r.cardIndex] = r.payload;
+      else backPayloadByIndex.set(r.cardIndex, r.payload);
+    }
+    backPayloads = backTasks.map(({ i }) => {
+      const p = backPayloadByIndex.get(i);
+      if (!p) {
+        throw new Error(`Back capture missing for card ${i + 1}.`);
+      }
+      return p;
+    });
+  } else {
+    frontPayloads = await mapWithConcurrency(
+      frontEls,
+      captureConcurrency,
+      async (el, i) => {
+        const payload = await captureCell(el, "front", i + 1, cards[i], "front");
+        step += 1;
+        onProgress?.({
+          label: "Capturing PNGs (front)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return payload;
+      },
+      shouldAbort,
+    );
+    if (shouldAbort()) throw new ExportCancelledError();
+    backPayloads = await mapWithConcurrency(
+      backTasks,
+      captureConcurrency,
+      async ({ i, domIdx }) => {
+        const payload = await captureCell(
+          backEls[domIdx],
+          "back",
+          i + 1,
+          cards[i],
+          "back",
+        );
+        step += 1;
+        onProgress?.({
+          label: "Capturing PNGs (back)…",
+          current: step,
+          total: totalSteps,
+        });
+        if (betweenMs > 0) await delay(betweenMs);
+        return payload;
+      },
+      shouldAbort,
+    );
+  }
+  for (let i = 0; i < cards.length; i++) {
+    files.push({ filename: `${bases[i]}_01_front.png`, ...frontPayloads[i] });
+  }
+  if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_back.png`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_02_back.png`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -2566,7 +2768,7 @@ async function exportPreviewPdfLegacyParallelAssembly({
 
 /**
  * Preview download: multi-page PDF only. JPG/PNG use `buildPreviewPagesJpegFiles` / `buildPreviewPagesPngFiles` etc.
- * Per page: data JPEG blob → jsPDF; on failure DOM capture; sequential by default (low memory).
+ * Per page: data JPEG blob → jsPDF; on failure DOM capture; pages rasterize in parallel (bounded concurrency), then assemble in order.
  */
 async function exportPreviewPdfFromPreview(
   pageElements,
@@ -2684,60 +2886,83 @@ async function exportPreviewPdfFromPreview(
   });
   const orientShort = pageHeightMm >= pageWidthMm ? "p" : "l";
 
+  const rasterConcurrency = pdfExportRasterConcurrency(
+    pageElements,
+    pageCount,
+    bulk,
+    spreadDataExportContext,
+  );
+  let pagesRasterDone = 0;
+  const pageImages = await mapWithConcurrency(
+    pageElements,
+    rasterConcurrency,
+    async (element, i) => {
+      if (abortFn()) throw new ExportCancelledError();
+      const bi = Number(element?.dataset?.batchIndex);
+      const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
+      const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
+      const pageCards =
+        Number.isFinite(start) && cards?.length
+          ? cards.slice(start, start + cardsPerPage)
+          : [];
+
+      let imageForPdf = null;
+      const dataOk =
+        USE_DATA_EXPORT_RENDERER_PRIMARY &&
+        layout &&
+        pageCards.length > 0 &&
+        canRenderSpreadPageDataOnly(pageCards, side);
+
+      if (dataOk) {
+        try {
+          const blob = await renderSpreadPageToJpegBlob(
+            pageCards,
+            side,
+            layout,
+            pageBackgroundColor,
+            {
+              bulk,
+              megaBulkPage,
+              jpegQuality: pdfEmbedJpegQuality,
+            },
+          );
+          imageForPdf = await blobToDataUrl(blob);
+        } catch (e) {
+          console.warn(
+            "[export] PDF data render failed for page, trying DOM capture.",
+            e,
+          );
+        }
+      }
+
+      if (!imageForPdf) {
+        try {
+          imageForPdf = await html2canvasForExport(
+            element,
+            pageBackgroundColor,
+            captureOpts,
+          );
+        } catch (e2) {
+          throw new Error(
+            `Could not build PDF page ${i + 1} of ${pageCount}. Wait for the preview to finish loading, then try again.`,
+          );
+        }
+      }
+
+      pagesRasterDone += 1;
+      emitProgress({
+        label: "Creating PDF…",
+        current: pagesRasterDone,
+        total: pageCount,
+      });
+      return imageForPdf;
+    },
+    abortFn,
+  );
+
   for (let i = 0; i < pageCount; i++) {
     if (abortFn()) throw new ExportCancelledError();
-    const element = pageElements[i];
-    const bi = Number(element?.dataset?.batchIndex);
-    const side = element?.dataset?.spreadSide === "back" ? "back" : "front";
-    const start = Number.isFinite(bi) ? bi * cardsPerPage : NaN;
-    const pageCards =
-      Number.isFinite(start) && cards?.length
-        ? cards.slice(start, start + cardsPerPage)
-        : [];
-
-    let imageForPdf = null;
-    const dataOk =
-      USE_DATA_EXPORT_RENDERER_PRIMARY &&
-      layout &&
-      pageCards.length > 0 &&
-      canRenderSpreadPageDataOnly(pageCards, side);
-
-    if (dataOk) {
-      try {
-        const blob = await renderSpreadPageToJpegBlob(
-          pageCards,
-          side,
-          layout,
-          pageBackgroundColor,
-          {
-            bulk,
-            megaBulkPage,
-            jpegQuality: pdfEmbedJpegQuality,
-          },
-        );
-        imageForPdf = await blobToDataUrl(blob);
-      } catch (e) {
-        console.warn(
-          "[export] PDF data render failed for page, trying DOM capture.",
-          e,
-        );
-      }
-    }
-
-    if (!imageForPdf) {
-      try {
-        imageForPdf = await html2canvasForExport(
-          element,
-          pageBackgroundColor,
-          captureOpts,
-        );
-      } catch (e2) {
-        throw new Error(
-          `Could not build PDF page ${i + 1} of ${pageCount}. Wait for the preview to finish loading, then try again.`,
-        );
-      }
-    }
-
+    const imageForPdf = pageImages[i];
     if (i > 0) pdf.addPage([pageWidthMm, pageHeightMm], orientShort);
     pdf.addImage(
       imageForPdf,
@@ -2749,13 +2974,6 @@ async function exportPreviewPdfFromPreview(
       undefined,
       "FAST",
     );
-    imageForPdf = null;
-
-    emitProgress({
-      label: "Creating PDF…",
-      current: i + 1,
-      total: pageCount,
-    });
   }
 
   if (
@@ -2856,14 +3074,14 @@ export default function SavedIdCardsList({
   const [previewGapUnit, setPreviewGapUnit] = useState("mm"); // 'mm' | 'cm' | 'px' | 'inch'
 
   const [previewGapHorizontalMm, setPreviewGapHorizontalMm] =
-    useState(PRINT_GAP_MM);
+    useState(DEFAULT_PREVIEW_GRID_GAP_MM);
   const [previewGapVerticalMm, setPreviewGapVerticalMm] =
-    useState(PRINT_GAP_MM);
+    useState(DEFAULT_PREVIEW_GRID_GAP_MM);
   const [previewGapHorizontalInput, setPreviewGapHorizontalInput] = useState(
-    String(mmToUnit(PRINT_GAP_MM, previewGapUnit)),
+    String(mmToUnit(DEFAULT_PREVIEW_GRID_GAP_MM, previewGapUnit)),
   );
   const [previewGapVerticalInput, setPreviewGapVerticalInput] = useState(
-    String(mmToUnit(PRINT_GAP_MM, previewGapUnit)),
+    String(mmToUnit(DEFAULT_PREVIEW_GRID_GAP_MM, previewGapUnit)),
   );
   const [isEditingPreviewGapHorizontal, setIsEditingPreviewGapHorizontal] =
     useState(false);
@@ -2990,7 +3208,7 @@ export default function SavedIdCardsList({
       previewGapHorizontalCommitTimeoutRef.current = window.setTimeout(() => {
         const nextMm = clampPreviewGapMm(
           convertToMm(parsed, previewGapUnit),
-          PRINT_GAP_MM,
+          DEFAULT_PREVIEW_GRID_GAP_MM,
         );
         setPreviewGapHorizontalMm(nextMm);
         previewGapHorizontalCommitTimeoutRef.current = null;
@@ -3010,7 +3228,7 @@ export default function SavedIdCardsList({
       previewGapVerticalCommitTimeoutRef.current = window.setTimeout(() => {
         const nextMm = clampPreviewGapMm(
           convertToMm(parsed, previewGapUnit),
-          PRINT_GAP_MM,
+          DEFAULT_PREVIEW_GRID_GAP_MM,
         );
         setPreviewGapVerticalMm(nextMm);
         previewGapVerticalCommitTimeoutRef.current = null;
@@ -3049,6 +3267,11 @@ export default function SavedIdCardsList({
   const [selectedClass, setSelectedClass] = useState(null);
   /** GET /api/photographer/schools/:schoolId/students — full school roster */
   const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
+  /** Full inline photos for Preview/Print only (list rows use memory-safe payloads). */
+  const [bulkPhotoDetailPayload, setBulkPhotoDetailPayload] = useState(null);
+  /** idle → loading (fetching full photos) → ready | failed — gates preview cards until URLs exist. */
+  const [bulkPhotoHydrationStatus, setBulkPhotoHydrationStatus] =
+    useState("idle");
   const [viewTemplateEditProbe, setViewTemplateEditProbe] = useState({
     done: false,
     show: false,
@@ -3083,12 +3306,20 @@ export default function SavedIdCardsList({
             admissionNo: cleanData.admissionNo || "",
             rollNo: cleanData.rollNo || "",
             fatherName: cleanData.fatherName || "",
+            motherName: cleanData.motherName || "",
             dob: cleanData.dob || cleanData.dateOfBirth || "",
             mobile: cleanData.mobile || cleanData.phone || "",
+            email: cleanData.email || "",
             gender: cleanData.gender || "",
             bloodGroup: cleanData.bloodGroup || "",
             photoNo: cleanData.photoNo || "",
-            extraFields: cleanData.extraFields || {}
+            uniqueCode: cleanData.uniqueCode || "",
+            house: cleanData.house || "",
+            marking: cleanData.marking || "",
+            extraFields:
+              cleanData.extraFields && typeof cleanData.extraFields === "object"
+                ? cleanData.extraFields
+                : {},
           };
           if (Object.prototype.hasOwnProperty.call(cleanData, "address")) {
             onlinePayload.address = cleanData.address || "";
@@ -3198,7 +3429,7 @@ export default function SavedIdCardsList({
     setViewTemplateEditProbe({ done: false, show: false });
     Promise.all([
       activeApi.getAssignedSchools(),
-      activeApi.getStudentsBySchool(schoolId),
+      activeApi.getStudentsBySchool(schoolId, { retainPhotos: false }),
       activeApi.getClassesBySchool(schoolId).catch(() => ({ classes: [] })),
     ])
       .then(async ([schoolsRes, studentsRes, classesRes]) => {
@@ -3210,6 +3441,7 @@ export default function SavedIdCardsList({
             const byClass = await activeApi.getStudentsBySchoolAndClass(
               schoolId,
               classes[0]._id,
+              { retainPhotos: false },
             );
             if (
               !cancelled &&
@@ -3268,9 +3500,15 @@ export default function SavedIdCardsList({
       .catch(() => { });
     const fetchTemplateStatus = async () => {
       if (typeof activeApi.getTemplatesStatus === "function") {
-        return activeApi.getTemplatesStatus(schoolId, classId);
+        return activeApi.getTemplatesStatus(schoolId, classId, {
+          retainPhotos: false,
+        });
       }
-      const data = await activeApi.getStudentsBySchoolAndClass(schoolId, classId);
+      const data = await activeApi.getStudentsBySchoolAndClass(
+        schoolId,
+        classId,
+        { retainPhotos: false },
+      );
       const students = data?.students ?? [];
       const withTemplates = students.filter((s) =>
         studentHasRenderableSavedCard(s, data),
@@ -3319,7 +3557,7 @@ export default function SavedIdCardsList({
     });
     Promise.all([
       activeApi.getAssignedSchools(),
-      activeApi.getStudentsBySchool(schoolId),
+      activeApi.getStudentsBySchool(schoolId, { retainPhotos: false }),
     ])
       .then(([schoolsRes, studentsRes]) => {
         if (cancelled) return;
@@ -3377,7 +3615,10 @@ export default function SavedIdCardsList({
           availableHeight = Math.max(500, viewportHeight - headerHeight - buttonsHeight - margins);
         }
         
-        setSavedIdStudentListViewportHeight(Math.max(500, Math.floor(availableHeight)));
+        setSavedIdStudentListViewportHeight((prev) => {
+          const next = Math.max(500, Math.floor(availableHeight));
+          return prev === next ? prev : next;
+        });
       }
     };
     
@@ -3407,14 +3648,21 @@ export default function SavedIdCardsList({
     classId,
     isAllSchoolStudents,
     showStudentsView,
+    loadingStudents,
+    studentsForList.length,
   ]);
 
-  // Reset scroll position when students data changes to prevent stale virtualization
+  // Reset scroll when route or roster size changes. react-window v2 List uses `listRef` + scrollToRow (not ref + scrollToItem).
   useEffect(() => {
-    if (savedIdStudentListRef.current) {
-      savedIdStudentListRef.current.scrollToItem(0, "start");
+    const api = savedIdStudentListRef.current;
+    if (!api || typeof api.scrollToRow !== "function") return;
+    if (studentsForList.length === 0) return;
+    try {
+      api.scrollToRow({ index: 0, align: "start", behavior: "instant" });
+    } catch {
+      /* ignore — list may not be measured yet */
     }
-  }, [schoolId, classId, isAllSchoolStudents]);
+  }, [schoolId, classId, isAllSchoolStudents, studentsForList.length]);
 
   // Recalculate height on orientation change or major layout shifts
   useEffect(() => {
@@ -3426,7 +3674,10 @@ export default function SavedIdCardsList({
           const buttonsHeight = 120;
           const margins = 60;
           const availableHeight = Math.max(500, viewportHeight - headerHeight - buttonsHeight - margins);
-          setSavedIdStudentListViewportHeight(Math.floor(availableHeight));
+          setSavedIdStudentListViewportHeight((prev) => {
+            const next = Math.floor(availableHeight);
+            return prev === next ? prev : next;
+          });
         }
       }, 100);
     };
@@ -3435,26 +3686,125 @@ export default function SavedIdCardsList({
     return () => window.removeEventListener('orientationchange', handleOrientationChange);
   }, [showStudentsView]);
 
-  const studentsForPreviewPrint = React.useMemo(() => {
-    const filtered = isAllSchoolStudents
-      ? allSchoolStudentsRaw.filter((s) =>
+  /** Prefer bulk photo reload for preview/print; otherwise memory-safe list rows. */
+  const studentsRawForPreviewPipeline = React.useMemo(() => {
+    const match =
+      bulkPhotoDetailPayload &&
+      ((bulkPhotoDetailPayload.kind === "school" && isAllSchoolStudents) ||
+        (bulkPhotoDetailPayload.kind === "class" && !isAllSchoolStudents));
+    if (match) {
+      return bulkPhotoDetailPayload.data?.students ?? EMPTY_STUDENTS;
+    }
+    return isAllSchoolStudents ? allSchoolStudentsRaw : classStudentsRaw;
+  }, [
+    bulkPhotoDetailPayload,
+    isAllSchoolStudents,
+    allSchoolStudentsRaw,
+    classStudentsRaw,
+  ]);
+
+  /** Filter only on the list screen; sort is O(n log n) — defer until Preview/Print/export so large rosters don't jank. */
+  const studentsFilteredForPreviewPrint = React.useMemo(() => {
+    return isAllSchoolStudents
+      ? studentsRawForPreviewPipeline.filter((s) =>
           studentHasUploadedPhoto(s) &&
           studentHasRenderableSavedCard(s, schoolAllStudentsData, {
             allowRootTemplateFallback: false,
           }),
         )
-      : classStudentsRaw.filter((s) =>
+      : studentsRawForPreviewPipeline.filter((s) =>
           studentHasUploadedPhoto(s) &&
           studentHasRenderableSavedCard(s, templateStatus),
         );
-    return sortStudentsForPreviewPrint(filtered, classes);
   }, [
     isAllSchoolStudents,
-    allSchoolStudentsRaw,
-    classStudentsRaw,
+    studentsRawForPreviewPipeline,
     schoolAllStudentsData,
     templateStatus,
+  ]);
+
+  const needPreviewPrintSortedOrder =
+    showPreviewView || showPrintView || pendingExportFormat != null;
+
+  const studentsForPreviewPrint = React.useMemo(() => {
+    const filtered = studentsFilteredForPreviewPrint;
+    if (filtered.length <= 1) return filtered;
+    if (!needPreviewPrintSortedOrder) return filtered;
+    return sortStudentsForPreviewPrint(filtered, classes);
+  }, [
+    studentsFilteredForPreviewPrint,
+    needPreviewPrintSortedOrder,
     classes,
+  ]);
+
+  /** Stripped list rows have hasPhoto but empty photoUrl — must finish bulk fetch before building preview cards. */
+  const previewNeedsBulkPhotoData = React.useMemo(() => {
+    if (!needPreviewPrintSortedOrder) return false;
+    return studentsForPreviewPrint.some(
+      (s) =>
+        studentHasUploadedPhoto(s) &&
+        (!s.photoUrl || !String(s.photoUrl).trim()),
+    );
+  }, [needPreviewPrintSortedOrder, studentsForPreviewPrint]);
+
+  useEffect(() => {
+    if (!showPreviewView && !showPrintView) {
+      setBulkPhotoDetailPayload(null);
+      setBulkPhotoHydrationStatus("idle");
+      return;
+    }
+    if (!schoolId || studentsForList.length === 0) return;
+
+    if (!previewNeedsBulkPhotoData) {
+      setBulkPhotoHydrationStatus("ready");
+      return;
+    }
+
+    let cancelled = false;
+    setBulkPhotoHydrationStatus("loading");
+    (async () => {
+      try {
+        if (isAllSchoolStudents) {
+          const data = await activeApi.getStudentsBySchool(schoolId, {
+            retainPhotos: true,
+          });
+          if (!cancelled) {
+            setBulkPhotoDetailPayload({ kind: "school", data });
+            setBulkPhotoHydrationStatus("ready");
+          }
+        } else if (classId) {
+          const data = await activeApi.getStudentsBySchoolAndClass(
+            schoolId,
+            classId,
+            { retainPhotos: true },
+          );
+          if (!cancelled) {
+            setBulkPhotoDetailPayload({ kind: "class", data });
+            setBulkPhotoHydrationStatus("ready");
+          }
+        } else {
+          if (!cancelled) setBulkPhotoHydrationStatus("failed");
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setBulkPhotoDetailPayload(null);
+          setBulkPhotoHydrationStatus("failed");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showPreviewView,
+    showPrintView,
+    schoolId,
+    classId,
+    isAllSchoolStudents,
+    activeApi,
+    studentsForList.length,
+    previewNeedsBulkPhotoData,
   ]);
 
   /** One shared canvas template object for all cards — avoids duplicating multi‑MB base64 per student. */
@@ -3547,6 +3897,7 @@ export default function SavedIdCardsList({
       templateId,
       uploadedTemplate: isApiTemplateRenderable ? uploadedTemplateForCard : null,
       studentImage: fullPhotoUrl(student.photoUrl),
+      ...(student.colorCodeImageUrl ? { colorCodeImage: fullPhotoUrl(student.colorCodeImageUrl) } : {}),
       className: resolveClassNameForIdCard(student),
       schoolName:
         student.school?.schoolName ||
@@ -3582,6 +3933,61 @@ export default function SavedIdCardsList({
     ],
   );
 
+  const requestOpenCardPreview = React.useCallback(
+    async (student) => {
+      let st = student;
+      const id = student?._id || student?.id;
+      const needsHydrate =
+        studentHasUploadedPhoto(student) &&
+        (!student.photoUrl || !String(student.photoUrl).trim());
+      if (needsHydrate && id) {
+        const pool = bulkPhotoDetailPayload?.data?.students;
+        if (Array.isArray(pool)) {
+          const hit = pool.find((x) => (x._id || x.id) === id);
+          if (
+            hit &&
+            typeof hit.photoUrl === "string" &&
+            hit.photoUrl.trim() !== ""
+          ) {
+            st = hit;
+          }
+        }
+        if (!st.photoUrl || !String(st.photoUrl).trim()) {
+          try {
+            const classIdStr =
+              typeof student.classId === "object" && student.classId != null
+                ? student.classId._id || student.classId.id
+                : student.classId;
+            if (isOnlineMode) {
+              if (typeof onlineApi.getStudentRecordForPreview === "function") {
+                const row = await onlineApi.getStudentRecordForPreview(
+                  id,
+                  schoolId,
+                  classIdStr,
+                );
+                if (row) st = row;
+              }
+            } else if (
+              typeof offlineApi.getStudentRecordForPreview === "function"
+            ) {
+              const row = await offlineApi.getStudentRecordForPreview(id);
+              if (row) st = row;
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      setSingleCardPreview(studentToCard(st));
+    },
+    [
+      bulkPhotoDetailPayload,
+      isOnlineMode,
+      schoolId,
+      studentToCard,
+    ],
+  );
+
   const savedIdStudentListItemData = React.useMemo(
     () => ({
       students: studentsForList,
@@ -3591,10 +3997,9 @@ export default function SavedIdCardsList({
       templateStatus,
       isAllSchoolStudents,
       isViewTemplateFlow,
-      isOnlineMode,
       getTemplateName,
       formatStudentClassForIdCard,
-      setSingleCardPreview,
+      requestOpenCardPreview,
       setEditStudentData,
       formatToDDMMYYYYDot,
     }),
@@ -3605,10 +4010,10 @@ export default function SavedIdCardsList({
       templateStatus,
       isAllSchoolStudents,
       isViewTemplateFlow,
-      isOnlineMode,
       getTemplateName,
+      requestOpenCardPreview,
       // Stable functions don't need to be in dependencies:
-      // formatStudentClassForIdCard, setSingleCardPreview, setEditStudentData, formatToDDMMYYYYDot
+      // formatStudentClassForIdCard, setEditStudentData, formatToDDMMYYYYDot
     ],
   );
 
@@ -3625,37 +4030,64 @@ export default function SavedIdCardsList({
   /** Building thousands of card objects on the main list screen freezes the UI; build only for preview/print. */
   const needCardsForPrintLayout = showPreviewView || showPrintView;
   const [cardsToPrint, setCardsToPrint] = useState([]);
+  const previewWaitingForBulkPhotos =
+    needCardsForPrintLayout &&
+    previewNeedsBulkPhotoData &&
+    (bulkPhotoHydrationStatus === "idle" ||
+      bulkPhotoHydrationStatus === "loading");
+
   useEffect(() => {
     if (!needCardsForPrintLayout) {
       setCardsToPrint([]);
       return;
     }
     const students = studentsForPreviewPrint;
-    let cancelled = false;
     if (students.length === 0) {
       setCardsToPrint([]);
       return;
     }
-    const firstEnd = Math.min(PREVIEW_CARDS_CHUNK_SIZE, students.length);
-    const firstChunk = students
-      .slice(0, firstEnd)
-      .map((s) => studentToCard(s));
-    setCardsToPrint(firstChunk);
-    let index = firstEnd;
-    const pump = () => {
-      if (cancelled) return;
-      const end = Math.min(index + PREVIEW_CARDS_CHUNK_SIZE, students.length);
-      const slice = students.slice(index, end);
-      const chunk = slice.map((s) => studentToCard(s));
-      index = end;
-      setCardsToPrint((prev) => [...prev, ...chunk]);
-      if (index < students.length) requestAnimationFrame(pump);
+    if (previewWaitingForBulkPhotos) {
+      setCardsToPrint([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const preloadChunkCards = (cards) =>
+      Promise.all(cards.map((c) => preloadCardVisualAssets(c)));
+
+    const run = async () => {
+      const buildChunk = (slice) => slice.map((s) => studentToCard(s));
+
+      const pushChunk = async (start, end, isFirst) => {
+        const slice = students.slice(start, end);
+        const chunk = buildChunk(slice);
+        await preloadChunkCards(chunk);
+        if (cancelled) return;
+        if (isFirst) setCardsToPrint(chunk);
+        else setCardsToPrint((prev) => [...prev, ...chunk]);
+      };
+
+      const firstEnd = Math.min(PREVIEW_CARDS_CHUNK_SIZE, students.length);
+      await pushChunk(0, firstEnd, true);
+      let index = firstEnd;
+      while (index < students.length) {
+        const end = Math.min(index + PREVIEW_CARDS_CHUNK_SIZE, students.length);
+        await pushChunk(index, end, false);
+        index = end;
+      }
     };
-    if (index < students.length) requestAnimationFrame(pump);
+
+    void run();
     return () => {
       cancelled = true;
     };
-  }, [needCardsForPrintLayout, studentsForPreviewPrint, studentToCard]);
+  }, [
+    needCardsForPrintLayout,
+    studentsForPreviewPrint,
+    studentToCard,
+    previewWaitingForBulkPhotos,
+  ]);
   const cardsToPrintRef = useRef(cardsToPrint);
   cardsToPrintRef.current = cardsToPrint;
   const hasFabricCards = cardsToPrint.some((c) =>
@@ -3808,7 +4240,8 @@ export default function SavedIdCardsList({
   const previewPrintCardsStillLoading =
     needCardsForPrintLayout &&
     studentsForPreviewPrint.length > 0 &&
-    cardsToPrint.length < studentsForPreviewPrint.length;
+    (previewWaitingForBulkPhotos ||
+      cardsToPrint.length < studentsForPreviewPrint.length);
 
   useEffect(() => {
     if (!showPreviewView) return;
@@ -4096,7 +4529,7 @@ export default function SavedIdCardsList({
             }
             const nextMm = clampPreviewGapMm(
               convertToMm(parsed, previewGapUnit),
-              PRINT_GAP_MM,
+              DEFAULT_PREVIEW_GRID_GAP_MM,
             );
             setPreviewGapHorizontalMm(nextMm);
             setPreviewGapHorizontalInput(String(mmToUnit(nextMm, previewGapUnit)));
@@ -4143,7 +4576,7 @@ export default function SavedIdCardsList({
             }
             const nextMm = clampPreviewGapMm(
               convertToMm(parsed, previewGapUnit),
-              PRINT_GAP_MM,
+              DEFAULT_PREVIEW_GRID_GAP_MM,
             );
             setPreviewGapVerticalMm(nextMm);
             setPreviewGapVerticalInput(String(mmToUnit(nextMm, previewGapUnit)));
@@ -4822,6 +5255,7 @@ export default function SavedIdCardsList({
     const renderDot = (pos, style) => (
       <div
         key={pos}
+        className="idcard-sheet-crop-mark"
         style={{
           position: "absolute",
           width: "2mm",
@@ -4863,6 +5297,7 @@ export default function SavedIdCardsList({
         className: card.className,
         schoolName: card.schoolName,
         studentImage: card.studentImage,
+        ...(card.colorCodeImage ? { colorCodeImage: card.colorCodeImage } : {}),
         ...(card.address != null &&
           card.address !== "" && { address: card.address }),
       };
@@ -4883,6 +5318,7 @@ export default function SavedIdCardsList({
     }
     const data = {
       studentImage: card.studentImage,
+      ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
       name: card.name,
       studentId: card.studentId,
       className: card.className,
@@ -4937,6 +5373,7 @@ export default function SavedIdCardsList({
     const useCanvasBack = Array.isArray(backEls) && backEls.length > 0;
     const backData = {
       studentImage: card.studentImage,
+      ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
       name: card.name,
       studentId: card.studentId,
       className: card.className,
@@ -5025,6 +5462,7 @@ export default function SavedIdCardsList({
                 Array.isArray(backEls) && backEls.length > 0 && uploadedBack;
               const backData = {
                 studentImage: card.studentImage,
+                ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
                 name: card.name,
                 studentId: card.studentId,
                 className: card.className,
@@ -5181,7 +5619,8 @@ export default function SavedIdCardsList({
               type="button"
               className="btn btn-primary"
               onClick={() =>
-                navigate(`/view-template/wizard/students/${schoolId}/all`, {
+                // Skip wizard "Students & photos" — go straight to template selection.
+                navigate(`/view-template/wizard/template/${schoolId}/all`, {
                   state: { preferredOfflineMode: viewMode !== "online" },
                 })
               }
@@ -5194,7 +5633,7 @@ export default function SavedIdCardsList({
                 type="button"
                 className="btn btn-secondary"
                 onClick={() =>
-                  navigate(`/view-template/wizard/students/${schoolId}/all`, {
+                  navigate(`/view-template/wizard/template/${schoolId}/all`, {
                     state: {
                       openEditTemplate: true,
                       preferredOfflineMode: viewMode !== "online",
@@ -5373,7 +5812,7 @@ export default function SavedIdCardsList({
         >
           <List
             key={`${schoolId}-${classId}-${isAllSchoolStudents}`}
-            ref={savedIdStudentListRef}
+            listRef={savedIdStudentListRef}
             rowCount={studentsForList.length}
             rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
             rowComponent={VirtualizedSavedIdStudentRow}
@@ -5527,9 +5966,11 @@ export default function SavedIdCardsList({
               <h3 style={{ margin: 0 }}>
                 ID Cards Preview – {pageSizeSummary}{" "}
                 {spreadPagesCount > 0
-                  ? `(${spreadPagesCount} page${spreadPagesCount !== 1 ? "s" : ""}; each batch: fronts, then backs only when the template has a back image)${previewPrintCardsStillLoading ? " — loading more cards…" : ""}${previewPagesStillRendering ? ` — rendering pages ${effectiveVisiblePreviewSpreadPagesCount}/${spreadPagesCount}…` : ""}`
+                  ? `(${spreadPagesCount} page${spreadPagesCount !== 1 ? "s" : ""})${previewWaitingForBulkPhotos ? " — loading photos…" : ""}${previewPrintCardsStillLoading && !previewWaitingForBulkPhotos ? " — loading more cards…" : ""}${previewPagesStillRendering ? ` — rendering pages ${effectiveVisiblePreviewSpreadPagesCount}/${spreadPagesCount}…` : ""}`
                   : previewPrintCardsStillLoading
-                    ? "(preparing cards…)"
+                    ? previewWaitingForBulkPhotos
+                      ? "(loading photos…)"
+                      : "(preparing cards…)"
                     : "(no pages)"}
               </h3>
               <div style={{ marginTop: 12 }}>
@@ -5745,8 +6186,8 @@ export default function SavedIdCardsList({
                     lineHeight: 1.45,
                   }}
                 >
-                  Choose how to save JPEGs: per-card front/back files, full
-                  preview pages, or both (same as class export).
+                  Choose how to save JPEGs: full preview pages, or per-card
+                  front/back files.
                 </p>
                 <div
                   style={{
@@ -5755,6 +6196,7 @@ export default function SavedIdCardsList({
                     gap: 10,
                   }}
                 >
+                  {/*
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -5766,6 +6208,18 @@ export default function SavedIdCardsList({
                   >
                     Both (per card + page-wise)
                   </button>
+                  */}
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={exporting || chargingDownloadPoints}
+                    onClick={() => {
+                      setSeeAllJpegDialogOpen(false);
+                      void prepareAndStartJpegExport("pages");
+                    }}
+                  >
+                    Page-wise (full pages)
+                  </button>
                   <button
                     type="button"
                     className="btn btn-secondary"
@@ -5776,17 +6230,6 @@ export default function SavedIdCardsList({
                     }}
                   >
                     Single images (per card)
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={exporting || chargingDownloadPoints}
-                    onClick={() => {
-                      setSeeAllJpegDialogOpen(false);
-                      void prepareAndStartJpegExport("pages");
-                    }}
-                  >
-                    Page-wise (full pages)
                   </button>
                   <button
                     type="button"
@@ -5908,14 +6351,30 @@ export default function SavedIdCardsList({
         <div
           className="single-card-preview-overlay"
           aria-hidden="true"
+          onClick={() => setEditStudentData(null)}
         >
           <div
             className="single-card-preview-content"
-            style={{ width: 440, maxWidth: "90vw", padding: 24, background: "#1a1a1a" }}
+            style={{
+              width: 520,
+              maxWidth: "92vw",
+              maxHeight: "90vh",
+              padding: 24,
+              background: "#1a1a1a",
+              display: "flex",
+              flexDirection: "column",
+            }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="single-card-preview-header" style={{ padding: "0 0 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-              <h3 style={{ margin: 0 }}>Edit Student</h3>
+            <div
+              className="single-card-preview-header"
+              style={{
+                padding: "0 0 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.1)",
+                flexShrink: 0,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Edit student</h3>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -5924,33 +6383,287 @@ export default function SavedIdCardsList({
                 Close
               </button>
             </div>
-            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
-               <div>
-                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Student Name</label>
-                  <input type="text" className="form-control" value={editStudentData.studentName || ""} onChange={e => setEditStudentData({...editStudentData, studentName: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
-               </div>
-               <div>
-                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Roll No / Admission No</label>
-                  <input type="text" className="form-control" value={editStudentData.rollNo || editStudentData.admissionNo || ""} onChange={e => setEditStudentData({...editStudentData, rollNo: e.target.value, admissionNo: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
-               </div>
-
-               <div>
-                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Father's Name</label>
-                  <input type="text" className="form-control" value={editStudentData.fatherName || ""} onChange={e => setEditStudentData({...editStudentData, fatherName: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
-               </div>
-               <div>
-                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Mobile/Phone</label>
-                  <input type="text" className="form-control" value={editStudentData.phone || editStudentData.mobile || ""} onChange={e => setEditStudentData({...editStudentData, phone: e.target.value, mobile: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
-               </div>
-               <div>
-                  <label style={{ display: "block", marginBottom: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.8)" }}>Date of Birth</label>
-                  <input type="text" className="form-control" value={editStudentData.dateOfBirth || editStudentData.dob || ""} onChange={e => setEditStudentData({...editStudentData, dateOfBirth: e.target.value, dob: e.target.value})} style={{ width: "100%", padding: "10px", border: "1px solid #333", borderRadius: 6, background: "#2a2a2a", color: "white" }} />
-               </div>
-               <div style={{ marginTop: 8 }}>
-                 <button type="submit" className="btn btn-primary" disabled={savingEdit} style={{ width: "100%", padding: "12px" }}>
-                    {savingEdit ? "Saving..." : "Save Changes"}
-                 </button>
-               </div>
+            <form
+              onSubmit={handleSaveEdit}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+                marginTop: 16,
+                overflowY: "auto",
+                minHeight: 0,
+                flex: 1,
+                paddingRight: 4,
+              }}
+            >
+              {(() => {
+                const inp = {
+                  width: "100%",
+                  padding: "10px",
+                  border: "1px solid #333",
+                  borderRadius: 6,
+                  background: "#2a2a2a",
+                  color: "white",
+                  boxSizing: "border-box",
+                };
+                const lab = {
+                  display: "block",
+                  marginBottom: 6,
+                  fontSize: "0.9rem",
+                  color: "rgba(255,255,255,0.8)",
+                };
+                const classLabel =
+                  formatStudentClassForIdCard(editStudentData.class) ||
+                  formatStudentClassForIdCard(editStudentData.classId) ||
+                  [
+                    editStudentData.className,
+                    editStudentData.section,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") ||
+                  "—";
+                return (
+                  <>
+                    <div>
+                      <label style={lab}>Class</label>
+                      <div
+                        style={{
+                          ...inp,
+                          opacity: 0.85,
+                          cursor: "default",
+                        }}
+                      >
+                        {classLabel}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={lab}>Student name</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={editStudentData.studentName || ""}
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            studentName: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>Admission no.</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.admissionNo || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              admissionNo: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>Roll no.</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.rollNo || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              rollNo: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>{"Father's name"}</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.fatherName || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              fatherName: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>{"Mother's name"}</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.motherName || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              motherName: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>Gender</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.gender || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              gender: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>Blood group</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.bloodGroup || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              bloodGroup: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={lab}>Email</label>
+                      <input
+                        type="email"
+                        className="form-control"
+                        value={editStudentData.email || ""}
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            email: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Mobile / phone</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={
+                          editStudentData.phone ||
+                          editStudentData.mobile ||
+                          ""
+                        }
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            phone: e.target.value,
+                            mobile: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Address</label>
+                      <textarea
+                        className="form-control"
+                        rows={3}
+                        value={editStudentData.address || ""}
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            address: e.target.value,
+                          })
+                        }
+                        style={{ ...inp, resize: "vertical", minHeight: 72 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Date of birth</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="DD.MM.YYYY"
+                        value={
+                          editStudentData.dateOfBirth ||
+                          editStudentData.dob ||
+                          ""
+                        }
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            dateOfBirth: e.target.value,
+                            dob: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Photo no.</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={editStudentData.photoNo || ""}
+                        onChange={(e) =>
+                          setEditStudentData({
+                            ...editStudentData,
+                            photoNo: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                  </>
+                );
+              })()}
+              <div style={{ marginTop: 8, flexShrink: 0 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingEdit}
+                  style={{ width: "100%", padding: "12px" }}
+                >
+                  {savingEdit ? "Saving…" : "Save changes"}
+                </button>
+              </div>
             </form>
           </div>
         </div>

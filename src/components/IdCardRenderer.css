@@ -1477,8 +1477,16 @@
 /* Canvas layout (saved from Canva-style editor) – elements positioned by % */
 .idcard-image-template-canvas .idcard-canvas-el {
   position: absolute;
-  z-index: 1;
   box-sizing: border-box;
+}
+
+/* Text above photo when boxes overlap (same z-index would follow DOM order only). */
+.idcard-image-template-canvas .idcard-canvas-photo {
+  z-index: 1;
+}
+
+.idcard-image-template-canvas .idcard-canvas-text {
+  z-index: 2;
 }
 
 .idcard-image-template-canvas .idcard-canvas-photo {
@@ -1495,6 +1503,10 @@
   object-fit: cover;
   object-position: center;
   display: block;
+}
+
+.idcard-image-template-canvas .idcard-canvas-photo.idcard-canvas-colorcode img {
+  object-fit: contain;
 }
 
 .idcard-image-template-canvas .idcard-canvas-text {

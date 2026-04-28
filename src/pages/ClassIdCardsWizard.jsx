@@ -19,6 +19,7 @@ import * as onlineApi from '../api/network_backend';
 import { API_BASE_URL } from '../api/config';
 import {
   getProjectBulkPreviewUrl,
+  getProjectBulkColorCodePreviewUrl,
   subscribeProjectBulkPhotoPreview,
 } from '../utils/projectBulkPhotoPreview';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
@@ -357,6 +358,8 @@ function mapApiStudent(s) {
     'schoolId',
     'classId',
     'photoUrl',
+    'colorCodeImageUrl',
+    'colorCodeKey',
     'extraFields',
     'createdAt',
     'updatedAt',
@@ -408,6 +411,10 @@ function mapApiStudent(s) {
     dimension: s?.schoolId?.dimension,
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
+    ...(s.colorCodeImageUrl ? { colorCodeImageUrl: fullPhotoUrl(s.colorCodeImageUrl) } : {}),
+    ...(s.colorCodeKey != null && String(s.colorCodeKey).trim() !== ''
+      ? { colorCodeKey: String(s.colorCodeKey).trim().toLowerCase() }
+      : {}),
     ...(s.excelRowOrder != null ? { excelRowOrder: Number(s.excelRowOrder) } : {}),
   };
 }
@@ -673,6 +680,18 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     return classList.find((c) => c.id === effectiveClassId) || apiClass;
   }, [classList, effectiveClassId, apiClass, apiDataLoaded, classIdFromUrl]);
 
+  /** View Template "Create template" opens Select template first (skips Students step) — back goes to class list. */
+  const templateSelectBackTo = useMemo(() => {
+    if (basePath === '/view-template/wizard') {
+      const sid = effectiveSchoolId || schoolIdFromUrl;
+      if (sid) return `/view-template/school/${sid}`;
+    }
+    if (effectiveSchoolId != null && effectiveClassId != null) {
+      return `${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`;
+    }
+    return basePath;
+  }, [basePath, effectiveSchoolId, effectiveClassId, schoolIdFromUrl]);
+
   const students = useMemo(() => {
     let list = [];
     if (apiDataLoaded && (effectiveClassId === classIdFromUrl || effectiveClassId === cls?.id)) {
@@ -682,6 +701,36 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     }
     return sortStudentsByExcelRowOrder(list);
   }, [cls, getStudents, apiStudents, apiDataLoaded, effectiveClassId, classIdFromUrl]);
+
+  const uploadedReadyForArrange = useMemo(
+    () =>
+      Boolean(
+        uploadedTemplate?.frontImage &&
+          uploadedTemplate?.elements &&
+          (templateUploadMode === 'single' || uploadedTemplate?.backImage),
+      ),
+    [uploadedTemplate?.frontImage, uploadedTemplate?.elements, uploadedTemplate?.backImage, templateUploadMode],
+  );
+
+  const showArrangeUploaded =
+    step === STEPS.SELECT_TEMPLATE && Boolean(cls) && arrangingUploaded && uploadedReadyForArrange;
+
+  useEffect(() => {
+    if (!showArrangeUploaded) return undefined;
+    if (!effectiveSchoolId || !effectiveClassId || effectiveClassId === 'all') return undefined;
+    if (!offlineMode) return undefined;
+    let cancelled = false;
+    offlineApi
+      .getStudentsBySchoolAndClass(effectiveSchoolId, effectiveClassId)
+      .then((res) => {
+        if (cancelled) return;
+        setApiStudents((res.students ?? []).map(mapApiStudent));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [showArrangeUploaded, effectiveSchoolId, effectiveClassId, offlineMode]);
 
   // When school/class changes, default selection = all students in that class
   useEffect(() => {
@@ -809,6 +858,21 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     }
     return student.photoUrl ?? null;
   }, [bulkSchoolId, bulkPreviewEpoch, studentImages]);
+
+  const getColorCodeImageForStudent = useCallback((student) => {
+    if (!student) return null;
+    if (bulkSchoolId) {
+      const blobOrSaved = getProjectBulkColorCodePreviewUrl(bulkSchoolId, student.id);
+      if (blobOrSaved) return blobOrSaved;
+    }
+    if (student.colorCodeImageUrl) return student.colorCodeImageUrl;
+    const ex = student.extraFields;
+    if (ex && typeof ex === 'object') {
+      const v = ex.colorCodeImageUrl ?? ex.colorCodeImage;
+      if (v) return typeof v === 'string' ? v : null;
+    }
+    return null;
+  }, [bulkSchoolId, bulkPreviewEpoch]);
 
   const selectedStudentIdSet = useMemo(
     () => new Set(selectedStudentIds),
@@ -1172,8 +1236,13 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setArrangingUploaded(false);
     setSelectedTemplateId(null);
     if (backToStudents) {
-      setStep(STEPS.STUDENTS_IMAGES);
-      navigate(`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+      if (basePath === '/view-template/wizard') {
+        setStep(STEPS.SELECT_TEMPLATE);
+        navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+      } else {
+        setStep(STEPS.STUDENTS_IMAGES);
+        navigate(`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+      }
     }
   };
 
@@ -1460,13 +1529,21 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     );
   }
 
+  // Opening URL …/template/:schoolId/:classId (e.g. from View Template) loads API before cls exists — same as students step.
+  if (step === STEPS.SELECT_TEMPLATE && hasUrlIds && !hasStateData && !apiDataLoaded) {
+    return (
+      <>
+        <Header
+          title="Select template"
+          showBack
+          backTo={templateSelectBackTo}
+        />
+        <p className="text-muted">Loading…</p>
+      </>
+    );
+  }
+
   // Step 3: Select template – sub-view: Arrange uploaded template (drag/resize/font)
-  const uploadedReadyForArrange =
-    uploadedTemplate?.frontImage &&
-    uploadedTemplate?.elements &&
-    (templateUploadMode === 'single' || uploadedTemplate?.backImage);
-  const showArrangeUploaded =
-    step === STEPS.SELECT_TEMPLATE && cls && arrangingUploaded && uploadedReadyForArrange;
   if (showArrangeUploaded) {
     const previewStudent = students.find((s) => getImageForStudent(s)) || students[0];
     const previewStudentExtraFields = (() => {
@@ -1505,7 +1582,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         'house',
         'marking',
         'photoNo',
+        'colorCodeKey',
+        'colorCodeImageUrl',
         'status',
+        'hasTemplate',
+        'excelRowOrder',
         'uploadedVia',
         'photoUrl',
         'dimension',
@@ -1550,7 +1631,9 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           house: previewStudent.house || '',
           marking: previewStudent.marking || '',
           photoNo: previewStudent.photoNo || '',
-          status: previewStudent.status || '',
+          ...(previewStudent.colorCodeImageUrl
+            ? { colorCodeImageUrl: previewStudent.colorCodeImageUrl }
+            : {}),
           extraFields: previewStudentExtraFields,
         }
       : {
@@ -1610,6 +1693,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         ) : null}
         <IdCardCanvasEditor
           key={`class-idcards-arrange-${arrangeEditSide}-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(layoutDraftSubKey(uploadedTemplate) || 'draft')}`}
+          activeEditSide={arrangeEditSide}
           initialSelectedId={arrangeEditSide === 'front' ? arrangeSelectedIdFront : arrangeSelectedIdBack}
           onSelectedIdChange={(id) =>
             arrangeEditSide === 'front' ? setArrangeSelectedIdFront(id) : setArrangeSelectedIdBack(id)
@@ -1636,6 +1720,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           }
           onPurgeFieldFromOppositeSide={canEditBack ? handlePurgeFieldFromOppositeSide : undefined}
           studentImage={previewStudent ? getImageForStudent(previewStudent) : null}
+          colorCodeImage={previewStudent ? getColorCodeImageForStudent(previewStudent) : null}
           initialElements={activeInitialElements}
           initialData={initialData}
           onElementsChange={
@@ -1672,7 +1757,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         <Header
           title={`Select template – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
-          backTo={`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`}
+          backTo={templateSelectBackTo}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
           Choose one template or upload your own (PNG/JPG/JPEG). Pick whether your design is single-sided (front only) or both sides. Uploaded templates are saved at school level, so once created they can be reused across all classes.

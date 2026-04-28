@@ -3,16 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import Header from '../components/Header';
 import CreateSchoolForm from '../components/CreateSchoolForm';
-import { addPhotoFileToMap, studentPhotoMatchKey, compressImageForUpload } from '../utils/imageUpload';
+import {
+  addPhotoFileToMap,
+  studentPhotoMatchKey,
+  compressImageForUpload,
+  getStudentColorCodeBasename,
+  buildColorCodePngFileMap,
+} from '../utils/imageUpload';
 import {
   registerProjectBulkLocalPreviews,
+  registerProjectBulkLocalColorPreviews,
   setProjectBulkPreviewServerUrl,
+  setProjectBulkColorPreviewServerUrl,
 } from '../utils/projectBulkPhotoPreview';
 import {
   getDashboard as getOfflineDashboard,
   getAssignedSchools as getOfflineSchools,
   getStudentsBySchool,
   uploadStudentPhoto,
+  uploadStudentColorCodeImage,
   deletePhotographerSchool as deleteOfflineSchool,
 } from '../api/dashboard';
 
@@ -210,22 +219,49 @@ export default function Dashboard() {
     const combined = (studentsRes.students ?? []).map((student) => ({
       id: student._id,
       studentId: studentPhotoMatchKey(student),
+      colorCodeKey: getStudentColorCodeBasename(student),
     }));
     if (combined.length === 0) return;
-    const fileMap = {};
-    files.forEach((file) => {
-      addPhotoFileToMap(fileMap, file);
-    });
+
+    const reservedColorBasenames = new Set(
+      combined.map((s) => s.colorCodeKey).filter(Boolean),
+    );
+
+    const photoFileMap = {};
+    for (const file of files) {
+      const name = file?.name || '';
+      const baseQuick = (name.split(/[/\\]/).pop() || name).replace(/\.[^/.]+$/, '').trim().toLowerCase();
+      if (/\.png$/i.test(name) && reservedColorBasenames.has(baseQuick)) {
+        continue;
+      }
+      addPhotoFileToMap(photoFileMap, file);
+    }
+    const colorCodeFileMap = buildColorCodePngFileMap(files);
+
     const pairs = [];
     for (const student of combined) {
       const idKey = String(student.studentId ?? '').trim().toLowerCase();
-      const file = idKey ? fileMap[idKey] : null;
+      const file = idKey ? photoFileMap[idKey] : null;
       if (file) {
         pairs.push({ studentId: student.id, file });
       }
     }
-    if (pairs.length === 0) return;
-    registerProjectBulkLocalPreviews(schoolId, pairs);
+    const colorPairs = [];
+    for (const student of combined) {
+      const ck = student.colorCodeKey;
+      if (!ck) continue;
+      const cf = colorCodeFileMap[ck];
+      if (cf) {
+        colorPairs.push({ studentId: student.id, file: cf });
+      }
+    }
+    if (pairs.length === 0 && colorPairs.length === 0) return;
+    if (pairs.length > 0) {
+      registerProjectBulkLocalPreviews(schoolId, pairs);
+    }
+    if (colorPairs.length > 0) {
+      registerProjectBulkLocalColorPreviews(schoolId, colorPairs);
+    }
 
     void (async () => {
       for (const { studentId, file } of pairs) {
@@ -237,6 +273,16 @@ export default function Dashboard() {
           }
         } catch (err) {
           console.error('Create Project bulk photo upload failed', studentId, err);
+        }
+      }
+      for (const { studentId, file } of colorPairs) {
+        try {
+          const res = await uploadStudentColorCodeImage(studentId, file);
+          if (res?.colorCodeImageUrl) {
+            setProjectBulkColorPreviewServerUrl(schoolId, studentId, res.colorCodeImageUrl);
+          }
+        } catch (err) {
+          console.error('Create Project color code PNG upload failed', studentId, err);
         }
       }
     })();

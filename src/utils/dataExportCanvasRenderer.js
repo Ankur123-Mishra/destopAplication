@@ -25,9 +25,9 @@ const imageCache = new Map();
 
 /** Fast = bulk jobs; balanced = default; high = small batches (sharper, slower). */
 export const EXPORT_RENDER_PRESET = {
-  fast: { pixelScale: 1.65, jpegQuality: 0.82, pagePixelScale: 1.35 },
-  balanced: { pixelScale: 2, jpegQuality: 0.9, pagePixelScale: 1.65 },
-  high: { pixelScale: 2.5, jpegQuality: 0.94, pagePixelScale: 2 },
+  fast: { pixelScale: 2.1, jpegQuality: 0.88, pagePixelScale: 1.95 },
+  balanced: { pixelScale: 2.85, jpegQuality: 0.93, pagePixelScale: 2.65 },
+  high: { pixelScale: 3.75, jpegQuality: 0.97, pagePixelScale: 3.5 },
 };
 
 export function getCardExportPreset({ bulk, megaBulkPage } = {}) {
@@ -38,7 +38,7 @@ export function getCardExportPreset({ bulk, megaBulkPage } = {}) {
 
 export function getPageExportPreset({ bulk, megaBulkPage } = {}) {
   if (megaBulkPage) return EXPORT_RENDER_PRESET.fast;
-  if (bulk) return { ...EXPORT_RENDER_PRESET.balanced, pagePixelScale: 1.5 };
+  if (bulk) return { ...EXPORT_RENDER_PRESET.balanced, pagePixelScale: 2.75 };
   return EXPORT_RENDER_PRESET.high;
 }
 
@@ -156,6 +156,7 @@ function formatDateDMY(input) {
 function buildRendererData(card) {
   return {
     studentImage: card.studentImage,
+    ...(card.colorCodeImage ? { colorCodeImage: card.colorCodeImage } : {}),
     name: card.name,
     studentId: card.studentId,
     className: card.className,
@@ -387,8 +388,20 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
   ctx.fillRect(0, 0, wPx, hPx);
   drawImageSource(ctx, bg, 0, 0, wPx, hPx);
 
-  for (const el of tpl.elements) {
-    if (el.type === "photo" && data.studentImage) {
+  const paintOrder = (() => {
+    const portraits = [];
+    const badges = [];
+    const rest = [];
+    for (const el of tpl.elements) {
+      if (el?.type === "photo") portraits.push(el);
+      else if (el?.type === "colorCode") badges.push(el);
+      else rest.push(el);
+    }
+    return [...portraits, ...badges, ...rest];
+  })();
+
+  for (const el of paintOrder) {
+    if (el.type === "photo" && el.showOnTemplate !== false && data.studentImage) {
       try {
         const photo = await loadImageCached(data.studentImage);
         const px = (el.x / 100) * wPx;
@@ -399,7 +412,22 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
       } catch (_) {
         /* skip broken photo */
       }
-    } else if (el.type !== "photo") {
+    } else if (
+      el.type === "colorCode" &&
+      el.showOnTemplate !== false &&
+      data.colorCodeImage
+    ) {
+      try {
+        const badge = await loadImageCached(data.colorCodeImage);
+        const px = (el.x / 100) * wPx;
+        const py = (el.y / 100) * hPx;
+        const pw = (el.width / 100) * wPx;
+        const ph = (el.height / 100) * hPx;
+        drawImageSource(ctx, badge, px, py, pw, ph);
+      } catch (_) {
+        /* skip broken badge */
+      }
+    } else if (el.type !== "photo" && el.type !== "colorCode") {
       const resolved = el.dataField
         ? resolveCanvasDataFieldForExport(data, el.dataField)
         : null;
@@ -473,6 +501,105 @@ export function canRenderSpreadPageDataOnly(pageCards, side) {
   return true;
 }
 
+/** Match preview `getCardCropMarks`: 2mm black dots at sheet corners (per corner card). */
+const CROP_MARK_DIAMETER_MM = 2;
+
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} totalCards
+ * @param {"front"|"back"} side
+ * @param {number} cols
+ * @param {number} cwPx
+ * @param {number} chPx
+ * @param {number} gapHPx
+ * @param {number} gapVPx
+ * @param {number} startX
+ * @param {number} startY
+ * @param {number} mmToPx page mm → pixel scale (same as layout math in this file)
+ */
+function drawSpreadPageCropMarks(
+  ctx,
+  totalCards,
+  side,
+  cols,
+  cwPx,
+  chPx,
+  gapHPx,
+  gapVPx,
+  startX,
+  startY,
+  mmToPx,
+) {
+  if (!totalCards || cols < 1) return;
+  const R = Math.floor((totalCards - 1) / cols);
+  const firstRowFirst = 0;
+  const firstRowLast = Math.min(cols - 1, totalCards - 1);
+  const lastRowFirst = R * cols;
+  const lastRowLast = totalCards - 1;
+  const rPx = (CROP_MARK_DIAMETER_MM / 2) * mmToPx;
+
+  ctx.save();
+  ctx.fillStyle = "#000000";
+
+  for (let i = 0; i < totalCards; i += 1) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const ci = side === "back" ? cols - 1 - col : col;
+    const x = startX + ci * (cwPx + gapHPx);
+    const y = startY + row * (chPx + gapVPx);
+
+    const isTopLeft = i === firstRowFirst;
+    const isTopRight = i === firstRowLast;
+    const isBottomLeft = i === lastRowFirst;
+    const isBottomRight = i === lastRowLast;
+
+    if (side === "back") {
+      if (isTopLeft) {
+        ctx.beginPath();
+        ctx.arc(x + cwPx, y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isTopRight) {
+        ctx.beginPath();
+        ctx.arc(x, y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isBottomLeft) {
+        ctx.beginPath();
+        ctx.arc(x + cwPx, y + chPx, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isBottomRight) {
+        ctx.beginPath();
+        ctx.arc(x, y + chPx, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      if (isTopLeft) {
+        ctx.beginPath();
+        ctx.arc(x, y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isTopRight) {
+        ctx.beginPath();
+        ctx.arc(x + cwPx, y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isBottomLeft) {
+        ctx.beginPath();
+        ctx.arc(x, y + chPx, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isBottomRight) {
+        ctx.beginPath();
+        ctx.arc(x + cwPx, y + chPx, rPx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+}
+
 /**
  * One printable sheet: background + grid of card sides (matches preview layout).
  * @param {object} layout pageWidthMm, pageHeightMm, marginMm, gapHm, gapVm, cols, rows, cardWidthMm, cardHeightMm
@@ -503,6 +630,8 @@ export async function renderSpreadPageToCanvas(
   const cardPreset = getCardExportPreset({ bulk, megaBulkPage });
   const cardPixelScale =
     typeof optCardPs === "number" ? optCardPs : cardPreset.pixelScale;
+  /** Never render a card at lower internal resolution than the grid cell (avoids blurry upscaling). */
+  const cardRenderPixelScale = Math.max(cardPixelScale, pagePixelScale);
 
   const pageWPx = Math.max(
     2,
@@ -540,7 +669,7 @@ export async function renderSpreadPageToCanvas(
     ...restOpt,
     bulk,
     megaBulkPage,
-    pixelScale: cardPixelScale,
+    pixelScale: cardRenderPixelScale,
     quality: cardPreset.jpegQuality,
     mime: "image/jpeg",
   };
@@ -548,6 +677,9 @@ export async function renderSpreadPageToCanvas(
   const cardCanvases = await Promise.all(
     pageCards.map((c) => renderCardSideToCanvas(c, side, cardOpts)),
   );
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   for (let i = 0; i < pageCards.length; i++) {
     const col = i % cols;
@@ -558,6 +690,20 @@ export async function renderSpreadPageToCanvas(
     const cc = cardCanvases[i];
     drawImageSource(ctx, cc, x, y, cwPx, chPx);
   }
+
+  drawSpreadPageCropMarks(
+    ctx,
+    pageCards.length,
+    side,
+    cols,
+    cwPx,
+    chPx,
+    gapHPx,
+    gapVPx,
+    startX,
+    startY,
+    mmToPx,
+  );
 
   return canvas;
 }

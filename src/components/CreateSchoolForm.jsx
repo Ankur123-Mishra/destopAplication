@@ -354,7 +354,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
               <>
                 <label className="input-label">Project folder *</label>
                 <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
-                  Select the project folder. Put the Excel file (XLS/XLSX) and all student photos in that same folder (no separate images subfolder). Photo filenames should match Student ID / photo number (e.g. 1193.JPG, 1194.png).
+                  Select the project folder. Put the Excel file (XLS/XLSX) and all images in that same folder. Student photo filenames should match the Photo / Student ID column (e.g. 5825.jpg). If the sheet has a &quot;Color Code&quot; / &quot;Color Code .png&quot; column, add matching PNG files in the same folder (e.g. 0.png, 1.png for values 0 and 1).
                 </p>
                 {projectFolderField}
               </>
@@ -362,7 +362,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
               <>
                 <label className="input-label">Student data (Excel file) *</label>
                 <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
-                  XLS/XLSX with columns: SrNo, Photo, StudentName, Gender, BirthDate, STD, Division, RegNo, BloodGroup, Address, Mobile
+                  XLS/XLSX: Student Id, Photo / Photo. No, Student Name, DOB, Class, Division, Address, Mobile / Tel, Father Name, etc. Any extra columns are kept and appear in the template editor as additional fields.
                 </p>
                 <input
                   ref={xlsInputRef}
