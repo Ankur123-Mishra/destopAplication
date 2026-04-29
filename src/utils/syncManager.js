@@ -28,6 +28,17 @@ function extractDataURLBlob(dataURL) {
   return new Blob([u8arr], { type: mime });
 }
 
+function isUploadableTemplate(tpl) {
+  return Boolean(
+    tpl &&
+      typeof tpl === 'object' &&
+      typeof tpl.frontImage === 'string' &&
+      tpl.frontImage.startsWith('data:') &&
+      Array.isArray(tpl.elements) &&
+      tpl.elements.length > 0,
+  );
+}
+
 export async function syncAllBackgroundData(onProgress) {
   // Graceful fallback callback
   const reportProgress = typeof onProgress === 'function' ? onProgress : console.log;
@@ -58,6 +69,7 @@ export async function syncAllBackgroundData(onProgress) {
          dimensionHeight: school.dimension?.height,
          dimensionWidth: school.dimension?.width,
          dimensionUnit: school.dimensionUnit,
+         projectType: school.projectType,
          allowedMobiles: school.allowedMobiles,
       });
       
@@ -141,7 +153,10 @@ export async function syncAllBackgroundData(onProgress) {
       // 5. Upload Bound Photos & Aggregate Templates
       reportProgress(`Transferring photos and template overrides for ${school.schoolName}...`);
       
-      const templatePayloadGrps = {}; 
+      const templatePayloadGrps = {};
+      const schoolTemplateFallback = isUploadableTemplate(school.offlineIdCardTemplate)
+        ? school.offlineIdCardTemplate
+        : null;
       
       for (let i = 0; i < localStudents.length; i++) {
          const ls = localStudents[i];
@@ -164,12 +179,23 @@ export async function syncAllBackgroundData(onProgress) {
          }
          
          // b) Template grouping logic
-         if (ls.hasTemplate && ls.template) {
-            const tName = ls.template.name || ls.template.templateId;
-            if (!templatePayloadGrps[tName]) {
-               templatePayloadGrps[tName] = { templateObj: ls.template, studentMongoIds: [] }; 
+         const hasAnyTemplateMarker = Boolean(
+           ls.hasTemplate || (ls.template && (ls.template.templateId || ls.template.name)),
+         );
+         if (hasAnyTemplateMarker) {
+            const candidateTemplate = isUploadableTemplate(ls.template)
+              ? ls.template
+              : schoolTemplateFallback;
+            const templateKey = ls.template?.name || ls.template?.templateId || candidateTemplate?.name || 'offline-template';
+            if (!templatePayloadGrps[templateKey]) {
+               templatePayloadGrps[templateKey] = {
+                 templateObj: candidateTemplate || ls.template || null,
+                 studentMongoIds: [],
+               };
+            } else if (!templatePayloadGrps[templateKey].templateObj && candidateTemplate) {
+               templatePayloadGrps[templateKey].templateObj = candidateTemplate;
             }
-            templatePayloadGrps[tName].studentMongoIds.push(mongoStudentId);
+            templatePayloadGrps[templateKey].studentMongoIds.push(mongoStudentId);
          }
       }
       
@@ -181,14 +207,15 @@ export async function syncAllBackgroundData(onProgress) {
          const localTpl = grp.templateObj;
          let liveTemplateId = localTpl.templateId;
          
-         if (localTpl.frontImage && Array.isArray(localTpl.elements)) {
+         if (isUploadableTemplate(localTpl)) {
             try {
               const res = await net.uploadTemplate({
                  name: tKeys[k],
                  schoolId: mongoSchoolId,
                  frontImage: localTpl.frontImage,
                  backImage: localTpl.backImage,
-                 elements: localTpl.elements
+                 elements: localTpl.elements,
+                 backElements: Array.isArray(localTpl.backElements) ? localTpl.backElements : undefined,
               });
               liveTemplateId = res.templateId || res.data?._id || res.template?._id || liveTemplateId;
             } catch (e) {

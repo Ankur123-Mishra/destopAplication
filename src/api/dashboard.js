@@ -25,6 +25,7 @@ function buildOfflineSchoolRef(schoolDoc) {
       : [],
     dimension: schoolDoc.dimension,
     dimensionUnit: schoolDoc.dimensionUnit,
+    projectType: schoolDoc.projectType || 'idCard',
   };
 }
 
@@ -352,15 +353,18 @@ export async function createSchool({
   dimensionHeight,
   dimensionWidth,
   dimensionUnit,
+  projectType,
   allowedMobiles = [],
   logo = null,
 }) {
+  const normalizedProjectType = String(projectType || "").trim().toLowerCase() === 'badge' ? 'badge' : 'idCard';
   const newSchool = {
     id: nanoid(),
     schoolName: String(schoolName || "").trim(),
     address: String(address || "").trim() || "Not specified",
     dimension: { height: Number(dimensionHeight) || 57, width: Number(dimensionWidth) || 90 },
     dimensionUnit: dimensionUnit || "mm",
+    projectType: normalizedProjectType,
     allowedMobiles,
     syncStatus: 'pending',
     mongoId: null,

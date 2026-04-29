@@ -112,6 +112,7 @@ export async function createSchool({
   dimensionHeight,
   dimensionWidth,
   dimensionUnit,
+  projectType,
   allowedMobiles = [],
   logo = null,
 }) {
@@ -130,6 +131,8 @@ export async function createSchool({
     if (unit) dim.unit = unit;
     form.append("dimension", JSON.stringify(dim));
   }
+  const normalizedProjectType = String(projectType || "").trim().toLowerCase() === "badge" ? "badge" : "idCard";
+  form.append("projectType", normalizedProjectType);
   if (Array.isArray(allowedMobiles)) {
     allowedMobiles.forEach((m) => form.append("allowedMobiles[]", String(m).trim()));
   }

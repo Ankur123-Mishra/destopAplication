@@ -41,6 +41,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
   const [dimensionHeight, setDimensionHeight] = useState('56');
   const [dimensionWidth, setDimensionWidth] = useState('88');
   const [dimensionUnit, setDimensionUnit] = useState('mm');
+  const [projectType, setProjectType] = useState('idCard');
   const [allowedMobilesStr, setAllowedMobilesStr] = useState('');
   const [logoFile, setLogoFile] = useState(null);
   const [xlsFile, setXlsFile] = useState(null);
@@ -126,6 +127,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
         dimensionHeight: dimensionHeight.trim() || undefined,
         dimensionWidth: dimensionWidth.trim() || undefined,
         dimensionUnit: dimensionUnit,
+        projectType,
         allowedMobiles,
         logo: logoFile || null,
       });
@@ -273,6 +275,33 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
         )}
         {/* Dimension (Height & Width) - shown for Create Project */}
         {labelAsProject && (
+          <div style={{ marginBottom: 16 }}>
+            <label className="input-label" style={{ display: 'block', marginBottom: 8 }}>Project Type</label>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="projectType"
+                  value="idCard"
+                  checked={projectType === 'idCard'}
+                  onChange={(e) => setProjectType(e.target.value)}
+                />
+                ID Card
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="projectType"
+                  value="badge"
+                  checked={projectType === 'badge'}
+                  onChange={(e) => setProjectType(e.target.value)}
+                />
+                Badge
+              </label>
+            </div>
+          </div>
+        )}
+        {labelAsProject && (
           <div className="create-form-dimension-row" style={{ marginBottom: 16 }}>
             <label className="input-label" style={{ display: 'block', marginBottom: 8 }}>Dimension (optional)</label>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -353,9 +382,9 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
             {projectFolderField ? (
               <>
                 <label className="input-label">Project folder *</label>
-                <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
+                {/* <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 8 }}>
                   Select the project folder. Put the Excel file (XLS/XLSX) and all images in that same folder. Student photo filenames should match the Photo / Student ID column (e.g. 5825.jpg). If the sheet has a &quot;Color Code&quot; / &quot;Color Code .png&quot; column, add matching PNG files in the same folder (e.g. 0.png, 1.png for values 0 and 1).
-                </p>
+                </p> */}
                 {projectFolderField}
               </>
             ) : (

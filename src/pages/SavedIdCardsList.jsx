@@ -421,6 +421,12 @@ function studentHasUploadedPhoto(s) {
   return false;
 }
 
+function normalizeProjectType(projectType) {
+  return String(projectType || "").trim().toLowerCase() === "badge"
+    ? "badge"
+    : "idCard";
+}
+
 function preloadImageSrc(src) {
   if (!src || typeof src !== "string" || !src.trim()) {
     return Promise.resolve();
@@ -492,17 +498,21 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
   requestOpenCardPreview,
   setEditStudentData,
   formatToDDMMYYYYDot,
+  allowPreviewWithoutPhoto,
+  allowRootTemplateFallbackForAllStudents,
 }) {
   const student = students[index];
   if (!student) return null;
   const card = studentToCard(student);
   const hasUploadedPhoto = studentHasUploadedPhoto(student);
   const canOpenPreview =
-    hasUploadedPhoto &&
+    (hasUploadedPhoto || allowPreviewWithoutPhoto) &&
     studentHasRenderableSavedCard(
       student,
       isAllSchoolStudents ? schoolAllStudentsData : templateStatus,
-      isAllSchoolStudents ? { allowRootTemplateFallback: false } : undefined,
+      isAllSchoolStudents
+        ? { allowRootTemplateFallback: allowRootTemplateFallbackForAllStudents }
+        : undefined,
     );
   return (
     <div
@@ -519,7 +529,9 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
           title={
             !canOpenPreview
               ? !hasUploadedPhoto
-                ? "Photo not uploaded for this student"
+                ? allowPreviewWithoutPhoto
+                  ? "Photo missing, but preview allowed for Badge project"
+                  : "Photo not uploaded for this student"
                 : isViewTemplateFlow
                   ? "No template data for this student"
                   : "No saved ID card for this student"
@@ -551,7 +563,8 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
             ) : !hasUploadedPhoto ? (
               <>
                 {formatStudentClassForIdCard(student.class) || "—"} ·{" "}
-                {student.admissionNo || student.rollNo || ""} · Photo missing
+                {student.admissionNo || student.rollNo || ""} ·{" "}
+                {allowPreviewWithoutPhoto ? "Photo missing (Badge mode)" : "Photo missing"}
               </>
             ) : (
               <>
@@ -1107,13 +1120,27 @@ function getBackCardCellElements(wrap) {
 }
 
 /** Resolved custom back PNG for uploaded templates (same as renderBackOnlyForPrint). */
+function normalizeTemplateImageRef(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") return undefined;
+  return trimmed;
+}
+
 function resolveCardBackImage(card) {
   const uploadedT =
     card.uploadedTemplate ||
     (card.templateId?.startsWith("uploaded-")
       ? getUploadedTemplateById(card.templateId)
       : null);
-  return uploadedT?.backImage ?? undefined;
+  const front = normalizeTemplateImageRef(uploadedT?.frontImage);
+  const back = normalizeTemplateImageRef(uploadedT?.backImage);
+  if (!back) return undefined;
+  // Guard against legacy payloads where single-side templates accidentally saved back == front.
+  if (front && back === front) return undefined;
+  return back;
 }
 
 function isUploadedStyleTemplate(card) {
@@ -3045,6 +3072,7 @@ export default function SavedIdCardsList({
   const isViewTemplateFlow = basePath === "/view-template";
   const [viewMode, setViewMode] = useState("offline"); // offline | online
   const showOnlineProjects = user?.id !== "offline-user";
+  const canDownloadIdCards = user?.id !== "offline-user";
   const isOnlineMode = viewMode === "online";
   const activeApi = isOnlineMode ? onlineApi : offlineApi;
   const [showPrintView, setShowPrintView] = useState(false);
@@ -3296,6 +3324,9 @@ export default function SavedIdCardsList({
     done: false,
     show: false,
   });
+  const allowPreviewWithoutPhoto =
+    normalizeProjectType(selectedSchool?.projectType) === "badge";
+  const allowRootTemplateFallbackForAllStudents = allowPreviewWithoutPhoto;
 
   const [editStudentData, setEditStudentData] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -3727,13 +3758,13 @@ export default function SavedIdCardsList({
   const studentsFilteredForPreviewPrint = React.useMemo(() => {
     return isAllSchoolStudents
       ? studentsRawForPreviewPipeline.filter((s) =>
-          studentHasUploadedPhoto(s) &&
+          (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
           studentHasRenderableSavedCard(s, schoolAllStudentsData, {
-            allowRootTemplateFallback: false,
+            allowRootTemplateFallback: allowRootTemplateFallbackForAllStudents,
           }),
         )
       : studentsRawForPreviewPipeline.filter((s) =>
-          studentHasUploadedPhoto(s) &&
+          (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
           studentHasRenderableSavedCard(s, templateStatus),
         );
   }, [
@@ -3741,6 +3772,8 @@ export default function SavedIdCardsList({
     studentsRawForPreviewPipeline,
     schoolAllStudentsData,
     templateStatus,
+    allowPreviewWithoutPhoto,
+    allowRootTemplateFallbackForAllStudents,
   ]);
 
   const needPreviewPrintSortedOrder =
@@ -4023,6 +4056,8 @@ export default function SavedIdCardsList({
       requestOpenCardPreview,
       setEditStudentData,
       formatToDDMMYYYYDot,
+      allowPreviewWithoutPhoto,
+      allowRootTemplateFallbackForAllStudents,
     }),
     [
       studentsForList,
@@ -4033,6 +4068,8 @@ export default function SavedIdCardsList({
       isViewTemplateFlow,
       getTemplateName,
       requestOpenCardPreview,
+      allowPreviewWithoutPhoto,
+      allowRootTemplateFallbackForAllStudents,
       // Stable functions don't need to be in dependencies:
       // formatStudentClassForIdCard, setEditStudentData, formatToDDMMYYYYDot
     ],
@@ -5162,6 +5199,7 @@ export default function SavedIdCardsList({
   };
 
   const triggerExport = async (fmt) => {
+    if (!canDownloadIdCards) return;
     if (exporting || chargingDownloadPoints) return;
     setShowDownloadMenuList(false);
     setShowDownloadMenuPreview(false);
@@ -5394,11 +5432,7 @@ export default function SavedIdCardsList({
       (card.templateId?.startsWith("uploaded-")
         ? getUploadedTemplateById(card.templateId)
         : null);
-    const uploadedBack =
-      uploadedT?.backImage ??
-      (card.templateId?.startsWith("uploaded-")
-        ? getUploadedTemplateById(card.templateId)?.backImage
-        : undefined);
+    const uploadedBack = resolveCardBackImage(card);
     const backEls = uploadedT?.backElements;
     const useCanvasBack = Array.isArray(backEls) && backEls.length > 0;
     const backData = {
@@ -5482,11 +5516,7 @@ export default function SavedIdCardsList({
                 (card.templateId?.startsWith("uploaded-")
                   ? getUploadedTemplateById(card.templateId)
                   : null);
-              const uploadedBack =
-                uploadedT?.backImage ??
-                (card.templateId?.startsWith("uploaded-")
-                  ? getUploadedTemplateById(card.templateId)?.backImage
-                  : undefined);
+              const uploadedBack = resolveCardBackImage(card);
               const backEls = uploadedT?.backElements;
               const useCanvasBack =
                 Array.isArray(backEls) && backEls.length > 0 && uploadedBack;
@@ -6016,85 +6046,87 @@ export default function SavedIdCardsList({
                 flexShrink: 0,
               }}
             >
-              <div
-                className="download-dropdown-wrap"
-                style={{ position: "relative" }}
-              >
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={
-                    exporting ||
-                    chargingDownloadPoints ||
-                    previewPrintCardsStillLoading
-                  }
-                  onClick={() => setShowDownloadMenuPreview((v) => !v)}
+              {canDownloadIdCards && (
+                <div
+                  className="download-dropdown-wrap"
+                  style={{ position: "relative" }}
                 >
-                  {chargingDownloadPoints
-                    ? "Checking balance…"
-                    : exporting
-                      ? "Downloading…"
-                      : "⬇ Download"}{" "}
-                  ▾
-                </button>
-                {showDownloadMenuPreview && (
-                  <div
-                    role="menu"
-                    style={{
-                      position: "absolute",
-                      top: "100%",
-                      right: 0,
-                      marginTop: 6,
-                      zIndex: 20,
-                      minWidth: 160,
-                      background: "#2a2a2a",
-                      border: "1px solid rgba(255,255,255,0.2)",
-                      borderRadius: 8,
-                      boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
-                      overflow: "hidden",
-                    }}
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={
+                      exporting ||
+                      chargingDownloadPoints ||
+                      previewPrintCardsStillLoading
+                    }
+                    onClick={() => setShowDownloadMenuPreview((v) => !v)}
                   >
-                    {["jpg", "pdf", "png"].map((fmt) => (
-                      <button
-                        key={fmt}
-                        type="button"
-                        role="menuitem"
-                        disabled={
-                          exporting ||
-                          chargingDownloadPoints ||
-                          previewPrintCardsStillLoading
-                        }
-                        onClick={() => triggerExport(fmt)}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "10px 14px",
-                          border: "none",
-                          background: "transparent",
-                          color: "#fff",
-                          cursor:
-                            exporting || chargingDownloadPoints
-                              ? "not-allowed"
-                              : "pointer",
-                          fontSize: "0.95rem",
-                          textTransform: "uppercase",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!exporting && !chargingDownloadPoints)
-                            e.currentTarget.style.background =
-                              "rgba(255,255,255,0.08)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = "transparent";
-                        }}
-                      >
-                        {fmt}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    {chargingDownloadPoints
+                      ? "Checking balance…"
+                      : exporting
+                        ? "Downloading…"
+                        : "⬇ Download"}{" "}
+                    ▾
+                  </button>
+                  {showDownloadMenuPreview && (
+                    <div
+                      role="menu"
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        right: 0,
+                        marginTop: 6,
+                        zIndex: 20,
+                        minWidth: 160,
+                        background: "#2a2a2a",
+                        border: "1px solid rgba(255,255,255,0.2)",
+                        borderRadius: 8,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {["jpg", "pdf", "png"].map((fmt) => (
+                        <button
+                          key={fmt}
+                          type="button"
+                          role="menuitem"
+                          disabled={
+                            exporting ||
+                            chargingDownloadPoints ||
+                            previewPrintCardsStillLoading
+                          }
+                          onClick={() => triggerExport(fmt)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px 14px",
+                            border: "none",
+                            background: "transparent",
+                            color: "#fff",
+                            cursor:
+                              exporting || chargingDownloadPoints
+                                ? "not-allowed"
+                                : "pointer",
+                            fontSize: "0.95rem",
+                            textTransform: "uppercase",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!exporting && !chargingDownloadPoints)
+                              e.currentTarget.style.background =
+                                "rgba(255,255,255,0.08)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                        >
+                          {fmt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -7014,7 +7046,13 @@ export default function SavedIdCardsList({
           max-width: 100%;
           width: 100%;
           height: 100%;
+          min-height: 0;
           box-sizing: border-box;
+        }
+        .print-card-cell.idcard-card .idcard.idcard-image-template,
+        .print-card-cell.idcard-card .idcard.idcard-image-template-canvas {
+          min-height: 0 !important;
+          aspect-ratio: auto !important;
         }
         @media print {
           @page { size: ${pageWidthMm}mm ${pageHeightMm}mm; margin: 0; }
@@ -7092,8 +7130,14 @@ export default function SavedIdCardsList({
           .print-card-cell.idcard-card .idcard {
             width: 100%;
             height: 100%;
+            min-height: 0;
             max-width: none;
             object-fit: contain;
+          }
+          .print-card-cell.idcard-card .idcard.idcard-image-template,
+          .print-card-cell.idcard-card .idcard.idcard-image-template-canvas {
+            min-height: 0 !important;
+            aspect-ratio: auto !important;
           }
           .print-card-cell.idcard-card {
             display: block;

@@ -569,6 +569,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         address: stateSchool.address,
         schoolCode: stateSchool.schoolCode || '',
         allowedMobiles: Array.isArray(stateSchool.allowedMobiles) ? stateSchool.allowedMobiles : [],
+        projectType: stateSchool.projectType || 'idCard',
       });
       setApiClass({ id: stateClass._id, name: `Class ${stateClass.className}` });
       setApiStudents(stateStudents);
@@ -593,6 +594,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
               address: school.address,
               schoolCode: school.schoolCode || '',
               allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+              projectType: school.projectType || 'idCard',
             }
           : null,
       );
@@ -653,6 +655,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
                   address: school.address,
                   schoolCode: school.schoolCode || '',
                   allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+                  projectType: school.projectType || 'idCard',
                 }
               : null,
           );
@@ -886,6 +889,14 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     () => selectedStudents.filter((s) => Boolean(getImageForStudent(s))),
     [selectedStudents, getImageForStudent]
   );
+  const isBadgeProject = useMemo(
+    () => String(school?.projectType || '').trim().toLowerCase() === 'badge',
+    [school?.projectType],
+  );
+  const selectedStudentsForSave = useMemo(
+    () => (isBadgeProject ? selectedStudents : selectedStudentsWithPhotos),
+    [isBadgeProject, selectedStudents, selectedStudentsWithPhotos],
+  );
   const firstSelectedStudent = selectedStudents[0] ?? null;
   const firstSelectedHasPhoto = useMemo(
     () => Boolean(firstSelectedStudent && getImageForStudent(firstSelectedStudent)),
@@ -901,8 +912,9 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
 
   const canProceedFromStudents = useMemo(() => {
     if (selectedStudents.length === 0) return false;
+    if (isBadgeProject) return true;
     return firstSelectedHasPhoto;
-  }, [selectedStudents.length, firstSelectedHasPhoto]);
+  }, [selectedStudents.length, firstSelectedHasPhoto, isBadgeProject]);
 
   const toggleStudentSelection = useCallback((studentId) => {
     setSelectedStudentIds((prev) =>
@@ -925,8 +937,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   );
 
   /**
-   * Save all selected students' ID cards for `templateId`, then open the template preview list.
-   * Returns `{ skipped: true }` when no student has a photo (same as before: caller may send user to Review).
+   * Save selected students' ID cards for `templateId`, then open the template preview list.
+   * For Badge projects, photo is optional and all selected students are saved.
    */
   const saveAllIdCardsForTemplate = async (templateId, { manageSavingState = true } = {}) => {
     if (!cls || !school || !templateId) return;
@@ -939,8 +951,18 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       : getTemplateById(templateId) || getFabricTemplateById(templateId);
     if (!template && !isUploaded) return;
     if (isUploaded && !effectiveUploadedTemplate?.elements) return;
-    const studentIds = selectedStudentsWithPhotos.map((s) => s.id);
-    if (studentIds.length === 0) return { skipped: true };
+    const studentIds = selectedStudentsForSave.map((s) => s.id);
+    const viewTemplatePath =
+      cls.id === 'all'
+        ? `/view-template/school/${school.id}/all-students`
+        : `/view-template/school/${school.id}/class/${cls.id}`;
+    if (studentIds.length === 0) {
+      // Even when no rows are selected/ready, user explicitly confirmed save.
+      // Keep behavior consistent with successful save flow.
+      writeSavedIdCardsFlagForSchool(school.id);
+      navigate(viewTemplatePath, { replace: true });
+      return { skipped: true, navigated: true };
+    }
 
     if (manageSavingState) setSavingAll(true);
     try {
@@ -959,7 +981,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       );
       const offlineUpdates = [];
 
-      selectedStudentsWithPhotos.forEach((student) => {
+      selectedStudentsForSave.forEach((student) => {
         offlineUpdates.push({ id: student.id, template: persistedStudentTemplate });
       });
 
@@ -967,10 +989,6 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         await offlineApi.bulkSaveFullOfflineTemplates(offlineUpdates);
       }
       writeSavedIdCardsFlagForSchool(school.id);
-      const viewTemplatePath =
-        cls.id === 'all'
-          ? `/view-template/school/${school.id}/all-students`
-          : `/view-template/school/${school.id}/class/${cls.id}`;
       navigate(viewTemplatePath, { replace: true });
     } catch (err) {
       alert(err?.message || 'Failed to save ID cards. Please try again.');
@@ -1213,7 +1231,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         setUploadedTemplate(null);
         setArrangingUploaded(false);
         setSelectedTemplateId(savedId);
-        if (bulkResult?.skipped) {
+        if (bulkResult?.skipped && !bulkResult?.navigated) {
           setStep(STEPS.REVIEW_SAVE);
           navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
         }
@@ -1474,8 +1492,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
             </div>
           </div>
           <p className="text-muted class-idcards-students-next-hint" style={{ fontSize: '0.9rem', marginBottom: 16, marginTop: 0 }}>
-            First selected needs a photo to continue
-            {selectedStudents.length > 0
+            {isBadgeProject
+              ? `Badge mode: photo optional · ${selectedStudents.length} selected`
+              : 'First selected needs a photo to continue'}
+            {!isBadgeProject && selectedStudents.length > 0
               ? ` (${firstSelectedHasPhoto ? 'done' : 'missing'}) · ${selectedStudentsWithPhotos.length} / ${selectedStudents.length} with photos overall`
               : ''}
           </p>
@@ -2014,7 +2034,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     const template = isUploadedTemplate
       ? (reviewUploadedTemplate ? { name: reviewUploadedTemplate.name || 'Uploaded Template' } : null)
       : (getTemplateById(selectedTemplateId) || getFabricTemplateById(selectedTemplateId));
-    const readyCount = selectedStudentsWithPhotos.length;
+    const readyCount = selectedStudentsForSave.length;
     return (
       <>
         <Header
