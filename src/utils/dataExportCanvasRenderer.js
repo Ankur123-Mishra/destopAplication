@@ -252,9 +252,48 @@ async function loadImageUncached(src) {
   });
 }
 
-function drawImageSource(ctx, source, dx, dy, dw, dh) {
+function drawImageSource(ctx, source, dx, dy, dw, dh, fit = "fill") {
   if (!source) return;
-  ctx.drawImage(source, dx, dy, dw, dh);
+  const sw = source.width || source.videoWidth || 0;
+  const sh = source.height || source.videoHeight || 0;
+  if (!sw || !sh || !dw || !dh) return;
+
+  if (fit === "fill") {
+    ctx.drawImage(source, dx, dy, dw, dh);
+    return;
+  }
+
+  const srcRatio = sw / sh;
+  const destRatio = dw / dh;
+
+  // Match CSS object-fit behavior used by preview renderer.
+  if (fit === "contain") {
+    let rw = dw;
+    let rh = dh;
+    if (srcRatio > destRatio) {
+      rh = dw / srcRatio;
+    } else {
+      rw = dh * srcRatio;
+    }
+    const rx = dx + (dw - rw) / 2;
+    const ry = dy + (dh - rh) / 2;
+    ctx.drawImage(source, rx, ry, rw, rh);
+    return;
+  }
+
+  // cover
+  let sx = 0;
+  let sy = 0;
+  let sWidth = sw;
+  let sHeight = sh;
+  if (srcRatio > destRatio) {
+    sWidth = sh * destRatio;
+    sx = (sw - sWidth) / 2;
+  } else {
+    sHeight = sw / destRatio;
+    sy = (sh - sHeight) / 2;
+  }
+  ctx.drawImage(source, sx, sy, sWidth, sHeight, dx, dy, dw, dh);
 }
 
 function canvasToBlob(canvas, mime, quality) {
@@ -408,7 +447,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
         const py = (el.y / 100) * hPx;
         const pw = (el.width / 100) * wPx;
         const ph = (el.height / 100) * hPx;
-        drawImageSource(ctx, photo, px, py, pw, ph);
+        drawImageSource(ctx, photo, px, py, pw, ph, "cover");
       } catch (_) {
         /* skip broken photo */
       }
@@ -423,7 +462,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
         const py = (el.y / 100) * hPx;
         const pw = (el.width / 100) * wPx;
         const ph = (el.height / 100) * hPx;
-        drawImageSource(ctx, badge, px, py, pw, ph);
+        drawImageSource(ctx, badge, px, py, pw, ph, "contain");
       } catch (_) {
         /* skip broken badge */
       }

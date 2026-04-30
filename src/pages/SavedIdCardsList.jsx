@@ -1,4 +1,11 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+} from "react";
+
 import { List } from "react-window";
 import { useLocation, useMatch, useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../context/AppContext";
@@ -34,10 +41,12 @@ import {
 } from "../utils/dataExportCanvasRenderer";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
+
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
 
 /** Preview/print paper presets (dimensions match product UI labels; inches × 25.4 → mm). */
+
 const INCH_TO_MM = 25.4;
 const PAGE_PRESET_MM = {
   c1: { w: 8 * INCH_TO_MM, h: 12 * INCH_TO_MM },
@@ -60,16 +69,24 @@ const PAGE_PRESET_DISPLAY_NAME = {
 };
 const PRINT_PAGE_MARGIN_MM = 4;
 const PRINT_GAP_MM = 4;
+
 /** Default horizontal/vertical gap between cards in the preview grid (mm). */
+
 const DEFAULT_PREVIEW_GRID_GAP_MM = 1;
 const DEFAULT_CARD_WIDTH_MM = 90;
 const DEFAULT_CARD_HEIGHT_MM = 57;
+
 /** Build preview/print card rows in slices so opening preview stays instant for large lists. */
+
 const PREVIEW_CARDS_CHUNK_SIZE = 64;
+
 /** Render preview pages in small batches so first pages appear immediately. */
+
 const PREVIEW_PAGES_RENDER_CHUNK_SIZE = 1;
 const PREVIEW_PAGES_RENDER_DELAY_MS = 16;
+
 /** Stable fallback so `studentsForPreviewPrint` / card-building effects are not invalidated every render. */
+
 const EMPTY_STUDENTS = [];
 
 async function uint8FromBlob(blob) {
@@ -142,6 +159,15 @@ function readSavedIdCardsFlagForSchool(schoolId) {
   }
 }
 
+function writeSavedIdCardsFlagForSchool(schoolId) {
+  if (!schoolId || typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(`${SAVED_ID_CARDS_FLAG_PREFIX}${schoolId}`, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
 function rawStudentsIndicateSavedIdCards(rawStudents) {
   if (!Array.isArray(rawStudents)) return false;
   return rawStudents.some((s) => {
@@ -159,6 +185,7 @@ function computeSchoolHasSavedIdCards(schoolId, rawStudents) {
 /**
  * Same logic as ClassIdCardsWizard pickSchoolLevelTemplate — school-level uploaded layout for Edit template.
  */
+
 function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _isOnlineMode) {
   const raw = studentsRes?.students ?? [];
   let schoolDoc = null;
@@ -201,6 +228,8 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _isOnlineMo
  * class/school root template has the full layout from Edit template. Prefer root layout when
  * the root is a full canvas template so preview shows every saved front element.
  */
+
+
 function mergeSchoolRootTemplateIntoStudent(student, rootTemplate) {
   const st = student?.template;
   if (isFullApiCanvasTemplate(rootTemplate)) {
@@ -321,6 +350,7 @@ function getStudentClassIdStringForSort(student) {
 }
 
 /** Same shape as class rows in `classes` — used with compareClassForDisplay. */
+
 function getPseudoClassForSort(student) {
   return {
     className:
@@ -389,6 +419,7 @@ function sortStudentsForPreviewPrint(students, classesOrdered) {
 }
 
 /** Saved ID card / template present — used for bulk preview and per-row preview. */
+
 function studentHasRenderableSavedCard(
   s,
   schoolListResponse = null,
@@ -409,6 +440,7 @@ function studentHasRenderableSavedCard(
 
   // School/class API often omits per-student flags when photo is missing (hasTemplate false),
   // but the shared root template still applies — preview with an empty photo slot.
+
   if (allowRootTemplateFallback && rootOk) return true;
   return false;
 }
@@ -448,6 +480,7 @@ function preloadImageSrc(src) {
 const PREVIEW_CARD_PRELOAD_PARALLEL = 4;
 
 /** Decode student photo + template art before mounting preview cells (sequential URLs per card to cap memory). */
+
 async function preloadCardVisualAssets(card) {
   if (!card || typeof card !== "object") return;
   try {
@@ -467,7 +500,9 @@ async function preloadCardVisualAssets(card) {
       await preloadImageSrc(u);
     }
   } catch {
+
     /* ignore — show preview even if preload fails */
+
   }
 }
 
@@ -859,6 +894,7 @@ function delay(ms) {
  * Coalesces rapid progress callbacks (e.g. parallel html2canvas) to at most one UI update per interval,
  * always keeping the latest `{ current, total, label }`. Call `flush()` when a phase ends so the bar catches up.
  */
+
 function createProgressThrottle(intervalMs, emitFn) {
   let pending = null;
   let lastEmit = 0;
@@ -954,6 +990,7 @@ async function mapWithConcurrency(items, concurrency, mapper, shouldAbort) {
  * missing bulk export optimizations if the match pattern ever fails to line up.
  * Does not match `/school/…/class/…` (e.g. a class whose id is literally "all-students").
  */
+
 function pathnameIsSchoolAllStudentsRoute(pathname, basePath) {
   if (typeof pathname !== "string" || typeof basePath !== "string") return false;
   const esc = basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -964,6 +1001,7 @@ function pathnameIsSchoolAllStudentsRoute(pathname, basePath) {
  * html2canvas respects ancestor overflow:hidden; multiline canvas address would still clip in PDF/JPG.
  * Relax overflow on the clone only (from .idcard-canvas-text--wrap up toward the page).
  */
+
 function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
   if (!clonedDoc?.querySelectorAll) return;
   clonedDoc.querySelectorAll(".idcard-canvas-text--wrap").forEach((el) => {
@@ -986,6 +1024,7 @@ function relaxCaptureOverflowForWrappedCanvasText(clonedDoc) {
 }
 
 /** Corner crop marks sit half outside the card; html2canvas clips if any ancestor keeps overflow:hidden. */
+
 function relaxCaptureOverflowForCropMarks(clonedDoc) {
   if (!clonedDoc?.querySelectorAll) return;
   clonedDoc.querySelectorAll(".idcard-sheet-crop-mark").forEach((el) => {
@@ -1065,6 +1104,7 @@ function rasterizeFabricCanvasForExport(sourceCanvas, pageBackgroundColor, scale
 }
 
 /** Base file name: mobile digits when available; otherwise student id / fallback. Unique per batch. */
+
 function jpegBaseNameForCard(card, index, used) {
   const digits = String(card.phone ?? "").replace(/\D/g, "");
   let base;
@@ -1097,6 +1137,8 @@ function jpegBaseNameForCard(card, index, used) {
  * Prefer direct children of the print grid so nested nodes cannot inflate the count
  * (which caused JPEG export to wait forever or mismatch).
  */
+
+
 function getFrontCardCellElements(wrap) {
   if (!wrap?.querySelectorAll) return [];
   const direct = wrap.querySelectorAll(
@@ -1167,6 +1209,7 @@ function batchHasBackPage(pageCards) {
 }
 
 /** How many back grid cells exist in the preview DOM (one per slot on each batch that has a back page). */
+
 function countExpectedBackDomCells(cards, cardsPerPage) {
   let n = 0;
   const batches = Math.ceil(cards.length / cardsPerPage) || 0;
@@ -1179,6 +1222,7 @@ function countExpectedBackDomCells(cards, cardsPerPage) {
 }
 
 /** Index into getBackCardCellElements() for global card index, or -1 if that batch has no back page. */
+
 function backDomIndexForCard(cards, cardsPerPage, cardIndex) {
   const batchIndex = Math.floor(cardIndex / cardsPerPage);
   let offset = 0;
@@ -1369,6 +1413,7 @@ const EXPORT_NATIVE_CAPTURE_HIDE_CHROME_CLASS =
  * the viewport (typical full preview pages in mm) get clipped — truncated labels, wrong grid, blank fields.
  * Those must use html2canvas, which rasterizes the full DOM subtree.
  */
+
 function shouldUseHtml2CanvasInsteadOfNativeCapture(el) {
   if (!el || typeof el.getBoundingClientRect !== "function") return true;
   const r = el.getBoundingClientRect();
@@ -2316,6 +2361,8 @@ async function downloadJpegsAsZipFolder(
 /**
  * @param webParentDirHandle - DirectoryHandle from showDirectoryPicker() during the Download click (browser only).
  */
+
+
 async function saveJpegExportToFolder(
   subfolderName,
   files,
@@ -3523,6 +3570,7 @@ export default function SavedIdCardsList({
               Array.isArray(apiTemplate.elements) &&
               apiTemplate.elements.length > 0,
           );
+        if (show) writeSavedIdCardsFlagForSchool(schoolId);
         setViewTemplateEditProbe({ done: true, show });
       })
       .catch(() => {
@@ -3532,6 +3580,16 @@ export default function SavedIdCardsList({
       cancelled = true;
     };
   }, [schoolId, classId, isViewTemplateFlow, activeApi, isOnlineMode]);
+
+  /** Show Edit template immediately if this school already saved cards (localStorage); probe still confirms. */
+  const showEditTemplateButton = useMemo(() => {
+    if (viewTemplateEditProbe.done) return viewTemplateEditProbe.show;
+    return readSavedIdCardsFlagForSchool(schoolId);
+  }, [
+    viewTemplateEditProbe.done,
+    viewTemplateEditProbe.show,
+    schoolId,
+  ]);
 
   // Fetch students (template status) when both schoolId and classId are in URL
   useEffect(() => {
@@ -5688,7 +5746,7 @@ export default function SavedIdCardsList({
             >
               Create Template
             </button>
-            {viewTemplateEditProbe.done && viewTemplateEditProbe.show ? (
+            {showEditTemplateButton ? (
               <button
                 type="button"
                 className="btn btn-secondary"
