@@ -359,31 +359,48 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
   if (!textContent) return;
   const x = (el.x / 100) * canvasW;
   const y = (el.y / 100) * canvasH;
-  const boxW = ((typeof el.width === "number" && el.width > 0 ? el.width : 42) / 100) * canvasW;
+
+  // Clamp width to card bounds, matching IdCardRenderer.jsx logic
+  const rawBoxW = ((typeof el.width === "number" && el.width > 0 ? el.width : 42) / 100) * canvasW;
+  const boxW = Math.min(rawBoxW, Math.max(1, canvasW - x));
+
   const boxH =
     typeof el.height === "number" && el.height > 0
       ? (el.height / 100) * canvasH
       : undefined;
 
-  const basePx = getCanvasTextEffectiveFontSizePx(el) * pixelScale;
+  const basePxRaw = getCanvasTextEffectiveFontSizePx(el) * pixelScale;
+  const wrapMultiline = el.dataField === "address";
+  // Match IdCardRenderer.jsx logic: subtract 0.5px for single-line text to match browser rendering quirks
+  const basePx = wrapMultiline ? basePxRaw : Math.max(3 * pixelScale, basePxRaw - 0.5 * pixelScale);
+
   const typo = getTextTypographyStyle(el);
   const family = fontFamilyCssForElement(el) || "sans-serif";
   const weight = isTextElementBold(el) ? "bold" : typo.fontWeight || "400";
   const italic = typo.fontStyle === "italic" ? "italic " : "";
+
+  ctx.save();
   ctx.font = `${italic}${weight} ${basePx}px ${family}`;
   ctx.fillStyle =
     el.color && String(el.color).trim() !== "" ? String(el.color) : "#111827";
 
   const hAlign = normalizeTextAlign(el);
   const vAlign = normalizeTextVerticalAlign(el);
+
+  // Match CSS padding: 0 2px
+  const paddingPx = 2 * pixelScale;
+  const maxLineW = Math.max(4, boxW - 2 * paddingPx);
+
   const wrapMultiline = el.dataField === "address";
-  const maxLineW = Math.max(4, boxW - 2 * pixelScale);
+  // Trim text to avoid invisible characters shifting the center
+  const cleanContent = String(textContent || "").trim();
+  
   const lines = wrapMultiline
-    ? wrapTextLines(ctx, textContent, maxLineW)
-    : [String(textContent)];
+    ? wrapTextLines(ctx, cleanContent, maxLineW)
+    : [cleanContent];
 
   const lineHeight = basePx * 1.2;
-  let totalH = lines.length * lineHeight;
+  const totalH = lines.length * lineHeight;
   let startY = y;
   if (boxH != null) {
     if (vAlign === "center") startY = y + (boxH - totalH) / 2;
@@ -391,14 +408,25 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
     if (startY < y) startY = y;
   }
 
+  // Use manual calculation for positioning to ensure exact parity with DOM box model
   lines.forEach((line, i) => {
-    const ly = startY + i * lineHeight + basePx * 0.85;
+    const textWidth = ctx.measureText(line).width;
     let lx = x;
-    const w = ctx.measureText(line).width;
-    if (hAlign === "center") lx = x + (boxW - w) / 2;
-    else if (hAlign === "right") lx = x + boxW - w;
+    
+    if (hAlign === "center") {
+      lx = x + (boxW - textWidth) / 2;
+    } else if (hAlign === "right") {
+      lx = x + boxW - textWidth - paddingPx;
+    } else {
+      lx = x + paddingPx;
+    }
+
+    // 0.85 baseline offset matches preview baseline better
+    const ly = startY + i * lineHeight + basePx * 0.85;
     ctx.fillText(line, lx, ly);
   });
+
+  ctx.restore();
 }
 
 /**

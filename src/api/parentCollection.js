@@ -73,6 +73,13 @@ export function revokeCollectionLink(token) {
   }).then((res) => parseJsonOrThrow(res, 'Failed to revoke link'));
 }
 
+export function deleteCollectionLink(token) {
+  return fetch(`${API_BASE_URL}/api/photographer/collection-links/${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  }).then((res) => parseJsonOrThrow(res, 'Failed to delete link'));
+}
+
 export function listCollectionSubmissions(filters = {}) {
   const params = new URLSearchParams();
   if (filters.schoolId) params.set('schoolId', filters.schoolId);

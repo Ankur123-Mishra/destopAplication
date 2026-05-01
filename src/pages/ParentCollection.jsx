@@ -11,6 +11,7 @@ import {
   listCollectionLinks,
   listCollectionSubmissions,
   revokeCollectionLink,
+  deleteCollectionLink,
 } from '../api/parentCollection';
 import {
   PARENT_FORM_OPTIONAL_FIELDS,
@@ -66,6 +67,7 @@ function formatDateTime(value) {
 }
 
 function formatLinkScope(link) {
+  if (link?.projectName) return link.projectName;
   if (!link?.schoolId) return link?.collectionSchoolLabel ? `Standalone - ${link.collectionSchoolLabel}` : 'Standalone (parents enter class and section)';
   const school = typeof link.schoolId === 'object' ? link.schoolId : null;
   const classInfo = typeof link.classId === 'object' ? link.classId : null;
@@ -78,9 +80,9 @@ function formatLinkScope(link) {
 }
 
 function formatFieldsSummary(fields) {
-  if (fields == null) return 'All optional fields';
+  if (fields == null) return 'All optional (legacy)';
   if (!Array.isArray(fields) || fields.length === 0) return 'Student name only';
-  return `${fields.length} optional field(s)`;
+  return `${fields.length} dynamic field(s)`;
 }
 
 export default function ParentCollection() {
@@ -88,51 +90,67 @@ export default function ParentCollection() {
   const [featureEnabled, setFeatureEnabled] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [feedback, setFeedback] = useState(null);
-  const [schools, setSchools] = useState([]);
-  const [schoolDetails, setSchoolDetails] = useState(null);
-  const [detailsLoading, setDetailsLoading] = useState(false);
   const [links, setLinks] = useState([]);
   const [linksLoading, setLinksLoading] = useState(false);
   const [submissions, setSubmissions] = useState([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
-  const [linkMode, setLinkMode] = useState('standalone');
-  const [schoolId, setSchoolId] = useState('');
-  const [classSectionId, setClassSectionId] = useState('');
   const [collectionSchoolLabel, setCollectionSchoolLabel] = useState('');
+  const [projectName, setProjectName] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('180');
-  const [fieldEnabled, setFieldEnabled] = useState(makeInitialFieldEnabled);
   const [lastCreatedLink, setLastCreatedLink] = useState('');
   const [creating, setCreating] = useState(false);
   const [revokingToken, setRevokingToken] = useState('');
+  const [deletingToken, setDeletingToken] = useState('');
   const [exporting, setExporting] = useState(false);
-  const [filterClassName, setFilterClassName] = useState('');
-  const [filterSection, setFilterSection] = useState('');
   const [expandedSchool, setExpandedSchool] = useState(null);
   const [exportingSchool, setExportingSchool] = useState(null);
 
+  const [activeFields, setActiveFields] = useState(
+    PARENT_FORM_OPTIONAL_FIELDS.map(f => ({
+      key: f.key,
+      label: f.label,
+      isRequired: false,
+      fieldType: f.key === 'dob' ? 'date' : 'text',
+      enabled: false
+    }))
+  );
+
+  const addCustomField = () => {
+    const newField = {
+      key: `custom_${Date.now()}`,
+      label: "New Field",
+      isRequired: false,
+      fieldType: "text",
+      enabled: true,
+      isCustom: true
+    };
+    // Add custom fields to the beginning of the list for better visibility
+    setActiveFields([newField, ...activeFields]);
+
+    // Smooth scroll to config section
+    setTimeout(() => {
+      const configSection = document.querySelector('.active-config-section');
+      if (configSection) {
+        configSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  };
+
+  const toggleField = (key) => {
+    setActiveFields(prev => prev.map(f => f.key === key ? { ...f, enabled: !f.enabled } : f));
+  };
+
+  const updateField = (key, updates) => {
+    setActiveFields(prev => prev.map(f => f.key === key ? { ...f, ...updates } : f));
+  };
+
+  const removeField = (key) => {
+    setActiveFields(prev => prev.filter(f => f.key !== key));
+  };
+
   const publicOriginConfigured = isPublicParentOriginConfigured();
 
-  const flatSections = useMemo(() => {
-    const classes = schoolDetails?.data?.classes || [];
-    const rows = [];
-    classes.forEach((group) => {
-      (group.sections || []).forEach((section) => {
-        rows.push({
-          classId: section._id,
-          label: `${group.className} - ${section.section}`,
-        });
-      });
-    });
-    return rows;
-  }, [schoolDetails]);
 
-  const submissionFilters = useMemo(
-    () => ({
-      className: filterClassName.trim() || undefined,
-      section: filterSection.trim() || undefined,
-    }),
-    [filterClassName, filterSection]
-  );
 
   const groupedSubmissions = useMemo(() => {
     return submissions.reduce((acc, curr) => {
@@ -143,16 +161,9 @@ export default function ParentCollection() {
     }, {});
   }, [submissions]);
 
-  const schoolFormReady =
-    linkMode === 'school' &&
-    Boolean(schoolId) &&
-    Boolean(classSectionId);
+  const standaloneReady = Boolean(projectName.trim());
 
-  const standaloneReady =
-    linkMode === 'standalone' &&
-    Boolean(collectionSchoolLabel.trim());
-
-  const formDisabled = linkMode === 'school' ? !schoolFormReady : !standaloneReady;
+  const formDisabled = !standaloneReady;
 
   async function loadLinks() {
     setLinksLoading(true);
@@ -164,10 +175,10 @@ export default function ParentCollection() {
     }
   }
 
-  async function loadSubmissions(nextFilters = submissionFilters) {
+  async function loadSubmissions() {
     setSubmissionsLoading(true);
     try {
-      const data = await listCollectionSubmissions(nextFilters);
+      const data = await listCollectionSubmissions();
       setSubmissions(data?.submissions || []);
     } finally {
       setSubmissionsLoading(false);
@@ -188,20 +199,17 @@ export default function ParentCollection() {
         setFeatureEnabled(enabled);
 
         if (!enabled) {
-          setSchools([]);
           setLinks([]);
           setSubmissions([]);
           return;
         }
 
-        const [schoolsRes, linksRes, submissionsRes] = await Promise.all([
-          getAssignedSchoolsForCollection(),
+        const [linksRes, submissionsRes] = await Promise.all([
           listCollectionLinks(),
           listCollectionSubmissions(),
         ]);
 
         if (cancelled) return;
-        setSchools(schoolsRes?.schools || []);
         setLinks(linksRes?.links || []);
         setSubmissions(submissionsRes?.submissions || []);
       } catch (err) {
@@ -219,55 +227,26 @@ export default function ParentCollection() {
     };
   }, []);
 
-  useEffect(() => {
-    setClassSectionId('');
-    setSchoolDetails(null);
-    if (!schoolId || linkMode !== 'school') return;
 
-    let cancelled = false;
-
-    async function loadDetails() {
-      setDetailsLoading(true);
-      try {
-        const details = await getSchoolDetailsForCollection(schoolId);
-        if (!cancelled) setSchoolDetails(details);
-      } catch (err) {
-        if (!cancelled) {
-          setFeedback({ type: 'error', message: err?.message || 'Failed to load school classes' });
-        }
-      } finally {
-        if (!cancelled) setDetailsLoading(false);
-      }
-    }
-
-    loadDetails();
-    return () => {
-      cancelled = true;
-    };
-  }, [schoolId, linkMode]);
-
-  useEffect(() => {
-    setFieldEnabled(makeInitialFieldEnabled());
-  }, [linkMode, classSectionId]);
 
   async function handleCreateLink() {
     setFeedback(null);
     setCreating(true);
     try {
-      const fields = PARENT_FORM_OPTIONAL_FIELDS.filter((item) => fieldEnabled[item.key]).map(
-        (item) => item.key
-      );
+      const fields = activeFields
+        .filter((f) => f.enabled)
+        .map(({ key, label, isRequired, fieldType }) => ({
+          key,
+          label,
+          isRequired,
+          fieldType
+        }));
       const payload = {
+        projectName: projectName.trim(),
         fields,
         expiresInDays: Number.parseInt(expiresInDays, 10) || 180,
+        collectionSchoolLabel: collectionSchoolLabel.trim() || undefined,
       };
-
-      if (linkMode === 'school') {
-        payload.schoolId = schoolId;
-        payload.classId = classSectionId;
-      } else if (linkMode === 'standalone') {
-        payload.collectionSchoolLabel = collectionSchoolLabel.trim();
-      }
 
       const result = await createCollectionLink(payload);
       const publicLink = buildParentCollectionLink(result?.token);
@@ -313,26 +292,47 @@ export default function ParentCollection() {
     }
   }
 
+  async function handleDeleteLink(token) {
+    const approved = window.confirm(
+      'PERMANENTLY DELETE this project and all its submitted data? This cannot be undone.'
+    );
+    if (!approved) return;
+
+    setFeedback(null);
+    setDeletingToken(token);
+    try {
+      await deleteCollectionLink(token);
+      setFeedback({ type: 'success', message: 'Project and submissions deleted successfully.' });
+      await loadLinks();
+      // Also refresh submissions if any were deleted
+      await loadSubmissions();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err?.message || 'Failed to delete project' });
+    } finally {
+      setDeletingToken('');
+    }
+  }
+
   async function handleRefreshSubmissions() {
     setFeedback(null);
     try {
-      await loadSubmissions(submissionFilters);
+      await loadSubmissions();
     } catch (err) {
       setFeedback({ type: 'error', message: err?.message || 'Failed to refresh submissions' });
     }
   }
-  
+
   async function handleExport() {
     setFeedback(null);
     setExporting(true);
     try {
-      const blob = await exportCollectionSubmissions(submissionFilters);
+      const blob = await exportCollectionSubmissions();
       const filename = `parent_form_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
       downloadBlob(blob, filename);
       setFeedback({
         type: 'success',
         message:
-          'Excel export downloaded. Only the selected form fields are included, so the sheet stays clean and easier to use for bulk upload.',
+          'Excel export downloaded. Only the selected form fields are included.',
       });
     } catch (err) {
       setFeedback({ type: 'error', message: err?.message || 'Failed to export submissions' });
@@ -340,18 +340,17 @@ export default function ParentCollection() {
       setExporting(false);
     }
   }
-  
+
   async function handleExportSchool(schoolName, items) {
     setFeedback(null);
     setExportingSchool(schoolName);
     try {
       const sample = items[0];
-      const filters = { ...submissionFilters };
+      const filters = {};
       if (sample.schoolId) {
-         // use the object form if populated, otherwise the string
-         filters.schoolId = typeof sample.schoolId === 'object' ? sample.schoolId._id : sample.schoolId;
+        filters.schoolId = typeof sample.schoolId === 'object' ? sample.schoolId._id : sample.schoolId;
       } else {
-         filters.collectionSchoolLabel = schoolName;
+        filters.collectionSchoolLabel = schoolName;
       }
       const blob = await exportCollectionSubmissions(filters);
       const safeName = schoolName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -415,15 +414,39 @@ export default function ParentCollection() {
         <div className="card parent-collection-intro">
           <h2>Collect student data from parents</h2>
           <p className="text-muted">
-            Create a private form link, send it to parents or teachers, and later export the submitted data for bulk
-            upload. The admin controls whether this feature is visible to photographers.
+            Create a private form link, share it with parents, and export the collected data as Excel.
           </p>
-          {!publicOriginConfigured && (
+
+          <div className="how-it-works">
+            <div className="step">
+              <div className="step-number">1</div>
+              <div className="step-content">
+                <strong>Setup Form</strong>
+                <span>Enter project details and select fields you want to collect.</span>
+              </div>
+            </div>
+            <div className="step">
+              <div className="step-number">2</div>
+              <div className="step-content">
+                <strong>Share Link</strong>
+                <span>Generate a link and send it via WhatsApp/SMS to parents.</span>
+              </div>
+            </div>
+            <div className="step">
+              <div className="step-number">3</div>
+              <div className="step-content">
+                <strong>Download Data</strong>
+                <span>Once parents submit, export the data to Excel for bulk upload.</span>
+              </div>
+            </div>
+          </div>
+
+          {/* {!publicOriginConfigured && (
             <div className="parent-collection-warning">
               Set <code>VITE_PUBLIC_PARENT_ORIGIN</code> to your deployed web app URL so copied links open the correct
               parent form on phones.
             </div>
-          )}
+          )} */}
           {feedback && (
             <div className={`parent-collection-feedback ${feedback.type === 'error' ? 'error' : 'success'}`}>
               {feedback.message}
@@ -432,135 +455,127 @@ export default function ParentCollection() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: 16 }}>1. Link type</h3>
+          <h3 style={{ marginBottom: 16 }}>1. Project Details</h3>
           <div className="parent-collection-grid two">
             <label className="parent-collection-field">
-              <span className="input-label">Mode</span>
-              <select
+              <span className="input-label">Project Name (for your reference)</span>
+              <input
+                type="text"
                 className="input-field"
-                value={linkMode}
-                onChange={(e) => {
-                  setLinkMode(e.target.value);
-                  setLastCreatedLink('');
-                  setCollectionSchoolLabel('');
-                }}
-              >
-                <option value="standalone">Standalone (parents enter class and section)</option>
-                <option value="school">School-bound class</option>
-              </select>
+                placeholder="e.g. Satish Project 1"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+              />
             </label>
-            {linkMode === 'standalone' && (
-              <label className="parent-collection-field">
-                <span className="input-label">School Name</span>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Enter School Name"
-                  value={collectionSchoolLabel}
-                  onChange={(e) => setCollectionSchoolLabel(e.target.value)}
-                />
-              </label>
-            )}
+            <label className="parent-collection-field">
+              <span className="input-label">School Name (shown to parents)</span>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Enter School Name"
+                value={collectionSchoolLabel}
+                onChange={(e) => setCollectionSchoolLabel(e.target.value)}
+              />
+            </label>
           </div>
         </div>
 
-        {linkMode === 'school' && (
-          <div className="card">
-            <h3 style={{ marginBottom: 16 }}>2. Select school and class</h3>
-            <div className="parent-collection-grid two">
-              <label className="parent-collection-field">
-                <span className="input-label">School</span>
-                <select
-                  className="input-field"
-                  value={schoolId}
-                  onChange={(e) => setSchoolId(e.target.value)}
-                >
-                  <option value="">Select school</option>
-                  {schools.map((school) => (
-                    <option key={school._id} value={school._id}>
-                      {school.schoolName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="parent-collection-field">
-                <span className="input-label">Class / section</span>
-                <select
-                  className="input-field"
-                  value={classSectionId}
-                  onChange={(e) => setClassSectionId(e.target.value)}
-                  disabled={!schoolId || detailsLoading || flatSections.length === 0}
-                >
-                  <option value="">
-                    {!schoolId
-                      ? 'Select school first'
-                      : detailsLoading
-                        ? 'Loading classes...'
-                        : 'Select class / section'}
-                  </option>
-                  {flatSections.map((item) => (
-                    <option key={item.classId} value={item.classId}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-        )}
-
         <div className="card">
-          <h3 style={{ marginBottom: 8 }}>{linkMode === 'school' ? '3.' : '2.'} Select fields</h3>
+          <h3 style={{ marginBottom: 8 }}>2. Select fields</h3>
           <p className="text-muted" style={{ marginBottom: 16 }}>
             Student name is always required. These are the optional fields parents will fill in the public form.
           </p>
 
-          <div className="parent-collection-actions-row">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setFieldEnabled(makeInitialFieldEnabled())}
-              disabled={formDisabled}
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() =>
-                setFieldEnabled(
-                  Object.fromEntries(PARENT_FORM_OPTIONAL_FIELDS.map((field) => [field.key, false]))
-                )
-              }
-              disabled={formDisabled}
-            >
-              Name only
-            </button>
-          </div>
 
-          <div className="parent-collection-checkbox-grid">
-            {PARENT_FORM_OPTIONAL_FIELDS.map((field) => (
-              <label key={field.key} className="parent-collection-checkbox">
-                <input
-                  type="checkbox"
-                  checked={Boolean(fieldEnabled[field.key])}
-                  onChange={(e) =>
-                    setFieldEnabled((prev) => ({
-                      ...prev,
-                      [field.key]: e.target.checked,
-                    }))
-                  }
-                  disabled={formDisabled}
-                />
-                <span>{field.label}</span>
-              </label>
-            ))}
+
+          <div className="field-builder-v2">
+            <div className="field-repository-section">
+              <span className="section-subtitle">Available Fields (Click to enable)</span>
+              <div className="repository-grid">
+                <div className="repository-item mandatory">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span>Student Name</span>
+                </div>
+                {activeFields.map((field) => (
+                  <div
+                    key={field.key}
+                    className={`repository-item ${field.enabled ? 'is-enabled' : ''}`}
+                    onClick={() => toggleField(field.key)}
+                  >
+                    <div className="repo-checkbox">
+                      {field.enabled && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                    </div>
+                    <span>{field.label}</span>
+                    {field.isCustom && (
+                      <div className="repo-remove" onClick={(e) => { e.stopPropagation(); removeField(field.key); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button type="button" className="add-custom-pill" onClick={addCustomField}>
+                  + Add Custom
+                </button>
+              </div>
+            </div>
+
+            <div className="active-config-section" id="active-config-section">
+              <span className="section-subtitle">Field Configuration ({activeFields.filter(f => f.enabled).length} active)</span>
+              {activeFields.filter(f => f.enabled).length === 0 ? (
+                <div className="no-active-fields">
+                  Only Student Name will be collected. Select fields above or add custom ones to customize the form.
+                </div>
+              ) : (
+                <div className="config-list">
+                  {activeFields.filter(f => f.enabled).map((field) => (
+                    <div key={field.key} className="config-card-compact animate-in">
+                      <div className="config-card-header">
+                        <span className="config-card-title">{field.label}</span>
+                        <div className="config-card-badges">
+                          {field.isRequired && <span className="badge-mini req">Required</span>}
+                          <span className="badge-mini type">{field.fieldType}</span>
+                        </div>
+                      </div>
+                      <div className="config-card-body">
+                        <div className="config-input-group">
+                          <label>Form Label</label>
+                          <input
+                            type="text"
+                            value={field.label}
+                            placeholder="Label shown to parents"
+                            onChange={(e) => updateField(field.key, { label: e.target.value })}
+                            className="config-input"
+                          />
+                        </div>
+                        <div className="config-input-group">
+                          <label>Type</label>
+                          <select
+                            value={field.fieldType}
+                            onChange={(e) => updateField(field.key, { fieldType: e.target.value })}
+                            className="config-select"
+                          >
+                            <option value="text">Text</option>
+                            <option value="date">Date</option>
+                            <option value="number">Number</option>
+                          </select>
+                        </div>
+                        <div
+                          className={`config-toggle-req ${field.isRequired ? 'active' : ''}`}
+                          onClick={() => updateField(field.key, { isRequired: !field.isRequired })}
+                        >
+                          {field.isRequired ? '✓ Required' : 'Mark Required'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: 8 }}>{linkMode === 'school' ? '4.' : '3.'} Generate parent form link</h3>
+          <h3 style={{ marginBottom: 8 }}>3. Generate parent form link</h3>
           <p className="text-muted" style={{ marginBottom: 16 }}>
             Parents or teachers open this link in the web app, fill the form, and the data is saved for export.
           </p>
@@ -622,8 +637,8 @@ export default function ParentCollection() {
               <table>
                 <thead>
                   <tr>
-                    <th>Scope</th>
-                    <th>Fields</th>
+                    <th>Project / Scope</th>
+                    <th>Details</th>
                     <th>Status</th>
                     <th>Created</th>
                     <th>Actions</th>
@@ -632,7 +647,10 @@ export default function ParentCollection() {
                 <tbody>
                   {links.map((link) => (
                     <tr key={link._id}>
-                      <td>{formatLinkScope(link)}</td>
+                      <td>
+                        <div style={{ fontWeight: '500' }}>{link.projectName || 'Unnamed Project'}</div>
+                        <div className="text-muted" style={{ fontSize: '11px' }}>{formatLinkScope(link)}</div>
+                      </td>
                       <td>{formatFieldsSummary(link.fields)}</td>
                       <td>
                         <span className={`badge ${link.isActive ? 'badge-approved' : 'badge-printed'}`}>
@@ -652,13 +670,22 @@ export default function ParentCollection() {
                           {link.isActive && (
                             <button
                               type="button"
-                              className="btn btn-danger btn-sm"
+                              className="btn btn-warning btn-sm"
                               onClick={() => handleRevokeLink(link.token)}
                               disabled={revokingToken === link.token}
+                              style={{ color: 'white' }}
                             >
-                              {revokingToken === link.token ? 'Stopping...' : 'Revoke'}
+                              {revokingToken === link.token ? '...' : 'Revoke'}
                             </button>
                           )}
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleDeleteLink(link.token)}
+                            disabled={deletingToken === link.token}
+                          >
+                            {deletingToken === link.token ? '...' : 'Delete'}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -679,106 +706,87 @@ export default function ParentCollection() {
             </div>
           </div>
 
-          <div className="parent-collection-grid two" style={{ marginBottom: 16 }}>
-            <label className="parent-collection-field">
-              <span className="input-label">Filter class name</span>
-              <input
-                className="input-field"
-                value={filterClassName}
-                onChange={(e) => setFilterClassName(e.target.value)}
-                placeholder="Example: 10"
-              />
-            </label>
-            <label className="parent-collection-field">
-              <span className="input-label">Filter section</span>
-              <input
-                className="input-field"
-                value={filterSection}
-                onChange={(e) => setFilterSection(e.target.value)}
-                placeholder="Example: A"
-              />
-            </label>
-          </div>
 
-          <div className="parent-collection-actions-row">
+
+          {/* <div className="parent-collection-actions-row">
             <button type="button" className="btn btn-secondary" onClick={handleRefreshSubmissions} disabled={submissionsLoading}>
               {submissionsLoading ? 'Refreshing...' : 'Apply filters'}
             </button>
             <button type="button" className="btn btn-primary" onClick={handleExport} disabled={exporting}>
               {exporting ? 'Exporting...' : 'Export All Excel'}
             </button>
-          </div>
+          </div> */}
 
           {submissionsLoading ? (
-             <p className="text-muted" style={{ marginTop: 16 }}>Loading submissions...</p>
-           ) : Object.keys(groupedSubmissions).length === 0 ? (
-             <p className="text-muted" style={{ marginTop: 16 }}>No submitted parent data yet.</p>
-           ) : (
-             <div className="school-list" style={{ marginTop: 16 }}>
-               {Object.keys(groupedSubmissions).map((schoolGroup) => (
-                 <div key={schoolGroup} className="school-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                   <div
-                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-                     onClick={() => setExpandedSchool(expandedSchool === schoolGroup ? null : schoolGroup)}
-                   >
-                     <div>
-                       <strong>{schoolGroup}</strong>
-                       <p className="text-muted" style={{ fontSize: '0.9rem', marginTop: 4 }}>
-                         {groupedSubmissions[schoolGroup].length} submission(s)
-                       </p>
-                     </div>
-                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                       <button
-                         type="button"
-                         className="btn btn-primary btn-sm"
-                         onClick={(e) => { e.stopPropagation(); handleExportSchool(schoolGroup, groupedSubmissions[schoolGroup]); }}
-                         disabled={exportingSchool === schoolGroup}
-                       >
-                         {exportingSchool === schoolGroup ? 'Exporting...' : 'Export Excel'}
-                       </button>
-                       <span style={{ color: 'var(--text-muted)' }}>
-                         {expandedSchool === schoolGroup ? '▲' : '▼'}
-                       </span>
-                     </div>
-                   </div>
-                   {expandedSchool === schoolGroup && (
-                     <div className="table-container" style={{ marginTop: 16 }}>
-                       <table>
-                         <thead>
-                           <tr>
-                             <th>School</th>
-                             <th>Class</th>
-                             <th>Section</th>
-                             <th>Student</th>
-                             <th>Roll</th>
-                             <th>Admission</th>
-                             <th>Mobile</th>
-                             <th>Submitted</th>
-                           </tr>
-                         </thead>
-                         <tbody>
-                           {groupedSubmissions[schoolGroup].map((item) => (
-                             <tr key={item._id}>
-                               <td>{item.schoolName || '—'}</td>
-                               <td>{item.className || '—'}</td>
-                               <td>{item.section || '—'}</td>
-                               <td>{item.studentName || '—'}</td>
-                               <td>{item.rollNo || '—'}</td>
-                               <td>{item.admissionNo || '—'}</td>
-                               <td>{item.mobile || '—'}</td>
-                               <td>{formatDateTime(item.createdAt)}</td>
-                             </tr>
-                           ))}
-                         </tbody>
-                       </table>
-                     </div>
-                   )}
-                 </div>
-               ))}
-             </div>
-           )}
-         </div>
-       </div>
+            <p className="text-muted" style={{ marginTop: 16 }}>Loading submissions...</p>
+          ) : Object.keys(groupedSubmissions).length === 0 ? (
+            <p className="text-muted" style={{ marginTop: 16 }}>No submitted parent data yet.</p>
+          ) : (
+            <div className="school-list" style={{ marginTop: 16 }}>
+              {Object.keys(groupedSubmissions).map((schoolGroup) => (
+                <div key={schoolGroup} className="school-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                  <div
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                    onClick={() => setExpandedSchool(expandedSchool === schoolGroup ? null : schoolGroup)}
+                  >
+                    <div>
+                      <strong>{schoolGroup}</strong>
+                      <p className="text-muted" style={{ fontSize: '0.9rem', marginTop: 4 }}>
+                        {groupedSubmissions[schoolGroup].length} submission(s)
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={(e) => { e.stopPropagation(); handleExportSchool(schoolGroup, groupedSubmissions[schoolGroup]); }}
+                        disabled={exportingSchool === schoolGroup}
+                      >
+                        {exportingSchool === schoolGroup ? 'Exporting...' : 'Export Excel'}
+                      </button>
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        {expandedSchool === schoolGroup ? '▲' : '▼'}
+                      </span>
+                    </div>
+                  </div>
+                  {expandedSchool === schoolGroup && (
+                    <div className="table-container" style={{ marginTop: 16 }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>School</th>
+                            <th>Class</th>
+                            <th>Section</th>
+                            <th>Student</th>
+                            <th>Roll</th>
+                            <th>Admission</th>
+                            <th>Mobile</th>
+                            <th>Submitted</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groupedSubmissions[schoolGroup].map((item) => (
+                            <tr key={item._id}>
+                              <td style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{item.schoolName || '—'}</td>
+                              <td><span className="table-data-cell">{item.className || '—'}</span></td>
+                              <td><span className="table-data-cell">{item.section || '—'}</span></td>
+                              <td style={{ fontWeight: '600', color: 'var(--accent)' }}>{item.studentName || '—'}</td>
+                              <td>{item.rollNo || '—'}</td>
+                              <td>{item.admissionNo || '—'}</td>
+                              <td style={{ color: 'var(--uploaded)', fontSize: '0.9rem' }}>{item.mobile || '—'}</td>
+                              <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{formatDateTime(item.createdAt)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       <style>{`
         .parent-collection-page {
@@ -811,6 +819,7 @@ export default function ParentCollection() {
           flex-wrap: wrap;
           gap: 12px;
           margin-bottom: 12px;
+          margin-top: 20px;
         }
 
         .parent-collection-checkbox-grid {
@@ -870,6 +879,307 @@ export default function ParentCollection() {
           border-color: rgba(248, 113, 113, 0.25);
         }
 
+        .how-it-works {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 20px;
+          margin-top: 24px;
+          padding-top: 24px;
+          border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .step {
+          display: flex;
+          gap: 12px;
+          align-items: flex-start;
+        }
+
+        .step-number {
+          background: var(--accent);
+          color: var(--bg-primary);
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          flex-shrink: 0;
+          font-size: 0.9rem;
+        }
+
+        .step-content {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .step-content strong {
+          font-size: 0.95rem;
+          color: var(--text);
+          margin-bottom: 2px;
+        }
+
+        .step-content span {
+          font-size: 0.85rem;
+          color: var(--text-muted);
+          line-height: 1.4;
+        }
+
+        .field-builder-v2 {
+          display: flex;
+          flex-direction: column;
+          gap: 32px;
+        }
+
+        .section-subtitle {
+          display: block;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: 12px;
+        }
+
+        .repository-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+          gap: 10px;
+        }
+
+        .repository-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: var(--bg-card);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 0.9rem;
+          transition: all 0.2s;
+          position: relative;
+        }
+
+        .repository-item:hover {
+          border-color: rgba(255, 255, 255, 0.15);
+          background: rgba(255, 255, 255, 0.02);
+        }
+
+        .repository-item.is-enabled {
+          border-color: var(--accent);
+          background: rgba(56, 189, 248, 0.05);
+          color: var(--accent);
+        }
+
+        .repository-item.mandatory {
+          border-color: rgba(56, 189, 248, 0.3);
+          background: rgba(56, 189, 248, 0.1);
+          color: var(--accent);
+          cursor: default;
+          opacity: 0.8;
+        }
+
+        .repo-checkbox {
+          width: 16px;
+          height: 16px;
+          border: 1.5px solid rgba(255, 255, 255, 0.2);
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .is-enabled .repo-checkbox {
+          background: var(--accent);
+          border-color: var(--accent);
+          color: var(--bg-primary);
+        }
+
+        .repo-remove {
+          position: absolute;
+          right: 4px;
+          top: 4px;
+          color: var(--correction);
+          opacity: 0;
+          padding: 2px;
+          transition: opacity 0.2s;
+        }
+
+        .repository-item:hover .repo-remove {
+          opacity: 0.6;
+        }
+
+        .repo-remove:hover {
+          opacity: 1 !important;
+        }
+
+        .add-custom-pill {
+          background: transparent;
+          border: 1px dashed var(--accent);
+          color: var(--accent);
+          padding: 8px 14px;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .add-custom-pill:hover {
+          background: rgba(56, 189, 248, 0.1);
+        }
+
+        /* Config Cards */
+        .config-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+          gap: 16px;
+        }
+
+        .config-card-compact {
+          background: rgba(0, 0, 0, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .config-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .config-card-title {
+          font-weight: 600;
+          color: var(--text);
+          font-size: 0.95rem;
+        }
+
+        .config-card-badges {
+          display: flex;
+          gap: 6px;
+        }
+
+        .badge-mini {
+          font-size: 0.65rem;
+          padding: 2px 6px;
+          border-radius: 4px;
+          text-transform: uppercase;
+          font-weight: 700;
+        }
+
+        .badge-mini.req { background: rgba(248, 113, 113, 0.15); color: var(--correction); }
+        .badge-mini.type { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
+
+        .config-card-body {
+          display: grid;
+          grid-template-columns: 1fr 80px;
+          gap: 10px;
+          align-items: flex-end;
+        }
+
+        .config-input-group {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .config-input-group label {
+          font-size: 0.7rem;
+          color: var(--text-muted);
+        }
+
+        .config-input-group input, .config-input-group select {
+          background: var(--bg-secondary);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          padding: 6px 10px;
+          color: var(--text);
+          font-size: 0.85rem;
+        }
+
+        .config-toggle-req {
+          grid-column: span 2;
+          font-size: 0.75rem;
+          padding: 6px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.05);
+          text-align: center;
+          cursor: pointer;
+          color: var(--text-muted);
+          transition: all 0.2s;
+        }
+
+        .config-toggle-req.active {
+          background: rgba(248, 113, 113, 0.15);
+          color: #f87171;
+          border: 1px solid rgba(248, 113, 113, 0.3);
+        }
+
+        .no-active-fields {
+          padding: 32px;
+          text-align: center;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px dashed rgba(255, 255, 255, 0.1);
+          border-radius: 12px;
+          color: var(--text-muted);
+          font-style: italic;
+          font-size: 0.9rem;
+        }
+
+        .animate-in {
+          animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .config-input:focus, .config-select:focus {
+          border-color: var(--accent);
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+        }
+
+        .school-item {
+          background: var(--bg-card);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 12px;
+          padding: 16px;
+          margin-bottom: 12px;
+          transition: transform 0.2s;
+        }
+
+        .school-item:hover {
+          border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .parent-collection-link-box {
+          background: rgba(0, 0, 0, 0.3);
+          border: 1px solid var(--accent);
+          padding: 12px 16px;
+          border-radius: 8px;
+          font-family: monospace;
+          word-break: break-all;
+          color: var(--accent);
+          margin-top: 16px;
+        }
+
+        .parent-collection-warning {
+          background: rgba(251, 191, 36, 0.1);
+          border-left: 4px solid var(--pending);
+          padding: 12px 16px;
+          border-radius: 4px;
+          font-size: 0.9rem;
+          color: var(--pending);
+          margin-top: 16px;
+        }
+
         .parent-collection-card-header {
           display: flex;
           justify-content: space-between;
@@ -884,6 +1194,15 @@ export default function ParentCollection() {
           gap: 8px;
         }
 
+        .btn-warning {
+          background: #f59e0b;
+          color: white;
+        }
+
+        .btn-warning:hover {
+          background: #d97706;
+        }
+
         @media (max-width: 900px) {
           .parent-collection-grid.two,
           .parent-collection-checkbox-grid {
@@ -893,6 +1212,22 @@ export default function ParentCollection() {
           .parent-collection-card-header {
             flex-direction: column;
           }
+        }
+        .table-data-cell {
+          background: rgba(255, 255, 255, 0.05);
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 0.85rem;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        .parent-collection-page {
+          animation: fadeIn 0.4s ease-out;
         }
       `}</style>
     </>

@@ -293,6 +293,23 @@ export async function uploadStudentPhoto(studentId, file, deviceInfo = "Web") {
   return data;
 }
 
+export async function uploadStudentColorCodeImage(studentId, file) {
+  const form = new FormData();
+  if (file instanceof Blob) {
+    form.append("photo", file, file.name || "color_code.png");
+  }
+  form.append("studentId", String(studentId));
+
+  const res = await fetch(`${API_BASE_URL}/api/photographer/photos/upload-color-code`, {
+    method: "POST",
+    headers: authHeadersForm(),
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.message || data?.error || res.statusText || "Color code upload failed");
+  return data;
+}
+
 function dataURLtoBlob(dataURL) {
   if (!dataURL || typeof dataURL !== "string" || !dataURL.startsWith("data:")) return null;
   const arr = dataURL.split(",");
@@ -331,12 +348,37 @@ export async function uploadTemplate({ name, schoolId, classId, frontImage, back
 }
 
 export async function bulkSaveTemplates(templateId, studentIds) {
-  const res = await fetch(`${API_BASE_URL}/api/photographer/templates/bulk-save`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ templateId, studentIds }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.message || data?.error || "Bulk save failed");
-  return data;
+  const ids = Array.isArray(studentIds) ? studentIds.filter(Boolean) : [];
+  if (ids.length === 0) {
+    return { message: "No students selected", savedCount: 0 };
+  }
+
+  const batchSize = 50;
+  const results = [];
+  for (let start = 0; start < ids.length; start += batchSize) {
+    const batch = ids.slice(start, start + batchSize);
+    const res = await fetch(`${API_BASE_URL}/api/photographer/templates/bulk-save`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ templateId, studentIds: batch }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const batchNo = Math.floor(start / batchSize) + 1;
+      throw new Error(
+        data?.message ||
+          data?.error ||
+          res.statusText ||
+          `Bulk save failed on batch ${batchNo}`,
+      );
+    }
+    results.push(data);
+  }
+
+  return {
+    message: "Templates saved",
+    savedCount: ids.length,
+    batches: results.length,
+    results,
+  };
 }

@@ -29,8 +29,29 @@ function buildOfflineSchoolRef(schoolDoc) {
   };
 }
 
-function mapStudentRowForApi(s, schoolRef) {
-  const row = { ...s, _id: s.id, school: schoolRef, schoolId: schoolRef };
+function mapStudentRowForApi(s, schoolRef, retainPhotos = true) {
+  const source = s || {};
+  const row = retainPhotos
+    ? { ...source, _id: source.id, school: schoolRef, schoolId: schoolRef }
+    : (() => {
+        const {
+          photoUrl,
+          colorCodeImageUrl,
+          template,
+          ...rest
+        } = source;
+        return {
+          ...rest,
+          _id: source.id,
+          school: schoolRef,
+          schoolId: schoolRef,
+          hasPhoto: typeof photoUrl === 'string' && photoUrl.trim() !== '',
+          hasColorCodeImage:
+            typeof colorCodeImageUrl === 'string' &&
+            colorCodeImageUrl.trim() !== '',
+          ...(template ? { template } : {}),
+        };
+      })();
   if (row.template) {
     row.template = slimStudentTemplateField(row.template);
   }
@@ -55,6 +76,23 @@ function getStudentsForSchoolClassInOrder(schoolId, classId) {
       [schoolId, classId, Dexie.minKey],
       [schoolId, classId, Dexie.maxKey],
     );
+}
+
+async function collectStudentRowsForList(collection, schoolRef) {
+  const students = [];
+  let total = 0;
+  let withTemplates = 0;
+  await collection.each((student) => {
+    total += 1;
+    if (student?.hasTemplate) withTemplates += 1;
+    students.push(mapStudentRowForApi(student, schoolRef, false));
+  });
+  return {
+    students,
+    total,
+    withTemplates,
+    withoutTemplates: Math.max(0, total - withTemplates),
+  };
 }
 
 function isValidPhotographerTemplateShape(t) {
@@ -200,9 +238,26 @@ export async function getClassesBySchool(schoolId) {
 
 export async function getTemplatesStatus(schoolId, classId, options = {}) {
   const retainPhotos = options.retainPhotos !== false;
-  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
+  if (!retainPhotos) {
+    const list = await collectStudentRowsForList(
+      getStudentsForSchoolClassInOrder(schoolId, classId),
+      schoolRef,
+    );
+    return {
+      message: "Offline statistics",
+      total: list.total,
+      withTemplates: list.withTemplates,
+      withoutTemplates: list.withoutTemplates,
+      students: list.students,
+      summary: {
+        withTemplates: list.withTemplates,
+        withoutTemplates: list.withoutTemplates,
+      },
+    };
+  }
+  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const withTemplates = studentsList.filter(s => s.hasTemplate).length;
   const withoutTemplates = studentsList.length - withTemplates;
   return { 
@@ -211,7 +266,7 @@ export async function getTemplatesStatus(schoolId, classId, options = {}) {
     withTemplates, 
     withoutTemplates, 
     students: studentsList.map((s) =>
-      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef, retainPhotos), retainPhotos),
     ),
     summary: { withTemplates, withoutTemplates }
   };
@@ -219,13 +274,24 @@ export async function getTemplatesStatus(schoolId, classId, options = {}) {
 
 export async function getStudentsBySchoolAndClass(schoolId, classId, options = {}) {
   const retainPhotos = options.retainPhotos !== false;
-  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
+  if (!retainPhotos) {
+    const list = await collectStudentRowsForList(
+      getStudentsForSchoolClassInOrder(schoolId, classId),
+      schoolRef,
+    );
+    const template = resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+    return {
+      students: list.students,
+      ...(template ? { template } : {}),
+    };
+  }
+  const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
     students: studentsList.map((s) =>
-      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef, retainPhotos), retainPhotos),
     ),
     ...(template ? { template } : {}),
   };
@@ -238,13 +304,24 @@ export async function updateStudent(studentId, data) {
 
 export async function getStudentsBySchool(schoolId, options = {}) {
   const retainPhotos = options.retainPhotos !== false;
-  const studentsList = await getStudentsForSchoolInOrder(schoolId).toArray();
   const schoolDoc = await db.schools.get(schoolId);
   const schoolRef = buildOfflineSchoolRef(schoolDoc);
+  if (!retainPhotos) {
+    const list = await collectStudentRowsForList(
+      getStudentsForSchoolInOrder(schoolId),
+      schoolRef,
+    );
+    const template = resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+    return {
+      students: list.students,
+      ...(template ? { template } : {}),
+    };
+  }
+  const studentsList = await getStudentsForSchoolInOrder(schoolId).toArray();
   const template = resolveOfflinePhotographerTemplate(schoolId, studentsList, schoolDoc);
   return {
     students: studentsList.map((s) =>
-      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef), retainPhotos),
+      finalizeListStudentRow(mapStudentRowForApi(s, schoolRef, retainPhotos), retainPhotos),
     ),
     ...(template ? { template } : {}),
   };

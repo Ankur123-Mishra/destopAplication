@@ -483,6 +483,7 @@ export default function IdCardCanvasEditor({
 
   useEffect(() => {
     if (!effectiveColorCodeImage) return;
+    if (activeEditSide === 'back') return;
     setElements((prev) => {
       if (prev.some((e) => e.type === 'colorCode')) return prev;
       return [
@@ -497,7 +498,7 @@ export default function IdCardCanvasEditor({
         },
       ];
     });
-  }, [effectiveColorCodeImage]);
+  }, [effectiveColorCodeImage, activeEditSide]);
 
   useEffect(() => {
     if (!alignMenuOpen) return;
@@ -599,10 +600,10 @@ export default function IdCardCanvasEditor({
     const badges = elements.filter((e) => e.type === 'colorCode');
     if (!badges.length) {
       // Same default as photo: if Excel/color URL exists, badge slot is “on” until an element says otherwise.
-      return Boolean(effectiveColorCodeImage);
+      return activeEditSide !== 'back' && Boolean(effectiveColorCodeImage);
     }
     return badges.every((e) => e.showOnTemplate !== false);
-  }, [elements, effectiveColorCodeImage]);
+  }, [elements, effectiveColorCodeImage, activeEditSide]);
 
   const showColorCodeTemplateToggle =
     Boolean(effectiveColorCodeImage) || elements.some((e) => e.type === 'colorCode');
