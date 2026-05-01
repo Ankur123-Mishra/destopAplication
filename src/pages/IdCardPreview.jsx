@@ -51,10 +51,20 @@ export default function IdCardPreview() {
 
   const data = {
     studentImage: card.studentImage,
+    ...(card.colorCodeImage ? { colorCodeImage: card.colorCodeImage } : {}),
     name: card.name,
     studentId: card.studentId,
+    ...(card.rollNo != null && card.rollNo !== '' ? { rollNo: card.rollNo } : {}),
+    ...(card.admissionNo != null && card.admissionNo !== ''
+      ? { admissionNo: card.admissionNo }
+      : {}),
+    ...(card.uniqueCode != null && card.uniqueCode !== ''
+      ? { uniqueCode: card.uniqueCode }
+      : {}),
+    ...(card.section != null && card.section !== '' ? { section: card.section } : {}),
     className: card.className,
     schoolName: card.schoolName,
+    extraFields: card.extraFields && typeof card.extraFields === 'object' ? card.extraFields : {},
     ...(card.elements && { elements: card.elements }),
     ...(card.dateOfBirth && { dateOfBirth: card.dateOfBirth }),
     ...(card.address && { address: card.address }),
@@ -63,6 +73,15 @@ export default function IdCardPreview() {
     ...(card.academyName && { academyName: card.academyName }),
     ...(card.schoolLogo && { schoolLogo: card.schoolLogo }),
     ...(card.signature && { signature: card.signature }),
+    ...(card.fatherName && { fatherName: card.fatherName }),
+    ...(card.fatherPrimaryContact && { fatherPrimaryContact: card.fatherPrimaryContact }),
+    ...(card.motherName && { motherName: card.motherName }),
+    ...(card.motherPrimaryContact && { motherPrimaryContact: card.motherPrimaryContact }),
+    ...(card.gender && { gender: card.gender }),
+    ...(card.bloodGroup && { bloodGroup: card.bloodGroup }),
+    ...(card.house && { house: card.house }),
+    ...(card.marking && { marking: card.marking }),
+    ...(card.photoNo != null && card.photoNo !== '' ? { photoNo: card.photoNo } : {}),
   };
 
   return (

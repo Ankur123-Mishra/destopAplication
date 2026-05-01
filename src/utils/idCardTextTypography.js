@@ -179,10 +179,13 @@ function normalizeTextVerticalAlignInBox(el) {
   return 'top';
 }
 
+
 /**
  * Dropdown options: position of text inside its width/height box (editor + printed card).
  * Each option sets {@link textAlign} and {@link textVerticalAlign} on the element.
  */
+
+
 export const TEXT_IN_BOX_ALIGN_OPTIONS = [
   { value: 'left-top', label: 'Top — Left', textAlign: 'left', textVerticalAlign: 'top' },
   { value: 'center-top', label: 'Top — Center', textAlign: 'center', textVerticalAlign: 'top' },

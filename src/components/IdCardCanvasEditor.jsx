@@ -694,6 +694,7 @@ export default function IdCardCanvasEditor({
 
   // First time open (no initialElements): auto-add only Name so that
   // template fields sidebar starts with just Name checked by default.
+
   useEffect(() => {
     if (didInitAddAllRef.current) return;
     if (initialElements) return; // do not override a provided template layout
@@ -847,6 +848,7 @@ export default function IdCardCanvasEditor({
   };
 
   // Keyboard nudges: selected element ko Arrow keys se move karna (edit mode only).
+  
   useEffect(() => {
     if (showPreview) return;
     if (!selectedId) return;
@@ -1014,18 +1016,50 @@ export default function IdCardCanvasEditor({
     [selectedId]
   );
 
-  const handleSaveClick = () => {
-    onSave({
-      elements,
+  /** Snapshot for preview + save: keeps roll / student id / Excel extra columns (e.g. program) distinct after save. */
+  const getMergedCanvasData = useCallback(() => {
+    const extraFields =
+      initialData?.extraFields && typeof initialData.extraFields === 'object'
+        ? { ...initialData.extraFields }
+        : {};
+    return {
+      ...initialData,
       studentImage: photoUrl,
       colorCodeImage: effectiveColorCodeImage,
-      name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
-      studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
-      className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
-      schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
-      dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
-      address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
-    });
+      name: getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? ''),
+      studentId:
+        getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? ''),
+      rollNo: getFieldValue('rollNo') || '',
+      admissionNo: getFieldValue('admissionNo') || '',
+      uniqueCode: getFieldValue('uniqueCode') || '',
+      className:
+        getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? ''),
+      section: getFieldValue('section') || '',
+      schoolName:
+        getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? ''),
+      dateOfBirth:
+        getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? ''),
+      address:
+        getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? ''),
+      phone: getFieldValue('phone') || '',
+      email: getFieldValue('email') || '',
+      fatherName: getFieldValue('fatherName') || '',
+      fatherPrimaryContact: getFieldValue('fatherPrimaryContact') || '',
+      motherName: getFieldValue('motherName') || '',
+      motherPrimaryContact: getFieldValue('motherPrimaryContact') || '',
+      gender: getFieldValue('gender') || '',
+      bloodGroup: getFieldValue('bloodGroup') || '',
+      house: getFieldValue('house') || '',
+      marking: getFieldValue('marking') || '',
+      photoNo: getFieldValue('photoNo') || '',
+      extraFields,
+      elements,
+    };
+  }, [initialData, photoUrl, effectiveColorCodeImage, getFieldValue, elements]);
+
+  const handleSaveClick = () => {
+    const { elements: _els, ...snapshot } = getMergedCanvasData();
+    onSave({ elements, ...snapshot });
   };
  
   return (
@@ -1127,20 +1161,9 @@ export default function IdCardCanvasEditor({
                 >
                   <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
                     {hasPreviewElements ? (
-                      <IdCardRenderer 
+                      <IdCardRenderer
                         template={{ image: templateImage, elements }}
-                        data={{
-                          ...initialData,
-                          studentImage: photoUrl,
-                          colorCodeImage: effectiveColorCodeImage,
-                          name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
-                          studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
-                          className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
-                          schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
-                          dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
-                          address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
-                          phone: (getFieldValue('phone') || (elements.find((e) => e.id === 'phone')?.content ?? '')),
-                        }}
+                        data={getMergedCanvasData()}
                       />
                     ) : (
                       <div
@@ -1170,18 +1193,7 @@ export default function IdCardCanvasEditor({
                       {hasSecondaryPreviewElements ? (
                         <IdCardRenderer
                           template={{ image: previewSecondaryTemplateImage, elements: previewSecondaryElements }}
-                          data={{
-                            ...initialData,
-                            studentImage: photoUrl,
-                            colorCodeImage: effectiveColorCodeImage,
-                            name: (getFieldValue('name') || (elements.find((e) => e.id === 'name')?.content ?? '')),
-                            studentId: (getFieldValue('studentId') || (elements.find((e) => e.id === 'studentId')?.content ?? '')),
-                            className: (getFieldValue('className') || (elements.find((e) => e.id === 'class')?.content ?? '')),
-                            schoolName: (getFieldValue('schoolName') || (elements.find((e) => e.id === 'school')?.content ?? '')),
-                            dateOfBirth: (getFieldValue('dateOfBirth') || (elements.find((e) => e.id === 'dob')?.content ?? '')),
-                            address: (getFieldValue('address') || (elements.find((e) => e.id === 'address')?.content ?? '')),
-                            phone: (getFieldValue('phone') || (elements.find((e) => e.id === 'phone')?.content ?? '')),
-                          }}
+                          data={getMergedCanvasData()}
                         />
                       ) : (
                         <div
