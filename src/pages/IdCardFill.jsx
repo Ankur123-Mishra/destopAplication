@@ -103,10 +103,32 @@ export default function IdCardFill() {
       {
         templateId,
         studentImage: payload.studentImage,
+        ...(payload.colorCodeImage ? { colorCodeImage: payload.colorCodeImage } : {}),
         name: payload.name,
         studentId: payload.studentId,
+        rollNo: payload.rollNo,
+        admissionNo: payload.admissionNo,
+        uniqueCode: payload.uniqueCode,
         className: payload.className,
+        section: payload.section,
         schoolName: payload.schoolName,
+        dateOfBirth: payload.dateOfBirth,
+        phone: payload.phone,
+        email: payload.email,
+        address: payload.address,
+        fatherName: payload.fatherName,
+        fatherPrimaryContact: payload.fatherPrimaryContact,
+        motherName: payload.motherName,
+        motherPrimaryContact: payload.motherPrimaryContact,
+        gender: payload.gender,
+        bloodGroup: payload.bloodGroup,
+        house: payload.house,
+        marking: payload.marking,
+        photoNo: payload.photoNo,
+        extraFields:
+          payload.extraFields && typeof payload.extraFields === 'object'
+            ? payload.extraFields
+            : {},
         elements: payload.elements,
       },
       { schoolId, classId }
@@ -249,7 +271,13 @@ export default function IdCardFill() {
           }}
           initialData={{
             name: student?.name || student?.studentName || '',
-            studentId: student?.studentId || student?.admissionNo || student?.rollNo || student?.uniqueCode || '',
+            /** Prefer real IDs; roll last so Program / Student ID is not blank when that’s all the API sends. */
+            studentId:
+              student?.studentId ||
+              student?.admissionNo ||
+              student?.uniqueCode ||
+              student?.rollNo ||
+              '',
             admissionNo: student?.admissionNo || '',
             rollNo: student?.rollNo || '',
             uniqueCode: student?.uniqueCode || '',

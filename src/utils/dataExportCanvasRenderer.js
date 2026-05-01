@@ -25,9 +25,11 @@ const imageCache = new Map();
 
 /** Fast = bulk jobs; balanced = default; high = small batches (sharper, slower). */
 export const EXPORT_RENDER_PRESET = {
-  fast: { pixelScale: 2.1, jpegQuality: 0.88, pagePixelScale: 1.95 },
-  balanced: { pixelScale: 2.85, jpegQuality: 0.93, pagePixelScale: 2.65 },
-  high: { pixelScale: 3.75, jpegQuality: 0.97, pagePixelScale: 3.5 },
+  // Keep page exports aligned to 300 DPI so physical dimensions remain exact
+  // in print tools like Photoshop/CorelDRAW (e.g. 12x18 stays 12x18, not 10x15).
+  fast: { pixelScale: 2.1, jpegQuality: 0.88, pagePixelScale: 300 / 96 },
+  balanced: { pixelScale: 2.85, jpegQuality: 0.93, pagePixelScale: 300 / 96 },
+  high: { pixelScale: 3.75, jpegQuality: 0.97, pagePixelScale: 300 / 96 },
 };
 
 export function getCardExportPreset({ bulk, megaBulkPage } = {}) {
@@ -38,7 +40,7 @@ export function getCardExportPreset({ bulk, megaBulkPage } = {}) {
 
 export function getPageExportPreset({ bulk, megaBulkPage } = {}) {
   if (megaBulkPage) return EXPORT_RENDER_PRESET.fast;
-  if (bulk) return { ...EXPORT_RENDER_PRESET.balanced, pagePixelScale: 2.75 };
+  if (bulk) return EXPORT_RENDER_PRESET.balanced;
   return EXPORT_RENDER_PRESET.high;
 }
 
@@ -113,9 +115,20 @@ export function resolveCanvasDataFieldForExport(data, fieldKey) {
     phone: ["phone", "mobile", "studentMobile", "contact", "whatsapp"],
     mobile: ["mobile", "phone", "studentMobile", "contact", "whatsapp"],
     email: ["email", "studentEmail"],
-    studentId: ["studentId", "admissionNo", "rollNo", "uniqueCode", "regNo"],
+    studentId: ["studentId", "admissionNo", "uniqueCode", "regNo", "rollNo"],
     admissionNo: ["admissionNo", "regNo", "studentId"],
-    rollNo: ["rollNo", "studentId"],
+    rollNo: ["rollNo"],
+    program: [
+      "program",
+      "programName",
+      "course",
+      "courseName",
+      "stream",
+      "studentId",
+      "admissionNo",
+      "uniqueCode",
+      "rollNo",
+    ],
     className: ["className", "class"],
     name: ["name", "studentName"],
     dateOfBirth: ["dateOfBirth", "dob", "birthDate"],
@@ -159,6 +172,14 @@ function buildRendererData(card) {
     ...(card.colorCodeImage ? { colorCodeImage: card.colorCodeImage } : {}),
     name: card.name,
     studentId: card.studentId,
+    ...(card.rollNo != null && card.rollNo !== "" ? { rollNo: card.rollNo } : {}),
+    ...(card.admissionNo != null && card.admissionNo !== ""
+      ? { admissionNo: card.admissionNo }
+      : {}),
+    ...(card.uniqueCode != null && card.uniqueCode !== ""
+      ? { uniqueCode: card.uniqueCode }
+      : {}),
+    ...(card.section != null && card.section !== "" ? { section: card.section } : {}),
     className: card.className,
     schoolName: card.schoolName,
     extraFields: card.extraFields || {},

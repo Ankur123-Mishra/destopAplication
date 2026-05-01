@@ -290,6 +290,15 @@ function mergeExtraFieldsFromStudent(student) {
   fill("motherPrimaryContact", student.motherPrimaryContact);
   fill("photoNo", student.photoNo ?? "");
   fill("studentName", student.studentName);
+  fill("studentId", student.studentId);
+  fill(
+    "program",
+    student.program ??
+      student.programName ??
+      student.course ??
+      student.courseName ??
+      student.stream,
+  );
   return ex;
 }
 
@@ -2902,9 +2911,18 @@ async function exportPreviewPdfFromPreview(
   const el =
     typeof window !== "undefined" && window.electron ? window.electron : null;
 
+  // Chromium printToPDF can offset/crop the first page on larger sheet sizes.
+  // Use the jsPDF/html2canvas pipeline there for consistent output.
+  const pageAreaMm2 = Number(pageWidthMm) * Number(pageHeightMm);
+  const A4_AREA_MM2 = 210 * 297;
+  const isLargeSheetForNativePrint = Number.isFinite(pageAreaMm2)
+    ? pageAreaMm2 > A4_AREA_MM2
+    : true;
+
   const mayTryElectronNativePrint =
     pageCount < PDF_EXPORT_SKIP_NATIVE_PRINT_MIN_PAGES &&
-    pageCount <= PDF_EXPORT_NATIVE_PRINT_MAX_PAGES;
+    pageCount <= PDF_EXPORT_NATIVE_PRINT_MAX_PAGES &&
+    !isLargeSheetForNativePrint;
 
   let nativePdfBytes = null;
   if (
@@ -4003,7 +4021,11 @@ export default function SavedIdCardsList({
       _id: student._id,
       id: apiTemplate?.templateId || student._id,
       studentId:
-        student.admissionNo ?? student.rollNo ?? student.uniqueCode ?? "",
+        student.studentId ??
+        student.admissionNo ??
+        student.uniqueCode ??
+        student.rollNo ??
+        "",
       name: student.studentName ?? "",
       rollNo: resolvedRollNo,
       templateId,
@@ -5447,6 +5469,14 @@ export default function SavedIdCardsList({
       ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
       name: card.name,
       studentId: card.studentId,
+      ...(card.rollNo != null && card.rollNo !== "" ? { rollNo: card.rollNo } : {}),
+      ...(card.admissionNo != null && card.admissionNo !== ""
+        ? { admissionNo: card.admissionNo }
+        : {}),
+      ...(card.uniqueCode != null && card.uniqueCode !== ""
+        ? { uniqueCode: card.uniqueCode }
+        : {}),
+      ...(card.section != null && card.section !== "" ? { section: card.section } : {}),
       className: card.className,
       schoolName: card.schoolName,
       extraFields: card.extraFields || {},
@@ -5498,6 +5528,14 @@ export default function SavedIdCardsList({
       ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
       name: card.name,
       studentId: card.studentId,
+      ...(card.rollNo != null && card.rollNo !== "" ? { rollNo: card.rollNo } : {}),
+      ...(card.admissionNo != null && card.admissionNo !== ""
+        ? { admissionNo: card.admissionNo }
+        : {}),
+      ...(card.uniqueCode != null && card.uniqueCode !== ""
+        ? { uniqueCode: card.uniqueCode }
+        : {}),
+      ...(card.section != null && card.section !== "" ? { section: card.section } : {}),
       className: card.className,
       schoolName: card.schoolName,
       extraFields: card.extraFields || {},
@@ -5583,6 +5621,14 @@ export default function SavedIdCardsList({
                 ...(card.colorCodeImage ? { colorCodeImage: fullPhotoUrl(card.colorCodeImage) } : {}),
                 name: card.name,
                 studentId: card.studentId,
+                ...(card.rollNo != null && card.rollNo !== "" ? { rollNo: card.rollNo } : {}),
+                ...(card.admissionNo != null && card.admissionNo !== ""
+                  ? { admissionNo: card.admissionNo }
+                  : {}),
+                ...(card.uniqueCode != null && card.uniqueCode !== ""
+                  ? { uniqueCode: card.uniqueCode }
+                  : {}),
+                ...(card.section != null && card.section !== "" ? { section: card.section } : {}),
                 className: card.className,
                 schoolName: card.schoolName,
                 extraFields: card.extraFields || {},

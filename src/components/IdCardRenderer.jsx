@@ -42,9 +42,25 @@ function resolveCanvasDataField(data, fieldKey) {
     phone: ['phone', 'mobile', 'studentMobile', 'contact', 'whatsapp'],
     mobile: ['mobile', 'phone', 'studentMobile', 'contact', 'whatsapp'],
     email: ['email', 'studentEmail'],
-    studentId: ['studentId', 'admissionNo', 'rollNo', 'uniqueCode', 'regNo'],
+    /**
+     * Real IDs first, roll last — avoids blank Program / Student ID when API only sends roll;
+     * Roll No. slot still uses only rollNo.
+     */
+    studentId: ['studentId', 'admissionNo', 'uniqueCode', 'regNo', 'rollNo'],
     admissionNo: ['admissionNo', 'regNo', 'studentId'],
-    rollNo: ['rollNo', 'studentId'],
+    rollNo: ['rollNo'],
+    /** “Program” rows often bind here; fall through to ids when course/program columns are empty. */
+    program: [
+      'program',
+      'programName',
+      'course',
+      'courseName',
+      'stream',
+      'studentId',
+      'admissionNo',
+      'uniqueCode',
+      'rollNo',
+    ],
     className: ['className', 'class'],
     name: ['name', 'studentName'],
     dateOfBirth: ['dateOfBirth', 'dob', 'birthDate'],
