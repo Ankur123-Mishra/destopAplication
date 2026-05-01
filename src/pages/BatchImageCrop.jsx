@@ -275,15 +275,18 @@ export default function BatchImageCrop() {
   React.useEffect(() => {
     if (step !== STEPS.DEFINE_CROP) return;
     if (!imageNaturalSize.width || !imageNaturalSize.height) return;
-    if (fixedOutputSizePx.width > 0 && fixedOutputSizePx.height > 0) return;
 
-    const defaultWidthPx = (crop.width / 100) * imageNaturalSize.width;
-    const defaultHeightPx = (crop.height / 100) * imageNaturalSize.height;
-    if (!Number.isFinite(defaultWidthPx) || !Number.isFinite(defaultHeightPx)) return;
-    if (defaultWidthPx <= 0 || defaultHeightPx <= 0) return;
+    const widthPx = (crop.width / 100) * imageNaturalSize.width;
+    const heightPx = (crop.height / 100) * imageNaturalSize.height;
+    if (!Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
+    if (widthPx <= 0 || heightPx <= 0) return;
 
-    setFixedOutputSizePx({ width: defaultWidthPx, height: defaultHeightPx });
-  }, [step, imageNaturalSize, crop.width, crop.height, fixedOutputSizePx.width, fixedOutputSizePx.height]);
+    setFixedOutputSizePx((prev) => {
+      const near = (a, b) => Math.abs(a - b) < 0.01;
+      if (near(prev.width, widthPx) && near(prev.height, heightPx)) return prev;
+      return { width: widthPx, height: heightPx };
+    });
+  }, [step, imageNaturalSize.width, imageNaturalSize.height, crop.width, crop.height]);
 
   const frameDisplayDims = useMemo(() => {
     const wPx = fixedOutputSizePx.width;
@@ -533,8 +536,7 @@ export default function BatchImageCrop() {
       images: [{ imagePath, crop: cropData }],
       outputFolder: outputPath,
       shape: selectedFrame?.shape || 'rectangle',
-      svgPath: selectedFrame?.svgPath || null,
-      outputSize: fixedOutputSizePx
+      svgPath: selectedFrame?.svgPath || null
     });
     if (!result?.success) {
       throw new Error(result?.error || 'Failed to save cropped image.');
@@ -559,8 +561,7 @@ export default function BatchImageCrop() {
       images: payloadImages,
       outputFolder: outputPath,
       shape: selectedFrame?.shape || 'rectangle',
-      svgPath: selectedFrame?.svgPath || null,
-      outputSize: fixedOutputSizePx
+      svgPath: selectedFrame?.svgPath || null
     });
     if (!result?.success) {
       throw new Error(result?.error || 'Failed to save cropped images.');
@@ -885,8 +886,7 @@ export default function BatchImageCrop() {
           images: validImages,
           outputFolder: outputPath,
           shape: selectedFrame?.shape || 'rectangle',
-          svgPath: selectedFrame?.svgPath || null,
-          outputSize: fixedOutputSizePx
+          svgPath: selectedFrame?.svgPath || null
         });
 
         if (result.success) {
