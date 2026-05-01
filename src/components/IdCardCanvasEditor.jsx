@@ -1007,6 +1007,23 @@ export default function IdCardCanvasEditor({
       setElements((prev) =>
         prev.map((el) => {
           if (el.id !== selectedId) return el;
+          if (el.type === 'text') {
+            const map = {
+              'top-left': { textAlign: 'left', textVerticalAlign: 'top' },
+              'top-center': { textAlign: 'center', textVerticalAlign: 'top' },
+              'top-right': { textAlign: 'right', textVerticalAlign: 'top' },
+              'middle-left': { textAlign: 'left', textVerticalAlign: 'center' },
+              center: { textAlign: 'center', textVerticalAlign: 'center' },
+              'middle-right': { textAlign: 'right', textVerticalAlign: 'center' },
+              'bottom-left': { textAlign: 'left', textVerticalAlign: 'bottom' },
+              'bottom-center': { textAlign: 'center', textVerticalAlign: 'bottom' },
+              'bottom-right': { textAlign: 'right', textVerticalAlign: 'bottom' },
+            };
+            const style = map[alignValue];
+            if (style) {
+              return { ...el, ...style };
+            }
+          }
           const next = computeAlignedXY(el, alignValue);
           if (!next) return el;
           return { ...el, x: next.x, y: next.y };
@@ -1079,7 +1096,7 @@ export default function IdCardCanvasEditor({
                 aria-haspopup="listbox"
                 onClick={() => setAlignMenuOpen((o) => !o)}
               >
-                Align on card
+                {selectedEl?.type === 'text' ? 'Align in box' : 'Align on card'}
                 <span className="idcard-canvas-align-chevron" aria-hidden>
                   {alignMenuOpen ? '▲' : '▼'}
                 </span>
@@ -1479,38 +1496,14 @@ export default function IdCardCanvasEditor({
                         const opt = TEXT_IN_BOX_ALIGN_OPTIONS.find((o) => o.value === key);
                         if (!opt) return;
 
-                        // User requested that selecting "Center Top" etc. should also update X/Y.
-                        // Map "Text in Box" keys to "Canvas Alignment" keys.
-                        const alignMap = {
-                          'left-top': 'top-left',
-                          'center-top': 'top-center',
-                          'right-top': 'top-right',
-                          'left-center': 'middle-left',
-                          'center-center': 'center',
-                          'right-center': 'middle-right',
-                          'left-bottom': 'bottom-left',
-                          'center-bottom': 'bottom-center',
-                          'right-bottom': 'bottom-right',
-                        };
-                        const canvasAlignKey = alignMap[key];
-
                         setElements((prev) =>
                           prev.map((x) => {
                             if (x.id !== selectedEl.id || x.type !== 'text') return x;
-                            let nextEl = {
+                            return {
                               ...x,
                               textAlign: opt.textAlign,
                               textVerticalAlign: opt.textVerticalAlign,
                             };
-                            // Auto-reposition the box on the card to match the requested alignment
-                            if (canvasAlignKey) {
-                              const pos = computeAlignedXY(nextEl, canvasAlignKey);
-                              if (pos) {
-                                nextEl.x = pos.x;
-                                nextEl.y = pos.y;
-                              }
-                            }
-                            return nextEl;
                           })
                         );
                       }}
