@@ -90,23 +90,45 @@ function isMissing(v) {
   return v == null || v === "";
 }
 
-function getCanvasRawValue(data, key) {
-  if (!key || !data) return undefined;
-  if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
-  const ex = data.extraFields;
-  if (ex instanceof Map && ex.has(key)) return ex.get(key);
-  if (ex && typeof ex === "object" && Object.prototype.hasOwnProperty.call(ex, key)) {
-    return ex[key];
+function getCanvasRawValue(data, key, label) {
+  if (!data) return undefined;
+  
+  const tryFind = (k) => {
+    if (!k) return undefined;
+    if (Object.prototype.hasOwnProperty.call(data, k)) return data[k];
+    const ex = data.extraFields;
+    if (ex instanceof Map && ex.has(k)) return ex.get(k);
+    if (ex && typeof ex === "object" && Object.prototype.hasOwnProperty.call(ex, k)) {
+      return ex[k];
+    }
+    
+    // Case-insensitive / Space-insensitive fallback for extraFields
+    if (ex && typeof ex === "object" && !(ex instanceof Map)) {
+      const normalize = (s) => String(s).toLowerCase().replace(/[\s_-]/g, "");
+      const normalizedK = normalize(k);
+      const matchingKey = Object.keys(ex).find(ek => normalize(ek) === normalizedK);
+      if (matchingKey) return ex[matchingKey];
+    }
+    return undefined;
+  };
+
+  const res = tryFind(key);
+  if (res !== undefined && res !== "") return res;
+  
+  if (label) {
+    const resLabel = tryFind(label);
+    if (resLabel !== undefined && resLabel !== "") return resLabel;
   }
+
   return undefined;
 }
 
 /** Same field resolution as IdCardRenderer.resolveCanvasDataField */
-export function resolveCanvasDataFieldForExport(data, fieldKey) {
+export function resolveCanvasDataFieldForExport(data, fieldKey, label) {
   if (!fieldKey || !data) return null;
   const tryKeys = (keys) => {
     for (const k of keys) {
-      const v = getCanvasRawValue(data, k);
+      const v = getCanvasRawValue(data, k, label);
       if (!isMissing(v)) return v;
     }
     return null;
@@ -412,10 +434,9 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
   const paddingPx = 2 * pixelScale;
   const maxLineW = Math.max(4, boxW - 2 * paddingPx);
 
-  const wrapMultiline = el.dataField === "address";
   // Trim text to avoid invisible characters shifting the center
   const cleanContent = String(textContent || "").trim();
-  
+
   const lines = wrapMultiline
     ? wrapTextLines(ctx, cleanContent, maxLineW)
     : [cleanContent];
@@ -433,7 +454,7 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
   lines.forEach((line, i) => {
     const textWidth = ctx.measureText(line).width;
     let lx = x;
-    
+
     if (hAlign === "center") {
       lx = x + (boxW - textWidth) / 2;
     } else if (hAlign === "right") {
@@ -517,7 +538,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
       }
     } else if (el.type !== "photo" && el.type !== "colorCode") {
       const resolved = el.dataField
-        ? resolveCanvasDataFieldForExport(data, el.dataField)
+        ? resolveCanvasDataFieldForExport(data, el.dataField, el.label)
         : null;
       const text =
         resolved != null && !isMissing(resolved)

@@ -12,14 +12,36 @@ function isMissingFieldValue(v) {
   return v == null || v === '';
 }
 
-function getCanvasRawValue(data, key) {
-  if (!key || !data) return undefined;
-  if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
-  const ex = data.extraFields;
-  if (ex instanceof Map && ex.has(key)) return ex.get(key);
-  if (ex && typeof ex === 'object' && Object.prototype.hasOwnProperty.call(ex, key)) {
-    return ex[key];
+function getCanvasRawValue(data, key, label) {
+  if (!data) return undefined;
+  
+  const tryFind = (k) => {
+    if (!k) return undefined;
+    if (Object.prototype.hasOwnProperty.call(data, k)) return data[k];
+    const ex = data.extraFields;
+    if (ex instanceof Map && ex.has(k)) return ex.get(k);
+    if (ex && typeof ex === 'object' && Object.prototype.hasOwnProperty.call(ex, k)) {
+      return ex[k];
+    }
+    
+    // Case-insensitive / Space-insensitive fallback for extraFields
+    if (ex && typeof ex === 'object' && !(ex instanceof Map)) {
+      const normalize = (s) => String(s).toLowerCase().replace(/[\s_-]/g, "");
+      const normalizedK = normalize(k);
+      const matchingKey = Object.keys(ex).find(ek => normalize(ek) === normalizedK);
+      if (matchingKey) return ex[matchingKey];
+    }
+    return undefined;
+  };
+
+  const res = tryFind(key);
+  if (res !== undefined && res !== '') return res;
+  
+  if (label) {
+    const resLabel = tryFind(label);
+    if (resLabel !== undefined && resLabel !== '') return resLabel;
   }
+
   return undefined;
 }
 
@@ -28,11 +50,11 @@ function getCanvasRawValue(data, key) {
  * and common API key variants so canvas preview matches the editor.
  */
 
-function resolveCanvasDataField(data, fieldKey) {
+function resolveCanvasDataField(data, fieldKey, label) {
   if (!fieldKey || !data) return null;
   const tryKeys = (keys) => {
     for (const k of keys) {
-      const v = getCanvasRawValue(data, k);
+      const v = getCanvasRawValue(data, k, label);
       if (!isMissingFieldValue(v)) return v;
     }
     return null;
@@ -207,6 +229,7 @@ function CanvasTemplateTextElement({ el, textContent, wrapMultiline, textBoxWCla
         top: safeTop,
         width: `${textBoxWClamped}%`,
         maxWidth: `${textBoxWClamped}%`,
+        ...(typeof el.height === 'number' ? { height: `${el.height}%` } : {}),
         fontSize: `${safeFontSizePx}px`,
         ...getTextTypographyStyle(el),
         ...(safeFontWeight ? { fontWeight: safeFontWeight } : {}),
@@ -221,9 +244,9 @@ function CanvasTemplateTextElement({ el, textContent, wrapMultiline, textBoxWCla
           ...textBoxLayout.content,
           ...(fitState.scaleX < 0.999
             ? {
-                transform: `scaleX(${fitState.scaleX})`,
-                transformOrigin: scaleOrigin,
-              }
+              transform: `scaleX(${fitState.scaleX})`,
+              transformOrigin: scaleOrigin,
+            }
             : {}),
         }}
       >
@@ -318,7 +341,7 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
               </div>
             );
           }
-          const resolved = el.dataField ? resolveCanvasDataField(data, el.dataField) : null;
+          const resolved = el.dataField ? resolveCanvasDataField(data, el.dataField, el.label) : null;
           const textContent =
             resolved != null && !isMissingFieldValue(resolved)
               ? String(resolved)
@@ -625,16 +648,16 @@ export default function IdCardRenderer({ templateId, data, size = 'normal', temp
           <div className="idcard-cambridge-body">
             <div className="idcard-cambridge-icons-strip">
               <div className="idcard-cambridge-icon-circle" title="ID / Details">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="9" y1="21" x2="9" y2="9" /></svg>
               </div>
               <div className="idcard-cambridge-icon-circle" title="Date of Birth">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><path d="M12 14v4"/><path d="M9 18h6"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /><path d="M12 14v4" /><path d="M9 18h6" /></svg>
               </div>
               <div className="idcard-cambridge-icon-circle" title="Phone">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
               </div>
               <div className="idcard-cambridge-icon-circle" title="Address">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>
               </div>
             </div>
             <div className="idcard-cambridge-content">

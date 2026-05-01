@@ -422,7 +422,8 @@ export default function IdCardCanvasEditor({
   const [alignMenuOpen, setAlignMenuOpen] = useState(false);
   const alignMenuRef = useRef(null);
   // Disabled currently: “Align on card” UI.
-  const SHOW_ALIGN_ON_CARD = false;
+  // Enabled “Align on card” UI as requested by user.
+  const SHOW_ALIGN_ON_CARD = true;
   const didInitAddAllRef = useRef(false);
   const [dimensionLocal, setDimensionLocal] = useState(null);
   const [dimensionFormOpen, setDimensionFormOpen] = useState(false);
@@ -1477,14 +1478,39 @@ export default function IdCardCanvasEditor({
                         const key = e.target.value;
                         const opt = TEXT_IN_BOX_ALIGN_OPTIONS.find((o) => o.value === key);
                         if (!opt) return;
+
+                        // User requested that selecting "Center Top" etc. should also update X/Y.
+                        // Map "Text in Box" keys to "Canvas Alignment" keys.
+                        const alignMap = {
+                          'left-top': 'top-left',
+                          'center-top': 'top-center',
+                          'right-top': 'top-right',
+                          'left-center': 'middle-left',
+                          'center-center': 'center',
+                          'right-center': 'middle-right',
+                          'left-bottom': 'bottom-left',
+                          'center-bottom': 'bottom-center',
+                          'right-bottom': 'bottom-right',
+                        };
+                        const canvasAlignKey = alignMap[key];
+
                         setElements((prev) =>
                           prev.map((x) => {
                             if (x.id !== selectedEl.id || x.type !== 'text') return x;
-                            return {
+                            let nextEl = {
                               ...x,
                               textAlign: opt.textAlign,
                               textVerticalAlign: opt.textVerticalAlign,
                             };
+                            // Auto-reposition the box on the card to match the requested alignment
+                            if (canvasAlignKey) {
+                              const pos = computeAlignedXY(nextEl, canvasAlignKey);
+                              if (pos) {
+                                nextEl.x = pos.x;
+                                nextEl.y = pos.y;
+                              }
+                            }
+                            return nextEl;
                           })
                         );
                       }}

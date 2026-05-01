@@ -259,7 +259,7 @@ export default function IdCardFill() {
           templateImage={template.image}
           studentImage={student?.photoUrl || null}
           colorCodeImage={student?.colorCodeImageUrl || null}
-          initialElements={undefined}
+          initialElements={template.elements}
           dimension={student?.dimension}
           dimensionUnit={student?.dimensionUnit}
           schoolId={schoolId}
