@@ -655,16 +655,16 @@ ipcMain.handle('crop-images', async (event, data) => {
 });
 
 ipcMain.handle('crop-images-individually', async (event, data) => {
-  const { images, outputFolder, shape, svgPath, outputSize } = data;
-  
+  const { images, outputFolder, shape, svgPath } = data;
+
   try {
     let processedCount = 0;
-    
+
     for (let i = 0; i < images.length; i++) {
       const imageData = images[i];
       const imagePath = imageData.imagePath;
       const crop = imageData.crop;
-      
+
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
       const normalizedFileName = fileName.replace(/_cropped$/i, '');
@@ -679,32 +679,28 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
-      
+
       const image = await loadImage(imagePath);
-      
+
       const { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
         image.width,
         image.height,
         crop
       );
-      
-      const requestedOutputWidth = Number(outputSize?.width);
-      const requestedOutputHeight = Number(outputSize?.height);
-      const outputWidth = Number.isFinite(requestedOutputWidth) && requestedOutputWidth > 0
-        ? Math.max(1, Math.round(requestedOutputWidth))
-        : Math.max(1, Math.round(cropWidth));
-      const outputHeight = Number.isFinite(requestedOutputHeight) && requestedOutputHeight > 0
-        ? Math.max(1, Math.round(requestedOutputHeight))
-        : Math.max(1, Math.round(cropHeight));
+
+      // Always write at native crop pixel size so aspect ratio matches the selection
+      // (no stretching from a shared outputSize across different images or crop edits).
+      const outputWidth = Math.max(1, Math.round(cropWidth));
+      const outputHeight = Math.max(1, Math.round(cropHeight));
 
       const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
       configureHighQualityRasterContext(ctx);
-      
+
       if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, outputWidth, outputHeight);
       }
-      
+
       ctx.drawImage(
         image,
         cropX, cropY, cropWidth, cropHeight,
