@@ -302,6 +302,118 @@ export async function updateStudent(studentId, data) {
   return { message: "Student updated locally", studentId };
 }
 
+/**
+ * Insert one student into the offline Dexie DB (same row shape as Excel bulk upload).
+ */
+export async function createStudent(payload) {
+  const {
+    schoolId,
+    classId,
+    studentName,
+    admissionNo,
+    rollNo,
+    fatherName,
+    motherName,
+    gender,
+    bloodGroup,
+    email,
+    phone,
+    mobile,
+    address,
+    dateOfBirth,
+    dob,
+    photoNo,
+    uniqueCode,
+    house,
+    marking,
+    extraFields,
+    studentId: explicitStudentIdIn,
+  } = payload || {};
+
+  if (!schoolId || !classId) {
+    throw new Error("School and class are required.");
+  }
+
+  const cls = await db.classes.get(classId);
+  if (!cls) {
+    throw new Error("Class not found. Refresh the page or pick another class.");
+  }
+
+  const schoolDoc = await db.schools.get(schoolId);
+  const sharedTpl = resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+
+  const siblings = await db.students
+    .where("[schoolId+classId+excelRowOrder]")
+    .between(
+      [schoolId, classId, Dexie.minKey],
+      [schoolId, classId, Dexie.maxKey],
+    )
+    .toArray();
+  const maxOrder = siblings.reduce(
+    (m, s) => Math.max(m, Number(s?.excelRowOrder) || 0),
+    -1,
+  );
+
+  const admissionNoVal = String(admissionNo ?? "").trim();
+  const rollNoVal = String(rollNo ?? "").trim();
+  const uniqueCodeVal = String(uniqueCode ?? "").trim();
+  const explicitStudentId = String(explicitStudentIdIn ?? "").trim();
+  const dobVal = String(dob ?? dateOfBirth ?? "").trim();
+
+  const student = {
+    id: nanoid(),
+    schoolId,
+    classId,
+    className: cls.className,
+    section: cls.section || "",
+    excelRowOrder: maxOrder + 1,
+    studentName: String(studentName ?? "").trim(),
+    admissionNo: admissionNoVal,
+    rollNo: rollNoVal,
+    studentId:
+      explicitStudentId ||
+      admissionNoVal ||
+      rollNoVal ||
+      uniqueCodeVal ||
+      "",
+    photoNo: String(photoNo ?? "").trim(),
+    dateOfBirth: dobVal,
+    dob: dobVal,
+    phone: String(mobile ?? phone ?? "").trim(),
+    email: String(email ?? "").trim(),
+    address: String(address ?? "").trim(),
+    gender: String(gender ?? "").trim(),
+    bloodGroup: String(bloodGroup ?? "").trim(),
+    uniqueCode: uniqueCodeVal,
+    fatherName: String(fatherName ?? "").trim(),
+    motherName: String(motherName ?? "").trim(),
+    house: String(house ?? "").trim(),
+    marking: String(marking ?? "").trim(),
+    extraFields:
+      extraFields && typeof extraFields === "object" ? extraFields : {},
+    status: "Active",
+    photoUrl: null,
+    hasTemplate: Boolean(sharedTpl),
+    ...(sharedTpl
+      ? {
+          template: {
+            templateId: sharedTpl.templateId,
+            name: sharedTpl.name,
+            status: sharedTpl.name,
+          },
+        }
+      : {}),
+  };
+
+  await db.students.add(student);
+  const schoolRef = buildOfflineSchoolRef(schoolDoc);
+  const row = finalizeListStudentRow(
+    mapStudentRowForApi(student, schoolRef, false),
+    false,
+  );
+  return { message: "Student created locally", student: row };
+}
+
 export async function getStudentsBySchool(schoolId, options = {}) {
   const retainPhotos = options.retainPhotos !== false;
   const schoolDoc = await db.schools.get(schoolId);

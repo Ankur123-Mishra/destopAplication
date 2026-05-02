@@ -4,6 +4,7 @@ import React, {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useDeferredValue,
 } from "react";
 
 import { List } from "react-window";
@@ -39,6 +40,7 @@ import {
   renderSpreadPageToCanvas,
   blobToDataUrl,
 } from "../utils/dataExportCanvasRenderer";
+import { compressImageForUpload } from "../utils/imageUpload";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 
@@ -82,8 +84,8 @@ const PREVIEW_CARDS_CHUNK_SIZE = 64;
 
 /** Render preview pages in small batches so first pages appear immediately. */
 
-const PREVIEW_PAGES_RENDER_CHUNK_SIZE = 1;
-const PREVIEW_PAGES_RENDER_DELAY_MS = 16;
+const PREVIEW_PAGES_RENDER_CHUNK_SIZE = 6;
+const PREVIEW_PAGES_RENDER_DELAY_MS = 0;
 
 /** Stable fallback so `studentsForPreviewPrint` / card-building effects are not invalidated every render. */
 
@@ -468,6 +470,34 @@ function normalizeProjectType(projectType) {
     : "idCard";
 }
 
+/** Match student list rows by name, mobile, or photo number (substring, case-insensitive; digits-only match for phone-style fields). */
+function filterStudentsBySearchQuery(students, rawQuery) {
+  if (!Array.isArray(students) || students.length === 0) return students;
+  const trimmed = String(rawQuery ?? "").trim();
+  if (!trimmed) return students;
+  const qLower = trimmed.toLowerCase();
+  const digitsOnly = (v) => String(v ?? "").replace(/\D/g, "");
+  const qDigits = digitsOnly(trimmed);
+
+  return students.filter((s) => {
+    if (!s || typeof s !== "object") return false;
+    const name = String(s.studentName ?? s.name ?? "").toLowerCase();
+    if (name.includes(qLower)) return true;
+
+    const mobileRaw = String(s.mobile ?? s.phone ?? "");
+    const mobileLower = mobileRaw.toLowerCase();
+    if (mobileLower.includes(qLower)) return true;
+    if (qDigits && digitsOnly(mobileRaw).includes(qDigits)) return true;
+
+    const photoRaw = String(s.photoNo ?? "").trim();
+    const photoLower = photoRaw.toLowerCase();
+    if (photoLower.includes(qLower)) return true;
+    if (qDigits && digitsOnly(photoRaw).includes(qDigits)) return true;
+
+    return false;
+  });
+}
+
 function preloadImageSrc(src) {
   if (!src || typeof src !== "string" || !src.trim()) {
     return Promise.resolve();
@@ -486,7 +516,7 @@ function preloadImageSrc(src) {
 }
 
 /** Max cards decoded in parallel — large data-URL batches OOM the Electron renderer if unbounded. */
-const PREVIEW_CARD_PRELOAD_PARALLEL = 4;
+const PREVIEW_CARD_PRELOAD_PARALLEL = 8;
 
 /** Decode student photo + template art before mounting preview cells (sequential URLs per card to cap memory). */
 
@@ -505,9 +535,7 @@ async function preloadCardVisualAssets(card) {
       const ft = getFabricTemplateById(card.templateId);
       if (ft?.backgroundDataUrl) urls.push(ft.backgroundDataUrl);
     }
-    for (const u of urls) {
-      await preloadImageSrc(u);
-    }
+    await Promise.all(urls.map((u) => preloadImageSrc(u)));
   } catch {
 
     /* ignore — show preview even if preload fails */
@@ -564,7 +592,13 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
       {...ariaAttributes}
     >
       <div
-        style={{ display: "flex", gap: "8px", alignItems: "center", height: "100%" }}
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          height: "100%",
+          flexWrap: "wrap",
+        }}
       >
         <button
           type="button"
@@ -3378,6 +3412,10 @@ export default function SavedIdCardsList({
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [errorStudents, setErrorStudents] = useState("");
   const [selectedClass, setSelectedClass] = useState(null);
+  /** Filter rows on the students list (name, mobile, photo number). */
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  /** Lets the input stay responsive while large lists catch up on the filtered result. */
+  const deferredStudentSearchQuery = useDeferredValue(studentSearchQuery);
   /** GET /api/photographer/schools/:schoolId/students — full school roster */
   const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
   /** Full inline photos for Preview/Print only (list rows use memory-safe payloads). */
@@ -3395,6 +3433,175 @@ export default function SavedIdCardsList({
 
   const [editStudentData, setEditStudentData] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  /** Full-screen “Add new student” form opened from the edit modal (black overlay). */
+  const [addStudentOverlayOpen, setAddStudentOverlayOpen] = useState(false);
+  const [newStudentDraft, setNewStudentDraft] = useState(null);
+  const [savingNewStudent, setSavingNewStudent] = useState(false);
+  /** Pending image file for “Add new student” — uploaded after the student row exists. */
+  const pendingNewStudentPhotoRef = useRef(null);
+  const newStudentPhotoInputRef = useRef(null);
+  const newStudentPhotoBlobUrlRef = useRef(null);
+  const [newStudentPhotoPreviewUrl, setNewStudentPhotoPreviewUrl] =
+    useState(null);
+
+  const clearNewStudentPhotoSelection = React.useCallback(() => {
+    if (newStudentPhotoBlobUrlRef.current) {
+      URL.revokeObjectURL(newStudentPhotoBlobUrlRef.current);
+      newStudentPhotoBlobUrlRef.current = null;
+    }
+    pendingNewStudentPhotoRef.current = null;
+    setNewStudentPhotoPreviewUrl(null);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (newStudentPhotoBlobUrlRef.current) {
+        URL.revokeObjectURL(newStudentPhotoBlobUrlRef.current);
+      }
+    },
+    [],
+  );
+
+  const handleNewStudentPhotoFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) {
+      e.target.value = "";
+      return;
+    }
+    if (newStudentPhotoBlobUrlRef.current) {
+      URL.revokeObjectURL(newStudentPhotoBlobUrlRef.current);
+      newStudentPhotoBlobUrlRef.current = null;
+    }
+    pendingNewStudentPhotoRef.current = file;
+    const url = URL.createObjectURL(file);
+    newStudentPhotoBlobUrlRef.current = url;
+    setNewStudentPhotoPreviewUrl(url);
+
+    const basename = (file.name || "").replace(/\.[^/.]+$/, "").trim();
+    if (basename) {
+      setNewStudentDraft((prev) =>
+        prev ? { ...prev, photoNo: basename } : prev,
+      );
+    }
+
+    e.target.value = "";
+  };
+  const changePhotoInputRef = useRef(null);
+  const changePhotoTargetRef = useRef(null);
+  const [uploadingPhotoStudentId, setUploadingPhotoStudentId] = useState(null);
+
+  const requestChangePhoto = React.useCallback((student) => {
+    if (!student) return;
+    changePhotoTargetRef.current = student;
+    changePhotoInputRef.current?.click();
+  }, []);
+
+  const handleChangePhotoFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    const target = changePhotoTargetRef.current;
+    changePhotoTargetRef.current = null;
+    if (!file || !file.type.startsWith("image/")) {
+      e.target.value = "";
+      return;
+    }
+    if (!target) {
+      e.target.value = "";
+      return;
+    }
+    const studentId = target._id || target.id;
+    if (!studentId) {
+      e.target.value = "";
+      return;
+    }
+    setUploadingPhotoStudentId(studentId);
+    try {
+      const fileToUpload = await compressImageForUpload(file);
+      const uploadApi = isOnlineMode ? onlineApi : offlineApi;
+      const res = await uploadApi.uploadStudentPhoto(
+        studentId,
+        fileToUpload,
+        "Photographer Desktop App — Saved ID cards",
+      );
+      const photoUrl = res?.photoUrl;
+      const fullUrl = photoUrl
+        ? photoUrl.startsWith("http") ||
+          photoUrl.startsWith("data:") ||
+          photoUrl.startsWith("blob:")
+          ? photoUrl
+          : `${API_BASE_URL.replace(/\/$/, "")}${
+              photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
+            }`
+        : URL.createObjectURL(fileToUpload);
+      const basename = (file.name || "").replace(/\.[^/.]+$/, "").trim();
+      const fromApi =
+        res?.photoNo != null && String(res.photoNo).trim() !== ""
+          ? String(res.photoNo).trim()
+          : "";
+      let nextPhotoNo = fromApi || basename || String(target.photoNo ?? "").trim();
+
+      if (!isOnlineMode && nextPhotoNo) {
+        await offlineApi.updateStudent(studentId, { photoNo: nextPhotoNo });
+      }
+
+      const patchStudent = (s) => {
+        const sid = s._id || s.id;
+        if (sid !== studentId) return s;
+        return {
+          ...s,
+          photoUrl: fullUrl,
+          hasPhoto: true,
+          ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
+        };
+      };
+
+      const updater = (prevList) =>
+        prevList ? prevList.map(patchStudent) : prevList;
+
+      if (isAllSchoolStudents) {
+        setSchoolAllStudentsData((prev) =>
+          prev ? { ...prev, students: updater(prev.students) } : prev,
+        );
+      } else {
+        setTemplateStatus((prev) =>
+          prev ? { ...prev, students: updater(prev.students) } : prev,
+        );
+      }
+
+      setEditStudentData((prev) => {
+        if (!prev) return prev;
+        const pid = prev._id || prev.id;
+        if (pid !== studentId) return prev;
+        return {
+          ...prev,
+          photoUrl: fullUrl,
+          hasPhoto: true,
+          ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
+        };
+      });
+
+      setBulkPhotoDetailPayload((prev) => {
+        if (!prev?.data?.students) return prev;
+        const students = prev.data.students.map((s) =>
+          (s._id || s.id) === studentId
+            ? {
+                ...s,
+                photoUrl: fullUrl,
+                hasPhoto: true,
+                ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
+              }
+            : s,
+        );
+        return { ...prev, data: { ...prev.data, students } };
+      });
+
+      alert("Photo uploaded successfully.");
+    } catch (err) {
+      alert(err?.message || "Upload failed. Please try again.");
+    } finally {
+      setUploadingPhotoStudentId(null);
+      e.target.value = "";
+    }
+  };
 
   const handleSaveEdit = async (e) => {
     e.preventDefault();
@@ -3463,6 +3670,243 @@ export default function SavedIdCardsList({
       alert("Failed to update student details: " + err.message);
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const openAddStudentFromEditModal = React.useCallback(() => {
+    const baseClass =
+      typeof editStudentData?.classId === "object" && editStudentData.classId != null
+        ? editStudentData.classId._id || editStudentData.classId.id
+        : editStudentData?.classId;
+    const initialClassId =
+      (typeof baseClass === "string" && baseClass.trim() !== ""
+        ? baseClass
+        : null) ||
+      (typeof classId === "string" && classId.trim() !== "" ? classId : "") ||
+      "";
+    clearNewStudentPhotoSelection();
+    setNewStudentDraft({
+      classId: initialClassId,
+      studentName: "",
+      admissionNo: "",
+      rollNo: "",
+      fatherName: "",
+      motherName: "",
+      gender: "",
+      bloodGroup: "",
+      email: "",
+      phone: "",
+      address: "",
+      dateOfBirth: "",
+      photoNo: "",
+      house: "",
+    });
+    setAddStudentOverlayOpen(true);
+  }, [editStudentData, classId, clearNewStudentPhotoSelection]);
+
+  const handleSubmitNewStudent = async (e) => {
+    e.preventDefault();
+    if (!newStudentDraft || !schoolId) return;
+    const cid =
+      typeof newStudentDraft.classId === "object"
+        ? newStudentDraft.classId._id || newStudentDraft.classId.id
+        : newStudentDraft.classId;
+    if (!cid || String(cid).trim() === "") {
+      alert("Please select a class.");
+      return;
+    }
+    if (!String(newStudentDraft.studentName || "").trim()) {
+      alert("Student name is required.");
+      return;
+    }
+    setSavingNewStudent(true);
+    try {
+      let createdRow;
+      if (viewMode === "offline") {
+        const res = await offlineApi.createStudent({
+          schoolId,
+          classId: cid,
+          studentName: newStudentDraft.studentName,
+          admissionNo: newStudentDraft.admissionNo,
+          rollNo: newStudentDraft.rollNo,
+          fatherName: newStudentDraft.fatherName,
+          motherName: newStudentDraft.motherName,
+          gender: newStudentDraft.gender,
+          bloodGroup: newStudentDraft.bloodGroup,
+          email: newStudentDraft.email,
+          phone: newStudentDraft.phone,
+          mobile: newStudentDraft.phone,
+          address: newStudentDraft.address,
+          dateOfBirth: newStudentDraft.dateOfBirth,
+          dob: newStudentDraft.dateOfBirth,
+          photoNo: newStudentDraft.photoNo,
+          uniqueCode: "",
+          house: newStudentDraft.house,
+          marking: "",
+          extraFields: {},
+        });
+        createdRow = res.student;
+      } else if (typeof onlineApi.createStudent === "function") {
+        const onlinePayload = {
+          schoolId,
+          classId: cid,
+          studentName: newStudentDraft.studentName || "",
+          admissionNo: newStudentDraft.admissionNo || "",
+          rollNo: newStudentDraft.rollNo || "",
+          fatherName: newStudentDraft.fatherName || "",
+          motherName: newStudentDraft.motherName || "",
+          dob: newStudentDraft.dateOfBirth || "",
+          mobile: newStudentDraft.phone || "",
+          email: newStudentDraft.email || "",
+          gender: newStudentDraft.gender || "",
+          bloodGroup: newStudentDraft.bloodGroup || "",
+          photoNo: newStudentDraft.photoNo || "",
+          uniqueCode: "",
+          house: newStudentDraft.house || "",
+          marking: "",
+          extraFields: {},
+          address: newStudentDraft.address || "",
+        };
+        const data = await onlineApi.createStudent(onlinePayload);
+        createdRow =
+          data?.student ??
+          data?.data?.student ??
+          data?.data ??
+          data;
+        if (
+          !createdRow ||
+          (typeof createdRow === "object" &&
+            !createdRow._id &&
+            !createdRow.id)
+        ) {
+          throw new Error(
+            data?.message ||
+              "Server did not return the new student. If create is not supported online, use offline mode.",
+          );
+        }
+      } else {
+        throw new Error("Create student is not available in online mode.");
+      }
+
+      const newStudentId = createdRow._id || createdRow.id;
+      let rowForList = createdRow;
+      const pendingPhoto = pendingNewStudentPhotoRef.current;
+      if (pendingPhoto && newStudentId) {
+        try {
+          const fileToUpload = await compressImageForUpload(pendingPhoto);
+          const uploadApi = isOnlineMode ? onlineApi : offlineApi;
+          const res = await uploadApi.uploadStudentPhoto(
+            newStudentId,
+            fileToUpload,
+            "Photographer Desktop App — Saved ID cards",
+          );
+          const photoUrl = res?.photoUrl;
+          const fullUrl = photoUrl
+            ? photoUrl.startsWith("http") ||
+              photoUrl.startsWith("data:") ||
+              photoUrl.startsWith("blob:")
+              ? photoUrl
+              : `${API_BASE_URL.replace(/\/$/, "")}${
+                  photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
+                }`
+            : URL.createObjectURL(fileToUpload);
+          const basename = (pendingPhoto.name || "")
+            .replace(/\.[^/.]+$/, "")
+            .trim();
+          const fromApi =
+            res?.photoNo != null && String(res.photoNo).trim() !== ""
+              ? String(res.photoNo).trim()
+              : "";
+          let nextPhotoNo =
+            fromApi ||
+            basename ||
+            String(newStudentDraft.photoNo ?? "").trim();
+          if (!isOnlineMode && nextPhotoNo) {
+            await offlineApi.updateStudent(newStudentId, {
+              photoNo: nextPhotoNo,
+            });
+          }
+          rowForList = {
+            ...createdRow,
+            photoUrl: fullUrl,
+            hasPhoto: true,
+            ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
+          };
+        } catch (uploadErr) {
+          alert(
+            (uploadErr?.message || "Photo upload failed.") +
+              " Student was created; you can add a photo from Edit.",
+          );
+        }
+      }
+
+      const canvasRootForNewStudent = isAllSchoolStudents
+        ? schoolAllStudentsData?.template
+        : templateStatus?.template;
+      const existingNewTpl =
+        rowForList.template && typeof rowForList.template === "object"
+          ? rowForList.template
+          : {};
+      if (
+        !rowForList.hasTemplate &&
+        !existingNewTpl.templateId &&
+        isFullApiCanvasTemplate(canvasRootForNewStudent)
+      ) {
+        rowForList = {
+          ...rowForList,
+          hasTemplate: true,
+          template: {
+            ...existingNewTpl,
+            templateId: canvasRootForNewStudent.templateId || "uploaded-custom",
+            status:
+              canvasRootForNewStudent.name || "Uploaded Template",
+          },
+        };
+      }
+
+      clearNewStudentPhotoSelection();
+
+      if (
+        !isAllSchoolStudents &&
+        classId != null &&
+        String(cid) !== String(classId)
+      ) {
+        setAddStudentOverlayOpen(false);
+        setNewStudentDraft(null);
+        setEditStudentData(null);
+        alert(
+          "Student was saved for the class you selected. Open that class from the school menu to view or edit them.",
+        );
+        return;
+      }
+
+      if (isAllSchoolStudents) {
+        setSchoolAllStudentsData((prev) =>
+          prev
+            ? {
+                ...prev,
+                students: [...(prev.students || []), rowForList],
+              }
+            : prev,
+        );
+      } else {
+        setTemplateStatus((prev) =>
+          prev
+            ? {
+                ...prev,
+                students: [...(prev.students || []), rowForList],
+              }
+            : prev,
+        );
+      }
+
+      setAddStudentOverlayOpen(false);
+      setNewStudentDraft(null);
+      setEditStudentData(null);
+    } catch (err) {
+      alert(err?.message || "Failed to create student.");
+    } finally {
+      setSavingNewStudent(false);
     }
   };
 
@@ -3718,6 +4162,16 @@ export default function SavedIdCardsList({
     ? allSchoolStudentsRaw
     : classStudentsRaw;
 
+  const filteredStudentsForList = React.useMemo(
+    () =>
+      filterStudentsBySearchQuery(studentsForList, deferredStudentSearchQuery),
+    [studentsForList, deferredStudentSearchQuery],
+  );
+
+  useEffect(() => {
+    setStudentSearchQuery("");
+  }, [schoolId, classId, isAllSchoolStudents]);
+
   useLayoutEffect(() => {
     const el = savedIdStudentListWrapRef.current;
     if (!el) return;
@@ -3783,13 +4237,20 @@ export default function SavedIdCardsList({
   useEffect(() => {
     const api = savedIdStudentListRef.current;
     if (!api || typeof api.scrollToRow !== "function") return;
-    if (studentsForList.length === 0) return;
+    if (filteredStudentsForList.length === 0) return;
     try {
       api.scrollToRow({ index: 0, align: "start", behavior: "instant" });
     } catch {
       /* ignore — list may not be measured yet */
     }
-  }, [schoolId, classId, isAllSchoolStudents, studentsForList.length]);
+  }, [
+    schoolId,
+    classId,
+    isAllSchoolStudents,
+    studentsForList.length,
+    deferredStudentSearchQuery,
+    filteredStudentsForList.length,
+  ]);
 
   // Recalculate height on orientation change or major layout shifts
   useEffect(() => {
@@ -4124,7 +4585,7 @@ export default function SavedIdCardsList({
 
   const savedIdStudentListItemData = React.useMemo(
     () => ({
-      students: studentsForList,
+      students: filteredStudentsForList,
       studentToCard,
       studentHasRenderableSavedCard,
       schoolAllStudentsData,
@@ -4140,7 +4601,7 @@ export default function SavedIdCardsList({
       allowRootTemplateFallbackForAllStudents,
     }),
     [
-      studentsForList,
+      filteredStudentsForList,
       studentToCard,
       schoolAllStudentsData,
       templateStatus,
@@ -5893,9 +6354,34 @@ export default function SavedIdCardsList({
             borderRadius: "6px",
           }}
         >
-          Total Students: {studentsForList.length}
+          {deferredStudentSearchQuery.trim()
+            ? `Showing ${filteredStudentsForList.length} of ${studentsForList.length}`
+            : `Total Students: ${studentsForList.length}`}
         </span>
       </div>
+      {!loadingStudents && !errorStudents && studentsForList.length > 0 && (
+        <div style={{ marginBottom: 16, width: "100%" }}>
+          <label className="text-muted" style={{ display: "block", marginBottom: 6, fontSize: "0.85rem" }}>
+            Search students
+          </label>
+          <input
+            type="search"
+            className="form-control"
+            placeholder="Name, mobile number, or photo number"
+            value={studentSearchQuery}
+            onChange={(e) => setStudentSearchQuery(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            style={{
+              width: "100%",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+              padding: "10px 12px",
+              fontSize: "0.95rem",
+            }}
+          />
+        </div>
+      )}
       <p
         className="text-muted"
         style={{ marginBottom: 20, fontSize: "0.9rem" }}
@@ -5919,6 +6405,15 @@ export default function SavedIdCardsList({
               : isViewTemplateFlow
                 ? "No templates in this class."
                 : "No saved ID cards in this class."}
+          </p>
+        )}
+      {!loadingStudents &&
+        !errorStudents &&
+        studentsForList.length > 0 &&
+        filteredStudentsForList.length === 0 &&
+        deferredStudentSearchQuery.trim() !== "" && (
+          <p className="text-muted" style={{ marginBottom: 16 }}>
+            No students match your search. Try another name, mobile number, or photo number.
           </p>
         )}
       {!loadingStudents &&
@@ -5961,7 +6456,10 @@ export default function SavedIdCardsList({
             </button>
           </div>
         )}
-      {!loadingStudents && !errorStudents && studentsForList.length > 0 && (
+      {!loadingStudents &&
+        !errorStudents &&
+        studentsForList.length > 0 &&
+        filteredStudentsForList.length > 0 && (
         <div
           ref={savedIdStudentListWrapRef}
           className="saved-idcards-list saved-idcards-list--virtual"
@@ -5977,7 +6475,7 @@ export default function SavedIdCardsList({
           <List
             key={`${schoolId}-${classId}-${isAllSchoolStudents}`}
             listRef={savedIdStudentListRef}
-            rowCount={studentsForList.length}
+            rowCount={filteredStudentsForList.length}
             rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
             rowComponent={VirtualizedSavedIdStudentRow}
             rowProps={savedIdStudentListItemData}
@@ -6002,6 +6500,20 @@ export default function SavedIdCardsList({
 
   return (
     <>
+      <input
+        ref={changePhotoInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleChangePhotoFileSelect}
+      />
+      <input
+        ref={newStudentPhotoInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleNewStudentPhotoFileChange}
+      />
       {showStudents ? (
         <div
           style={{
@@ -6541,13 +7053,30 @@ export default function SavedIdCardsList({
               }}
             >
               <h3 style={{ margin: 0 }}>Edit student</h3>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setEditStudentData(null)}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexShrink: 0,
+                }}
               >
-                Close
-              </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ margin: 0 }}
+                  onClick={openAddStudentFromEditModal}
+                >
+                  Add new
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setEditStudentData(null)}
+                >
+                  Close
+                </button>
+              </div>
             </div>
             <form
               onSubmit={handleSaveEdit}
@@ -6804,18 +7333,58 @@ export default function SavedIdCardsList({
                     </div>
                     <div>
                       <label style={lab}>Photo no.</label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={editStudentData.photoNo || ""}
-                        onChange={(e) =>
-                          setEditStudentData({
-                            ...editStudentData,
-                            photoNo: e.target.value,
-                          })
-                        }
-                        style={inp}
-                      />
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {typeof editStudentData.photoUrl === "string" &&
+                          editStudentData.photoUrl.trim() !== "" && (
+                            <img
+                              src={fullPhotoUrl(editStudentData.photoUrl)}
+                              alt=""
+                              style={{
+                                width: 56,
+                                height: 56,
+                                objectFit: "cover",
+                                borderRadius: 8,
+                                border: "1px solid #333",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={editStudentData.photoNo || ""}
+                          onChange={(e) =>
+                            setEditStudentData({
+                              ...editStudentData,
+                              photoNo: e.target.value,
+                            })
+                          }
+                          style={{ ...inp, flex: "1 1 140px", minWidth: 120 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ marginBottom: 0, flexShrink: 0 }}
+                          disabled={
+                            !!uploadingPhotoStudentId &&
+                            uploadingPhotoStudentId ===
+                              (editStudentData._id || editStudentData.id)
+                          }
+                          onClick={() => requestChangePhoto(editStudentData)}
+                        >
+                          {uploadingPhotoStudentId ===
+                          (editStudentData._id || editStudentData.id)
+                            ? "Uploading…"
+                            : "Change photo"}
+                        </button>
+                      </div>
                     </div>
                   </>
                 );
@@ -6828,6 +7397,423 @@ export default function SavedIdCardsList({
                   style={{ width: "100%", padding: "12px" }}
                 >
                   {savingEdit ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {addStudentOverlayOpen && newStudentDraft && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add new student"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "#000",
+            zIndex: 10001,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            boxSizing: "border-box",
+          }}
+          onClick={() => {
+            if (!savingNewStudent) {
+              clearNewStudentPhotoSelection();
+              setAddStudentOverlayOpen(false);
+              setNewStudentDraft(null);
+            }
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 520,
+              maxWidth: "100%",
+              maxHeight: "calc(100vh - 32px)",
+              background: "#0a0a0a",
+              border: "1px solid #1f1f1f",
+              borderRadius: 12,
+              padding: 24,
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 12px 48px rgba(0,0,0,0.6)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+                flexShrink: 0,
+                gap: 12,
+              }}
+            >
+              <h3 style={{ margin: 0, color: "#fff" }}>Add new student</h3>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={savingNewStudent}
+                onClick={() => {
+                  clearNewStudentPhotoSelection();
+                  setAddStudentOverlayOpen(false);
+                  setNewStudentDraft(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <form
+              onSubmit={handleSubmitNewStudent}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+                overflowY: "auto",
+                minHeight: 0,
+                flex: 1,
+                paddingRight: 4,
+              }}
+            >
+              {(() => {
+                const inp = {
+                  width: "100%",
+                  padding: "10px",
+                  border: "1px solid #333",
+                  borderRadius: 6,
+                  background: "#141414",
+                  color: "white",
+                  boxSizing: "border-box",
+                };
+                const lab = {
+                  display: "block",
+                  marginBottom: 6,
+                  fontSize: "0.9rem",
+                  color: "rgba(255,255,255,0.85)",
+                };
+                const d = newStudentDraft;
+                return (
+                  <>
+                    <div>
+                      <label style={lab}>Class</label>
+                      <select
+                        className="form-control"
+                        required
+                        value={d.classId || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            classId: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      >
+                        <option value="">Select class</option>
+                        {(classes ?? []).map((c) => {
+                          const id = c._id || c.id;
+                          if (!id) return null;
+                          const label = normalizeClassNameForDisplay(
+                            [c.className, c.section].filter(Boolean).join(" · "),
+                          );
+                          return (
+                            <option key={id} value={id}>
+                              {label || id}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lab}>Student name</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        required
+                        value={d.studentName || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            studentName: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>Admission no.</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.admissionNo || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              admissionNo: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>Roll no.</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.rollNo || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              rollNo: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>{"Father's name"}</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.fatherName || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              fatherName: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>{"Mother's name"}</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.motherName || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              motherName: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>Gender</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.gender || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              gender: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>Blood group</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.bloodGroup || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              bloodGroup: e.target.value,
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={lab}>Email</label>
+                      <input
+                        type="email"
+                        className="form-control"
+                        value={d.email || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            email: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Mobile / phone</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={d.phone || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            phone: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Address</label>
+                      <textarea
+                        className="form-control"
+                        rows={3}
+                        value={d.address || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            address: e.target.value,
+                          })
+                        }
+                        style={{ ...inp, resize: "vertical", minHeight: 72 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Date of birth</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="DD.MM.YYYY"
+                        value={d.dateOfBirth || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            dateOfBirth: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
+                      <label style={lab}>Photo no. & upload</label>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {newStudentPhotoPreviewUrl && (
+                          <img
+                            src={newStudentPhotoPreviewUrl}
+                            alt=""
+                            style={{
+                              width: 56,
+                              height: 56,
+                              objectFit: "cover",
+                              borderRadius: 8,
+                              border: "1px solid #333",
+                              flexShrink: 0,
+                            }}
+                          />
+                        )}
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={d.photoNo || ""}
+                          onChange={(e) =>
+                            setNewStudentDraft({
+                              ...d,
+                              photoNo: e.target.value,
+                            })
+                          }
+                          placeholder="Optional — can match file name"
+                          style={{ ...inp, flex: "1 1 140px", minWidth: 120 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ marginBottom: 0, flexShrink: 0 }}
+                          disabled={savingNewStudent}
+                          onClick={() =>
+                            newStudentPhotoInputRef.current?.click()
+                          }
+                        >
+                          Choose photo
+                        </button>
+                        {newStudentPhotoPreviewUrl && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ marginBottom: 0, flexShrink: 0 }}
+                            disabled={savingNewStudent}
+                            onClick={() => clearNewStudentPhotoSelection()}
+                          >
+                            Remove photo
+                          </button>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: "0.8rem",
+                          color: "rgba(255,255,255,0.5)",
+                        }}
+                      >
+                        Photo is uploaded after the student is created.
+                      </div>
+                    </div>
+                    <div>
+                      <label style={lab}>House</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={d.house || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            house: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                  </>
+                );
+              })()}
+              <div style={{ marginTop: 8, flexShrink: 0 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingNewStudent}
+                  style={{ width: "100%", padding: "12px" }}
+                >
+                  {savingNewStudent ? "Creating…" : "Create student"}
                 </button>
               </div>
             </form>

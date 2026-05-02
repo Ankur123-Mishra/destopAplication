@@ -1,13 +1,25 @@
 const STORAGE_KEY = 'uploadedIdCardTemplates';
 
+/** Avoid parsing localStorage on every getUploadedTemplateById (preview renders many cards). */
+let uploadedTemplatesCache = null;
+
 export function getUploadedTemplates() {
+  if (uploadedTemplatesCache) return uploadedTemplatesCache;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { nextId: 1, templates: [] };
+    if (!raw) {
+      uploadedTemplatesCache = { nextId: 1, templates: [] };
+      return uploadedTemplatesCache;
+    }
     const data = JSON.parse(raw);
-    return { nextId: data.nextId ?? 1, templates: data.templates ?? [] };
+    uploadedTemplatesCache = {
+      nextId: data.nextId ?? 1,
+      templates: data.templates ?? [],
+    };
+    return uploadedTemplatesCache;
   } catch {
-    return { nextId: 1, templates: [] };
+    uploadedTemplatesCache = { nextId: 1, templates: [] };
+    return uploadedTemplatesCache;
   }
 }
 
@@ -41,6 +53,7 @@ export function saveUploadedTemplate({
     data.nextId += 1;
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  uploadedTemplatesCache = data;
   return template.id;
 }
 
@@ -53,4 +66,5 @@ export function deleteUploadedTemplate(id) {
   const data = getUploadedTemplates();
   data.templates = data.templates.filter((t) => t.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  uploadedTemplatesCache = data;
 }

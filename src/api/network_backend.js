@@ -99,6 +99,25 @@ export async function updateStudent(studentId, data) {
   return resData;
 }
 
+/** POST /api/photographer/students — server must expose create; body includes schoolId + classId + fields. */
+export async function createStudent(payload) {
+  const res = await fetch(`${API_BASE_URL}/api/photographer/students`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to create student";
+    throw new Error(msg);
+  }
+  return data;
+}
+
 function formatSchoolCreateErrors(data) {
   const base = data?.message || data?.error || "School create failed";
   const arr = data?.errors;

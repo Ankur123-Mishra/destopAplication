@@ -85,6 +85,8 @@ export default function FabricIdCardGenerator({
 
       const objects = canvas.getObjects();
       const toRemove = [];
+      const pendingImages = [];
+
       for (let i = 0; i < objects.length; i++) {
         const obj = objects[i];
         const customType = obj.customType;
@@ -102,32 +104,52 @@ export default function FabricIdCardGenerator({
         if (customType === 'photo') {
           toRemove.push(obj);
           if (studentImage) {
-            try {
-              const img = await FabricImage.fromURL(studentImage);
-              const w = obj.width * (obj.scaleX || 1);
-              const h = obj.height * (obj.scaleY || 1);
-              img.set({ left: obj.left, top: obj.top });
-              img.scaleToWidth(w);
-              if (img.height * img.scaleY > h) img.scaleToHeight(h);
-              canvas.add(img);
-            } catch (_) {}
+            pendingImages.push(
+              (async () => {
+                try {
+                  const img = await FabricImage.fromURL(studentImage);
+                  const w = obj.width * (obj.scaleX || 1);
+                  const h = obj.height * (obj.scaleY || 1);
+                  img.set({ left: obj.left, top: obj.top });
+                  img.scaleToWidth(w);
+                  if (img.height * img.scaleY > h) img.scaleToHeight(h);
+                  return img;
+                } catch (_) {
+                  return null;
+                }
+              })(),
+            );
           }
         }
 
         if (customType === 'qr') {
           toRemove.push(obj);
           const qrText = studentId || name || 'ID';
-          try {
-            const qrDataUrl = await QRCode.toDataURL(qrText, { width: 200, margin: 1 });
-            const img = await FabricImage.fromURL(qrDataUrl);
-            const w = obj.width * (obj.scaleX || 1);
-            const h = obj.height * (obj.scaleY || 1);
-            img.set({ left: obj.left, top: obj.top });
-            img.scaleToWidth(w);
-            if (img.height * img.scaleY > h) img.scaleToHeight(h);
-            canvas.add(img);
-          } catch (_) {}
+          pendingImages.push(
+            (async () => {
+              try {
+                const qrDataUrl = await QRCode.toDataURL(qrText, {
+                  width: 200,
+                  margin: 1,
+                });
+                const img = await FabricImage.fromURL(qrDataUrl);
+                const w = obj.width * (obj.scaleX || 1);
+                const h = obj.height * (obj.scaleY || 1);
+                img.set({ left: obj.left, top: obj.top });
+                img.scaleToWidth(w);
+                if (img.height * img.scaleY > h) img.scaleToHeight(h);
+                return img;
+              } catch (_) {
+                return null;
+              }
+            })(),
+          );
         }
+      }
+
+      const loaded = await Promise.all(pendingImages);
+      for (const img of loaded) {
+        if (img) canvas.add(img);
       }
       toRemove.forEach((o) => canvas.remove(o));
       applyAddressAndDataToCanvas(canvas);

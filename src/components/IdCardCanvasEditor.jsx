@@ -1599,6 +1599,7 @@ export default function IdCardCanvasEditor({
                           );
                         }}
                       >
+
                         <span style={{ textDecoration: 'underline' }}>U</span>
                       </button>
                     </div>
@@ -1882,9 +1883,13 @@ export default function IdCardCanvasEditor({
               const hasValue = normalizeValue(val).trim() !== '';
               
               // Skip fields with no value (show only what exists in Excel/student data)
+
               if (!hasValue) return null;
               
               // Checked if this field is on the current canvas or (front/back mode) on the other side.
+
+
+
               const checked = templateFieldChecked(f.key);
               
               return (
@@ -1908,8 +1913,6 @@ export default function IdCardCanvasEditor({
               );
             })}
           </div>
-
-       
         </div>
       </div>
     </div>
