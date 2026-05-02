@@ -17,15 +17,18 @@ const placeholderJpegBuffer = (() => {
 })();
 
 /**
- * Batch / folder crop always saves as JPEG so file size stays predictable (PNG + level-0 was 1–2 MB).
- * Shape masks are baked into opaque pixels; no need for PNG.
+ * Batch / folder crop saves as PNG (`crop image` folder).
+ * Size is capped via {@link canvasToPngUnderMaxBytes} (~100 KB).
  */
 function getCropExportMeta() {
-  return { ext: '.jpg', mime: 'image/jpeg' };
+  return { ext: '.png', mime: 'image/png' };
 }
 
-/** Target band ~150–200 KB; hard cap 200 KB. */
+/** Target band ~150–200 KB; hard cap 200 KB (non-PNG crop export only). */
 const MAX_CROP_JPEG_BYTES = 200 * 1024;
+
+/** Batch crop PNG output must stay under this size (may downscale if needed). */
+const MAX_CROP_PNG_BYTES = 100 * 1024;
 
 /**
  * JPEG ≤ maxBytes: binary search on quality, then optional downscale if still too large (huge pixel dimensions).
@@ -77,10 +80,36 @@ function canvasToJpegUnderMaxBytes(canvas, maxBytes = MAX_CROP_JPEG_BYTES) {
   return buf;
 }
 
+/**
+ * PNG ≤ maxBytes: zlib compression (level 9), then optional downscale if still too large.
+ */
+function canvasToPngUnderMaxBytes(canvas, maxBytes = MAX_CROP_PNG_BYTES) {
+  const encode = (c) =>
+    c.toBuffer('image/png', { compressionLevel: 9 });
+
+  let c = canvas;
+  let buf = encode(c);
+  if (buf.length <= maxBytes) return buf;
+
+  const MIN_EDGE = 160;
+  while (buf.length > maxBytes && Math.max(c.width, c.height) > MIN_EDGE) {
+    const factor = 0.88;
+    const w = Math.max(MIN_EDGE, Math.floor(c.width * factor));
+    const h = Math.max(MIN_EDGE, Math.floor(c.height * factor));
+    const scaled = createCanvas(w, h);
+    const ctx = scaled.getContext('2d');
+    configureHighQualityRasterContext(ctx);
+    ctx.drawImage(c, 0, 0, w, h);
+    c = scaled;
+    buf = encode(c);
+    if (buf.length <= maxBytes) return buf;
+  }
+  return buf;
+}
+
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
-    // Favor speed over compression size for instant next-image UX.
-    return canvas.toBuffer('image/png', { compressionLevel: 0 });
+    return canvasToPngUnderMaxBytes(canvas, MAX_CROP_PNG_BYTES);
   }
 
   return canvasToJpegUnderMaxBytes(canvas, MAX_CROP_JPEG_BYTES);

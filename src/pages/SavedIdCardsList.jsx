@@ -1101,16 +1101,12 @@ function applyExportRenderHintsToClone(clonedDoc) {
     .print-card-cell .idcard svg {
       shape-rendering: geometricPrecision;
     }
-    /*
-      html2canvas often rasterizes absolute %‑positioned overlays a little lower than
-      the live preview (subpixel / flex vs capture). Nudge overlays up on the clone only
-      so JPEG/PDF export matches what you see on screen.
-    */
+    /* html2canvas: %‑positioned overlays can land slightly high vs template art; nudge down on clone only. */
     .print-card-cell .idcard-image-template-canvas .idcard-canvas-el {
-      transform: translateY(-0.4px) !important;
+      transform: translateY(1px) !important;
     }
     .print-card-cell .idcard-image-template-overlay {
-      transform: translateY(-0.4px) !important;
+      transform: translateY(1px) !important;
     }
     /* Sheet corner dots: explicit px size helps html2canvas; mm-only sizing can rasterize as 0. */
     .idcard-sheet-crop-mark {
