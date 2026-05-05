@@ -18,101 +18,24 @@ const placeholderJpegBuffer = (() => {
 
 /**
  * Batch / folder crop saves as PNG (`crop image` folder).
- * Size is capped via {@link canvasToPngUnderMaxBytes} (~100 KB).
+ * Full crop pixel dimensions are preserved (no byte-cap downscaling — that was shrinking exports and hurting quality).
  */
 function getCropExportMeta() {
   return { ext: '.png', mime: 'image/png' };
 }
 
-/** Target band ~150–200 KB; hard cap 200 KB (non-PNG crop export only). */
-const MAX_CROP_JPEG_BYTES = 200 * 1024;
-
-/** Batch crop PNG output must stay under this size (may downscale if needed). */
-const MAX_CROP_PNG_BYTES = 100 * 1024;
-
 /**
- * JPEG ≤ maxBytes: binary search on quality, then optional downscale if still too large (huge pixel dimensions).
+ * Encode cropped bitmap for disk. PNG: zlib level 6 (good balance of speed vs size). JPEG: high quality if used later.
  */
-function canvasToJpegUnderMaxBytes(canvas, maxBytes = MAX_CROP_JPEG_BYTES) {
-  const encode = (quality, c) =>
-    c.toBuffer('image/jpeg', {
-      quality: Math.min(0.98, Math.max(0.05, quality)),
-      progressive: true,
-      chromaSubsampling: true
-    });
-
-  function bestBufferUnderMax(c) {
-    let buf = encode(0.95, c);
-    if (buf.length <= maxBytes) return buf;
-    let lo = 0.05;
-    let hi = 0.95;
-    let bestUnder = null;
-    for (let i = 0; i < 28; i += 1) {
-      const mid = (lo + hi) / 2;
-      buf = encode(mid, c);
-      if (buf.length <= maxBytes) {
-        bestUnder = buf;
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    if (bestUnder) return bestUnder;
-    return encode(0.05, c);
-  }
-
-  let c = canvas;
-  let buf = bestBufferUnderMax(c);
-  if (buf.length <= maxBytes) return buf;
-
-  const MIN_EDGE = 160;
-  while (buf.length > maxBytes && Math.max(c.width, c.height) > MIN_EDGE) {
-    const factor = 0.88;
-    const w = Math.max(MIN_EDGE, Math.floor(c.width * factor));
-    const h = Math.max(MIN_EDGE, Math.floor(c.height * factor));
-    const scaled = createCanvas(w, h);
-    const ctx = scaled.getContext('2d');
-    configureHighQualityRasterContext(ctx);
-    ctx.drawImage(c, 0, 0, w, h);
-    c = scaled;
-    buf = bestBufferUnderMax(c);
-  }
-  return buf;
-}
-
-/**
- * PNG ≤ maxBytes: zlib compression (level 9), then optional downscale if still too large.
- */
-function canvasToPngUnderMaxBytes(canvas, maxBytes = MAX_CROP_PNG_BYTES) {
-  const encode = (c) =>
-    c.toBuffer('image/png', { compressionLevel: 9 });
-
-  let c = canvas;
-  let buf = encode(c);
-  if (buf.length <= maxBytes) return buf;
-
-  const MIN_EDGE = 160;
-  while (buf.length > maxBytes && Math.max(c.width, c.height) > MIN_EDGE) {
-    const factor = 0.88;
-    const w = Math.max(MIN_EDGE, Math.floor(c.width * factor));
-    const h = Math.max(MIN_EDGE, Math.floor(c.height * factor));
-    const scaled = createCanvas(w, h);
-    const ctx = scaled.getContext('2d');
-    configureHighQualityRasterContext(ctx);
-    ctx.drawImage(c, 0, 0, w, h);
-    c = scaled;
-    buf = encode(c);
-    if (buf.length <= maxBytes) return buf;
-  }
-  return buf;
-}
-
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
-    return canvasToPngUnderMaxBytes(canvas, MAX_CROP_PNG_BYTES);
+    return canvas.toBuffer('image/png', { compressionLevel: 6 });
   }
-
-  return canvasToJpegUnderMaxBytes(canvas, MAX_CROP_JPEG_BYTES);
+  return canvas.toBuffer('image/jpeg', {
+    quality: 0.94,
+    progressive: true,
+    chromaSubsampling: false,
+  });
 }
 
 /**

@@ -304,6 +304,48 @@ function mergeExtraFieldsFromStudent(student) {
   return ex;
 }
 
+function humanizeFieldKey(key) {
+  const s = String(key ?? "").trim();
+  if (!s) return "";
+  return s
+    .replace(/_/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+function firstNonEmptyValue(...values) {
+  for (const v of values) {
+    if (v == null) continue;
+    const str = String(v).trim();
+    if (str !== "") return str;
+  }
+  return "";
+}
+
+function buildEditStudentDraft(student) {
+  if (!student || typeof student !== "object") return student;
+  const extraFields = mergeExtraFieldsFromStudent(student);
+  return {
+    ...student,
+    extraFields,
+    phone: firstNonEmptyValue(student.phone, student.mobile, extraFields.phone, extraFields.mobile),
+    mobile: firstNonEmptyValue(student.mobile, student.phone, extraFields.mobile, extraFields.phone),
+    fatherPrimaryContact: firstNonEmptyValue(
+      student.fatherPrimaryContact,
+      student.fatherMobile,
+      extraFields.fatherPrimaryContact,
+      extraFields.fatherMobile,
+    ),
+    motherPrimaryContact: firstNonEmptyValue(
+      student.motherPrimaryContact,
+      student.motherMobile,
+      extraFields.motherPrimaryContact,
+      extraFields.motherMobile,
+    ),
+  };
+}
+
 function resolveClassNameForIdCard(student) {
   if (
     typeof student.className === "string" &&
@@ -470,7 +512,7 @@ function normalizeProjectType(projectType) {
     : "idCard";
 }
 
-/** Match student list rows by name, mobile, or photo number (substring, case-insensitive; digits-only match for phone-style fields). */
+/** Match student list rows by name, mobile, parent mobile, or photo number (substring, case-insensitive; digits-only match for phone-style fields). */
 function filterStudentsBySearchQuery(students, rawQuery) {
   if (!Array.isArray(students) || students.length === 0) return students;
   const trimmed = String(rawQuery ?? "").trim();
@@ -484,10 +526,25 @@ function filterStudentsBySearchQuery(students, rawQuery) {
     const name = String(s.studentName ?? s.name ?? "").toLowerCase();
     if (name.includes(qLower)) return true;
 
-    const mobileRaw = String(s.mobile ?? s.phone ?? "");
-    const mobileLower = mobileRaw.toLowerCase();
-    if (mobileLower.includes(qLower)) return true;
-    if (qDigits && digitsOnly(mobileRaw).includes(qDigits)) return true;
+    const mobileCandidates = [
+      s.mobile,
+      s.phone,
+      s.fatherPrimaryContact,
+      s.fatherMobile,
+      s.motherPrimaryContact,
+      s.motherMobile,
+      s.extraFields?.fatherPrimaryContact,
+      s.extraFields?.fatherMobile,
+      s.extraFields?.motherPrimaryContact,
+      s.extraFields?.motherMobile,
+    ];
+    for (const contact of mobileCandidates) {
+      const mobileRaw = String(contact ?? "");
+      if (!mobileRaw.trim()) continue;
+      const mobileLower = mobileRaw.toLowerCase();
+      if (mobileLower.includes(qLower)) return true;
+      if (qDigits && digitsOnly(mobileRaw).includes(qDigits)) return true;
+    }
 
     const photoRaw = String(s.photoNo ?? "").trim();
     const photoLower = photoRaw.toLowerCase();
@@ -569,6 +626,8 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
   formatStudentClassForIdCard,
   requestOpenCardPreview,
   setEditStudentData,
+  onDeleteStudent,
+  deletingStudentId,
   formatToDDMMYYYYDot,
   allowPreviewWithoutPhoto,
   allowRootTemplateFallbackForAllStudents,
@@ -666,13 +725,32 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
             e.stopPropagation();
             const dobVal = student.dateOfBirth || student.dob || "";
             setEditStudentData({
-              ...student,
+              ...buildEditStudentDraft(student),
               dateOfBirth: formatToDDMMYYYYDot(dobVal),
               dob: formatToDDMMYYYYDot(dobVal),
             });
           }}
         >
           Edit
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={deletingStudentId === (student._id || student.id)}
+          style={{
+            flexShrink: 0,
+            padding: "6px 12px",
+            fontSize: "0.85rem",
+            height: "auto",
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDeleteStudent(student);
+          }}
+        >
+          {deletingStudentId === (student._id || student.id)
+            ? "Deleting..."
+            : "Delete"}
         </button>
       </div>
     </div>
@@ -3429,6 +3507,72 @@ export default function SavedIdCardsList({
 
   const [editStudentData, setEditStudentData] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingStudentId, setDeletingStudentId] = useState(null);
+  const editModalAdditionalTemplateFields = useMemo(() => {
+    if (!editStudentData || typeof editStudentData !== "object") return [];
+    const baseKeys = new Set([
+      "studentName",
+      "name",
+      "admissionNo",
+      "rollNo",
+      "fatherName",
+      "motherName",
+      "gender",
+      "bloodGroup",
+      "email",
+      "phone",
+      "mobile",
+      "address",
+      "dateOfBirth",
+      "dob",
+      "photoNo",
+      "fatherPrimaryContact",
+      "motherPrimaryContact",
+    ]);
+    const skipKeys = new Set([
+      "id",
+      "_id",
+      "__v",
+      "template",
+      "elements",
+      "backElements",
+      "class",
+      "classId",
+      "school",
+      "schoolId",
+      "createdAt",
+      "updatedAt",
+      "photoUrl",
+      "studentImage",
+      "extraFields",
+    ]);
+    const allTemplateElements = [
+      ...(Array.isArray(editStudentData?.template?.elements)
+        ? editStudentData.template.elements
+        : []),
+      ...(Array.isArray(editStudentData?.template?.backElements)
+        ? editStudentData.template.backElements
+        : []),
+    ];
+    const extra = editStudentData?.extraFields;
+    const resolveValue = (key) =>
+      firstNonEmptyValue(
+        editStudentData?.[key],
+        extra && typeof extra === "object" ? extra[key] : "",
+      );
+    const seen = new Set();
+    const out = [];
+    for (const el of allTemplateElements) {
+      if (!el || el.type !== "text" || !el.dataField) continue;
+      const key = String(el.dataField).trim();
+      if (!key || seen.has(key) || skipKeys.has(key) || baseKeys.has(key)) continue;
+      seen.add(key);
+      const value = resolveValue(key);
+      if (!String(value).trim()) continue;
+      out.push({ key, label: humanizeFieldKey(key) || key });
+    }
+    return out;
+  }, [editStudentData]);
   /** Full-screen “Add new student” form opened from the edit modal (black overlay). */
   const [addStudentOverlayOpen, setAddStudentOverlayOpen] = useState(false);
   const [newStudentDraft, setNewStudentDraft] = useState(null);
@@ -3626,6 +3770,14 @@ export default function SavedIdCardsList({
             rollNo: cleanData.rollNo || "",
             fatherName: cleanData.fatherName || "",
             motherName: cleanData.motherName || "",
+            fatherPrimaryContact:
+              cleanData.fatherPrimaryContact ||
+              cleanData.extraFields?.fatherPrimaryContact ||
+              "",
+            motherPrimaryContact:
+              cleanData.motherPrimaryContact ||
+              cleanData.extraFields?.motherPrimaryContact ||
+              "",
             dob: cleanData.dob || cleanData.dateOfBirth || "",
             mobile: cleanData.mobile || cleanData.phone || "",
             email: cleanData.email || "",
@@ -3668,6 +3820,63 @@ export default function SavedIdCardsList({
       setSavingEdit(false);
     }
   };
+
+  const handleDeleteStudent = React.useCallback(
+    async (student) => {
+      const studentId = student?._id || student?.id;
+      if (!studentId) return;
+      const studentName = String(student?.studentName || student?.name || "").trim();
+      const shouldDelete = window.confirm(
+        `Delete ${studentName || "this student"}? This action cannot be undone.`,
+      );
+      if (!shouldDelete) return;
+      setDeletingStudentId(studentId);
+      try {
+        if (viewMode === "offline") {
+          await offlineApi.deleteStudent(studentId);
+        } else {
+          await onlineApi.deleteStudent(studentId);
+        }
+
+        const removeById = (prevList) =>
+          Array.isArray(prevList)
+            ? prevList.filter((s) => (s._id || s.id) !== studentId)
+            : prevList;
+
+        if (isAllSchoolStudents) {
+          setSchoolAllStudentsData((prev) =>
+            prev ? { ...prev, students: removeById(prev.students) } : prev,
+          );
+        } else {
+          setTemplateStatus((prev) =>
+            prev ? { ...prev, students: removeById(prev.students) } : prev,
+          );
+        }
+
+        setEditStudentData((prev) => {
+          if (!prev) return prev;
+          const pid = prev._id || prev.id;
+          return pid === studentId ? null : prev;
+        });
+
+        setBulkPhotoDetailPayload((prev) => {
+          if (!prev?.data?.students) return prev;
+          return {
+            ...prev,
+            data: {
+              ...prev.data,
+              students: removeById(prev.data.students),
+            },
+          };
+        });
+      } catch (err) {
+        alert(err?.message || "Failed to delete student.");
+      } finally {
+        setDeletingStudentId((prev) => (prev === studentId ? null : prev));
+      }
+    },
+    [isAllSchoolStudents, viewMode],
+  );
 
   const openAddStudentFromEditModal = React.useCallback(() => {
     const baseClass =
@@ -4090,9 +4299,36 @@ export default function SavedIdCardsList({
       };
     };
     fetchTemplateStatus()
-      .then((data) => {
+      .then(async (data) => {
+        let payload = data;
+        if (!isFullApiCanvasTemplate(data?.template)) {
+          try {
+            const [schoolsRes, schoolStudentsRes] = await Promise.all([
+              activeApi
+                .getAssignedSchools()
+                .catch(() => ({ schools: [] })),
+              activeApi
+                .getStudentsBySchool(schoolId, { retainPhotos: false })
+                .catch(() => null),
+            ]);
+            if (!cancelled && schoolStudentsRes) {
+              const schoolsList = schoolsRes?.schools ?? [];
+              const schoolLevelTemplate = pickSchoolLevelTemplate(
+                schoolStudentsRes,
+                schoolId,
+                schoolsList,
+                isOnlineMode,
+              );
+              if (isFullApiCanvasTemplate(schoolLevelTemplate)) {
+                payload = { ...data, template: schoolLevelTemplate };
+              }
+            }
+          } catch {
+            // Keep class payload as-is; per-student templates may still render.
+          }
+        }
         if (!cancelled) {
-          setTemplateStatus(data);
+          setTemplateStatus(payload);
           setLoadingStudents(false);
         }
       })
@@ -4105,7 +4341,7 @@ export default function SavedIdCardsList({
     return () => {
       cancelled = true;
     };
-  }, [schoolId, classId, activeApi]);
+  }, [schoolId, classId, activeApi, isOnlineMode]);
 
   // Full-school student list (See all students)
   useEffect(() => {
@@ -4592,6 +4828,8 @@ export default function SavedIdCardsList({
       formatStudentClassForIdCard,
       requestOpenCardPreview,
       setEditStudentData,
+      onDeleteStudent: handleDeleteStudent,
+      deletingStudentId,
       formatToDDMMYYYYDot,
       allowPreviewWithoutPhoto,
       allowRootTemplateFallbackForAllStudents,
@@ -4605,6 +4843,8 @@ export default function SavedIdCardsList({
       isViewTemplateFlow,
       getTemplateName,
       requestOpenCardPreview,
+      handleDeleteStudent,
+      deletingStudentId,
       allowPreviewWithoutPhoto,
       allowRootTemplateFallbackForAllStudents,
       // Stable functions don't need to be in dependencies:
@@ -6276,6 +6516,7 @@ export default function SavedIdCardsList({
             ? "Entire school roster in one list, or create template for all."
             : "All students in this school; preview and print use saved ID cards only."}
         </span> */}
+        
       </div>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
@@ -6470,6 +6711,7 @@ export default function SavedIdCardsList({
         >
           <List
             key={`${schoolId}-${classId}-${isAllSchoolStudents}`}
+            className="saved-idcards-virtual-scroller"
             listRef={savedIdStudentListRef}
             rowCount={filteredStudentsForList.length}
             rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
@@ -7291,6 +7533,100 @@ export default function SavedIdCardsList({
                         style={inp}
                       />
                     </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <label style={lab}>Father mobile</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={
+                            editStudentData.fatherPrimaryContact ||
+                            editStudentData.extraFields?.fatherPrimaryContact ||
+                            ""
+                          }
+                          onChange={(e) =>
+                            setEditStudentData((prev) => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                fatherPrimaryContact: e.target.value,
+                                extraFields: {
+                                  ...(prev.extraFields && typeof prev.extraFields === "object"
+                                    ? prev.extraFields
+                                    : {}),
+                                  fatherPrimaryContact: e.target.value,
+                                },
+                              };
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                      <div>
+                        <label style={lab}>Mother mobile</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={
+                            editStudentData.motherPrimaryContact ||
+                            editStudentData.extraFields?.motherPrimaryContact ||
+                            ""
+                          }
+                          onChange={(e) =>
+                            setEditStudentData((prev) => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                motherPrimaryContact: e.target.value,
+                                extraFields: {
+                                  ...(prev.extraFields && typeof prev.extraFields === "object"
+                                    ? prev.extraFields
+                                    : {}),
+                                  motherPrimaryContact: e.target.value,
+                                },
+                              };
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    </div>
+                    {editModalAdditionalTemplateFields.map((field) => (
+                      <div key={field.key}>
+                        <label style={lab}>{field.label}</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={
+                            editStudentData?.[field.key] ||
+                            editStudentData?.extraFields?.[field.key] ||
+                            ""
+                          }
+                          onChange={(e) =>
+                            setEditStudentData((prev) => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                [field.key]: e.target.value,
+                                extraFields: {
+                                  ...(prev.extraFields && typeof prev.extraFields === "object"
+                                    ? prev.extraFields
+                                    : {}),
+                                  [field.key]: e.target.value,
+                                },
+                              };
+                            })
+                          }
+                          style={inp}
+                        />
+                      </div>
+                    ))}
                     <div>
                       <label style={lab}>Address</label>
                       <textarea

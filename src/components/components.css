@@ -322,6 +322,16 @@
   box-sizing: border-box;
 }
 
+.saved-idcards-virtual-scroller {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.saved-idcards-virtual-scroller::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 .saved-idcard-item {
   display: flex;
   flex-direction: column;

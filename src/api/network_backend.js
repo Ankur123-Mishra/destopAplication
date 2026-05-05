@@ -99,6 +99,26 @@ export async function updateStudent(studentId, data) {
   return resData;
 }
 
+export async function deleteStudent(studentId) {
+  const res = await fetch(
+    `${API_BASE_URL}/api/photographer/students/${encodeURIComponent(studentId)}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      data?.message ||
+      data?.error ||
+      res.statusText ||
+      "Failed to delete student";
+    throw new Error(msg);
+  }
+  return data;
+}
+
 /** POST /api/photographer/students — server must expose create; body includes schoolId + classId + fields. */
 export async function createStudent(payload) {
   const res = await fetch(`${API_BASE_URL}/api/photographer/students`, {

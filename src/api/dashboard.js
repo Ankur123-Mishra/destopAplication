@@ -302,6 +302,11 @@ export async function updateStudent(studentId, data) {
   return { message: "Student updated locally", studentId };
 }
 
+export async function deleteStudent(studentId) {
+  await db.students.delete(studentId);
+  return { message: "Student deleted locally", studentId };
+}
+
 /**
  * Insert one student into the offline Dexie DB (same row shape as Excel bulk upload).
  */
