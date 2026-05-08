@@ -16,10 +16,6 @@ const placeholderJpegBuffer = (() => {
   return canvas.toBuffer('image/jpeg', { quality: 0.8, progressive: false, chromaSubsampling: false });
 })();
 
-/**
- * Batch / folder crop saves as PNG (`crop image` folder).
- * Full crop pixel dimensions are preserved (no byte-cap downscaling — that was shrinking exports and hurting quality).
- */
 function getCropExportMeta() {
   return { ext: '.png', mime: 'image/png' };
 }
@@ -29,13 +25,131 @@ function getCropExportMeta() {
  */
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
-    return canvas.toBuffer('image/png', { compressionLevel: 6 });
+    return canvas.toBuffer('image/png', { compressionLevel: 9 });
   }
   return canvas.toBuffer('image/jpeg', {
     quality: 0.94,
     progressive: true,
     chromaSubsampling: false,
   });
+}
+
+const CROP_MAX_OUTPUT_BYTES = 200 * 1024;
+const CROP_TARGET_OUTPUT_BYTES = 160 * 1024;
+const CROP_MAX_PNG_OUTPUT_BYTES = 260 * 1024;
+const CROP_MIN_PNG_OUTPUT_BYTES = 90 * 1024;
+const CROP_RELATIVE_SIZE_MULTIPLIER = 1.5;
+const CROP_RELATIVE_SIZE_PADDING_BYTES = 8 * 1024;
+const CROP_RELATIVE_SIZE_HARD_LIMIT_BYTES = 120 * 1024;
+const CROP_MIN_JPEG_QUALITY = 0.45;
+const CROP_MAX_DIMENSION = 1600;
+
+function clampJpegQuality(quality) {
+  return Math.min(0.92, Math.max(CROP_MIN_JPEG_QUALITY, Number(quality) || 0.8));
+}
+
+function encodeJpegWithQuality(canvas, quality) {
+  return canvas.toBuffer('image/jpeg', {
+    quality: clampJpegQuality(quality),
+    progressive: true,
+    chromaSubsampling: true,
+  });
+}
+
+function resizeCanvas(sourceCanvas, width, height) {
+  const nextWidth = Math.max(1, Math.round(width));
+  const nextHeight = Math.max(1, Math.round(height));
+  const resizedCanvas = createCanvas(nextWidth, nextHeight);
+  const resizedCtx = resizedCanvas.getContext('2d');
+  configureHighQualityRasterContext(resizedCtx);
+  resizedCtx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, 0, 0, nextWidth, nextHeight);
+  return resizedCanvas;
+}
+
+function resolveDynamicCropSizeCap(inputBytes, fallbackCap) {
+  const sourceSize = Number(inputBytes);
+  if (!Number.isFinite(sourceSize) || sourceSize <= 0) return fallbackCap;
+  const relativeCap = Math.round((sourceSize * CROP_RELATIVE_SIZE_MULTIPLIER) + CROP_RELATIVE_SIZE_PADDING_BYTES);
+  return Math.max(CROP_MIN_PNG_OUTPUT_BYTES, Math.min(CROP_RELATIVE_SIZE_HARD_LIMIT_BYTES, relativeCap));
+}
+
+function makeCappedCropBuffer(canvas, mime, options = {}) {
+  const maxOutputBytes = Number(options.maxOutputBytes) || CROP_MAX_OUTPUT_BYTES;
+  if (mime === 'image/png') {
+    let workingCanvas = canvas;
+    if (workingCanvas.width > CROP_MAX_DIMENSION || workingCanvas.height > CROP_MAX_DIMENSION) {
+      const scale = Math.min(
+        CROP_MAX_DIMENSION / workingCanvas.width,
+        CROP_MAX_DIMENSION / workingCanvas.height
+      );
+      workingCanvas = resizeCanvas(workingCanvas, workingCanvas.width * scale, workingCanvas.height * scale);
+    }
+
+    let buffer = canvasBufferFast(workingCanvas, mime);
+    let attempts = 0;
+    while (buffer.length > maxOutputBytes && attempts < 7) {
+      const downscaleRatio = 0.87;
+      workingCanvas = resizeCanvas(
+        workingCanvas,
+        workingCanvas.width * downscaleRatio,
+        workingCanvas.height * downscaleRatio
+      );
+      buffer = canvasBufferFast(workingCanvas, mime);
+      attempts++;
+    }
+    return buffer;
+  }
+
+  if (mime !== 'image/jpeg') {
+    return canvasBufferFast(canvas, mime);
+  }
+
+  let workingCanvas = canvas;
+  if (workingCanvas.width > CROP_MAX_DIMENSION || workingCanvas.height > CROP_MAX_DIMENSION) {
+    const scale = Math.min(
+      CROP_MAX_DIMENSION / workingCanvas.width,
+      CROP_MAX_DIMENSION / workingCanvas.height
+    );
+    workingCanvas = resizeCanvas(workingCanvas, workingCanvas.width * scale, workingCanvas.height * scale);
+  }
+
+  let quality = 0.86;
+  let buffer = encodeJpegWithQuality(workingCanvas, quality);
+
+  for (let i = 0; i < 8 && buffer.length > maxOutputBytes; i++) {
+    quality = clampJpegQuality(quality - 0.07);
+    buffer = encodeJpegWithQuality(workingCanvas, quality);
+    if (quality <= CROP_MIN_JPEG_QUALITY + 0.005) break;
+  }
+
+  let attempts = 0;
+  while (buffer.length > maxOutputBytes && attempts < 4) {
+    const downscaleRatio = 0.88;
+    workingCanvas = resizeCanvas(
+      workingCanvas,
+      workingCanvas.width * downscaleRatio,
+      workingCanvas.height * downscaleRatio
+    );
+    buffer = encodeJpegWithQuality(workingCanvas, quality);
+    attempts++;
+  }
+
+  if (buffer.length < CROP_TARGET_OUTPUT_BYTES) {
+    let raiseQuality = quality;
+    let bestBuffer = buffer;
+    for (let i = 0; i < 4; i++) {
+      raiseQuality = clampJpegQuality(raiseQuality + 0.04);
+      const candidate = encodeJpegWithQuality(workingCanvas, raiseQuality);
+      if (candidate.length <= maxOutputBytes) {
+        bestBuffer = candidate;
+      } else {
+        break;
+      }
+    }
+    buffer = bestBuffer;
+  }
+
+  return buffer;
 }
 
 /**
@@ -556,6 +670,8 @@ ipcMain.handle('crop-images', async (event, data) => {
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
+      const sourceStat = await fs.stat(imagePath).catch(() => null);
+      const dynamicSizeCap = resolveDynamicCropSizeCap(sourceStat?.size, CROP_MAX_PNG_OUTPUT_BYTES);
       
       const image = await loadImage(imagePath);
       
@@ -579,7 +695,7 @@ ipcMain.handle('crop-images', async (event, data) => {
         0, 0, cropWidth, cropHeight
       );
       
-      const buffer = canvasBufferFast(canvas, outputMime);
+      const buffer = makeCappedCropBuffer(canvas, outputMime, { maxOutputBytes: dynamicSizeCap });
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -610,6 +726,13 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
   const { images, outputFolder, shape, svgPath } = data;
 
   try {
+    if (!Array.isArray(images) || images.length === 0) {
+      return { success: false, error: 'No images provided for crop.' };
+    }
+    if (!outputFolder || typeof outputFolder !== 'string') {
+      return { success: false, error: 'Invalid crop output folder.' };
+    }
+    await fs.mkdir(outputFolder, { recursive: true });
     let processedCount = 0;
 
     for (let i = 0; i < images.length; i++) {
@@ -631,6 +754,8 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
+      const sourceStat = await fs.stat(imagePath).catch(() => null);
+      const dynamicSizeCap = resolveDynamicCropSizeCap(sourceStat?.size, CROP_MAX_PNG_OUTPUT_BYTES);
 
       const image = await loadImage(imagePath);
 
@@ -659,7 +784,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         0, 0, outputWidth, outputHeight
       );
       
-      const buffer = canvasBufferFast(canvas, outputMime);
+      const buffer = makeCappedCropBuffer(canvas, outputMime, { maxOutputBytes: dynamicSizeCap });
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;

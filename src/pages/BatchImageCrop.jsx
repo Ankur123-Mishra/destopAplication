@@ -172,6 +172,7 @@ const saveBufferRef = useRef(new Map());
 const saveDrainTimeoutRef = useRef(null);
 const activeSavesRef = useRef(0);
 const saveCompletionResolversRef = useRef([]);
+const saveFailureRef = useRef(null);
 const preloadedImageUrlsRef = useRef(new Set());
 const [pendingSaveCount, setPendingSaveCount] = useState(0);
 const [displayedImageSize, setDisplayedImageSize] = useState({ width: 0, height: 0 });
@@ -571,15 +572,29 @@ const resolveSaveWaitersIfIdle = () => {
 if (activeSavesRef.current !== 0 || saveBufferRef.current.size !== 0) return;
 const waiters = saveCompletionResolversRef.current;
 saveCompletionResolversRef.current = [];
-waiters.forEach((resolve) => resolve());
+const failure = saveFailureRef.current;
+saveFailureRef.current = null;
+waiters.forEach(({ resolve, reject }) => {
+if (failure) {
+reject(failure);
+return;
+}
+resolve();
+});
 };
 
-const waitForAllSaves = () => new Promise((resolve) => {
+const waitForAllSaves = () => new Promise((resolve, reject) => {
 if (activeSavesRef.current === 0 && saveBufferRef.current.size === 0) {
+if (saveFailureRef.current) {
+const failure = saveFailureRef.current;
+saveFailureRef.current = null;
+reject(failure);
+return;
+}
 resolve();
 return;
 }
-saveCompletionResolversRef.current.push(resolve);
+saveCompletionResolversRef.current.push({ resolve, reject });
 });
 
 const runSaveDrain = () => {
@@ -601,6 +616,9 @@ setPendingSaveCount((count) => count + 1);
 saveCroppedImageBatch(batchItems)
 .catch((error) => {
 console.error('Failed to save cropped image batch:', error);
+if (!saveFailureRef.current) {
+saveFailureRef.current = error instanceof Error ? error : new Error(String(error));
+}
 })
 .finally(() => {
 activeSavesRef.current = Math.max(0, activeSavesRef.current - 1);
@@ -741,6 +759,9 @@ imagePath: images[currentImageIndex],
 crop: cropSnapshot
 };
 setCroppedImages(updatedCroppedImages);
+// Keep legacy behavior: pressing C/Next should queue immediate disk save
+// so cropped files appear in "crop image" folder right away.
+scheduleImageSave(currentImageIndex, cropSnapshot);
 
 if (currentImageIndex < images.length - 1) {
 const nextIndex = currentImageIndex + 1;
@@ -764,9 +785,7 @@ y: cropSnapshot.y
 setCrop(newCrop);
 setCompletedCrop(newCrop);
 }
-scheduleImageSave(currentImageIndex, cropSnapshot);
 } else {
-scheduleImageSave(currentImageIndex, cropSnapshot);
 alert('All images have been cropped. Please click Save & Finish to complete.');
 }
 };
@@ -833,11 +852,17 @@ crop: cropSnapshot
 };
 setCroppedImages(updatedCroppedImages);
 try {
+saveFailureRef.current = null;
 if (saveDrainTimeoutRef.current) {
 window.clearTimeout(saveDrainTimeoutRef.current);
 saveDrainTimeoutRef.current = null;
 }
-scheduleImageSave(currentImageIndex, cropSnapshot);
+// In manual mode we avoid per-image save on every "Next" click, and flush
+// all collected crops together here to keep image navigation responsive.
+updatedCroppedImages.forEach((entry, imageIndex) => {
+if (!entry?.crop) return;
+scheduleImageSave(imageIndex, entry.crop);
+});
 runSaveDrain();
 await waitForAllSaves();
 const totalSaved = updatedCroppedImages.filter(img => img).length;
@@ -931,6 +956,7 @@ saveDrainTimeoutRef.current = null;
 }
 activeSavesRef.current = 0;
 saveCompletionResolversRef.current = [];
+saveFailureRef.current = null;
 preloadedImageUrlsRef.current = new Set();
 setImageNaturalSize({ width: 0, height: 0 });
 setFixedOutputSizePx({ width: 0, height: 0 });
@@ -956,6 +982,7 @@ saveDrainTimeoutRef.current = null;
 }
 activeSavesRef.current = 0;
 saveCompletionResolversRef.current = [];
+saveFailureRef.current = null;
 preloadedImageUrlsRef.current = new Set();
 setFixedOutputSizePx({ width: 0, height: 0 });
 setFrameWidthInputDraft(null);
