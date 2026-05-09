@@ -4763,6 +4763,39 @@ export default function SavedIdCardsList({
   const requestOpenCardPreview = React.useCallback(
     async (student) => {
       let st = student;
+      const mergePreviewStudentData = (base, patch) => {
+        if (!patch || typeof patch !== "object") return base;
+        if (!base || typeof base !== "object") return patch;
+        return {
+          ...base,
+          ...patch,
+          // Keep layout/template context from list payload when preview API returns partial student object.
+          template:
+            patch.template && typeof patch.template === "object"
+              ? { ...(base.template || {}), ...patch.template }
+              : base.template,
+          school:
+            patch.school && typeof patch.school === "object"
+              ? { ...(base.school || {}), ...patch.school }
+              : base.school,
+          schoolId:
+            patch.schoolId && typeof patch.schoolId === "object"
+              ? { ...(base.schoolId || {}), ...patch.schoolId }
+              : (patch.schoolId ?? base.schoolId),
+          class:
+            patch.class && typeof patch.class === "object"
+              ? { ...(base.class || {}), ...patch.class }
+              : base.class,
+          classId:
+            patch.classId && typeof patch.classId === "object"
+              ? { ...(base.classId || {}), ...patch.classId }
+              : (patch.classId ?? base.classId),
+          extraFields:
+            patch.extraFields && typeof patch.extraFields === "object"
+              ? { ...(base.extraFields || {}), ...patch.extraFields }
+              : (base.extraFields || {}),
+        };
+      };
       const id = student?._id || student?.id;
       const needsHydrate =
         studentHasUploadedPhoto(student) &&
@@ -4776,7 +4809,7 @@ export default function SavedIdCardsList({
             typeof hit.photoUrl === "string" &&
             hit.photoUrl.trim() !== ""
           ) {
-            st = hit;
+            st = mergePreviewStudentData(student, hit);
           }
         }
         if (!st.photoUrl || !String(st.photoUrl).trim()) {
@@ -4792,13 +4825,13 @@ export default function SavedIdCardsList({
                   schoolId,
                   classIdStr,
                 );
-                if (row) st = row;
+                if (row) st = mergePreviewStudentData(st, row);
               }
             } else if (
               typeof offlineApi.getStudentRecordForPreview === "function"
             ) {
               const row = await offlineApi.getStudentRecordForPreview(id);
-              if (row) st = row;
+              if (row) st = mergePreviewStudentData(st, row);
             }
           } catch (e) {
             console.error(e);
@@ -6068,8 +6101,11 @@ export default function SavedIdCardsList({
       wMm = convertToMm(dim.width, unit);
       hMm = convertToMm(dim.height, unit);
     }
+    // Keep front-only card width aligned with dual-side preview width
+    // so uploaded canvas/text does not appear "zoomed" vs front+back mode.
+    const stackHMm = 2 * hMm + PRINT_GAP_MM;
     return {
-      width: `min(420px, 92vw, calc(85vh * ${wMm} / ${hMm}))`,
+      width: `min(420px, 92vw, calc(85vh * ${wMm} / ${stackHMm}))`,
       maxWidth: "100%",
       height: "auto",
       aspectRatio: `${wMm} / ${hMm}`,
@@ -6508,6 +6544,7 @@ export default function SavedIdCardsList({
             ) : null}
           </>
         )}
+
         {/* <span
           className="text-muted"
           style={{ fontSize: "0.9rem" }}
@@ -6517,6 +6554,7 @@ export default function SavedIdCardsList({
             : "All students in this school; preview and print use saved ID cards only."}
         </span> */}
         
+
       </div>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
@@ -6789,83 +6827,108 @@ export default function SavedIdCardsList({
       {showPrintView && studentsForPreviewPrint.length > 0 && (
         <div className="print-overlay" aria-hidden="true">
           <div
-            className="print-overlay-toolbar"
-            style={{
-              position: "fixed",
-              top: 16,
-              left: 16,
-              zIndex: 10001,
-              maxWidth: "min(720px, calc(100vw - 120px))",
-            }}
+            className="preview-overlay-header print-hide-in-print"
+            style={{ alignItems: "flex-start", gap: 16 }}
           >
-
-            {renderPageSizeControls("print")}
-          </div>
-          <div ref={printContentRef} className="print-pages-wrap">
-            {previewPrintCardsStillLoading && spreadPagesCount === 0 ? (
-              <p
-                className="text-muted print-hide-in-print"
-                style={{ padding: 24, color: "rgba(255,255,255,0.85)" }}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h3 style={{ margin: 0 }}>
+                Print ID Cards – {pageSizeSummary}{" "}
+                {spreadPagesCount > 0
+                  ? `(${spreadPagesCount} page${spreadPagesCount !== 1 ? "s" : ""})${previewWaitingForBulkPhotos ? " — loading photos…" : ""}${previewPrintCardsStillLoading && !previewWaitingForBulkPhotos ? " — loading more cards…" : ""}`
+                  : previewPrintCardsStillLoading
+                    ? previewWaitingForBulkPhotos
+                      ? "(loading photos…)"
+                      : "(preparing cards…)"
+                    : "(no pages)"}
+              </h3>
+              <div style={{ marginTop: 12 }}>
+                {renderPageSizeControls("print")}
+                {renderPreviewGapControls("print-gap")}
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowPrintView(false)}
+                style={{ flexShrink: 0 }}
               >
-                Preparing cards…
-              </p>
-            ) : (
-              previewSpreadPages.map((desc) => {
-                const { batchIndex, side } = desc;
-                const isBackPage = side === "back";
-                const start = batchIndex * cardsPerPage;
-                const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
-                return (
-                  <div
-                    key={`print-${batchIndex}-${side}`}
-                    className="print-page print-page-spread"
-                    style={{
-                      width: `${pageWidthMm}mm`,
-                      height: `${pageHeightMm}mm`,
-                      ["--card-w-mm"]: cardWidthMm,
-                      ["--card-h-mm"]: cardHeightMm,
-                      ["--cols"]: cols,
-                      ["--rows"]: rows,
-                    }}
-                  >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={
+                  previewPrintCardsStillLoading || spreadPagesCount === 0
+                }
+                onClick={() => window.print()}
+                style={{ flexShrink: 0 }}
+              >
+                Print Now
+              </button>
+            </div>
+          </div>
+          <div className="preview-cards-scroll print-overlay-pages-scroll">
+            <div ref={printContentRef} className="print-pages-wrap">
+              {previewPrintCardsStillLoading && spreadPagesCount === 0 ? (
+                <p
+                  className="text-muted print-hide-in-print"
+                  style={{ padding: 24, color: "rgba(255,255,255,0.85)" }}
+                >
+                  Preparing cards…
+                </p>
+              ) : (
+                previewSpreadPages.map((desc) => {
+                  const { batchIndex, side } = desc;
+                  const isBackPage = side === "back";
+                  const start = batchIndex * cardsPerPage;
+                  const pageCards = cardsToPrint.slice(start, start + cardsPerPage);
+                  const pageBg = normalizeHexColor(previewPageBackgroundColor);
+                  return (
                     <div
-                      className="print-cards-grid"
+                      key={`print-${batchIndex}-${side}`}
+                      className="print-page print-page-spread print-page--center"
                       style={{
-                        gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
-                        gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
-                        ...(isBackPage ? { direction: "rtl" } : {}),
+                        width: `${pageWidthMm}mm`,
+                        height: `${pageHeightMm}mm`,
+                        backgroundColor: pageBg,
+                        WebkitPrintColorAdjust: "exact",
+                        printColorAdjust: "exact",
+                        ["--card-w-mm"]: cardWidthMm,
+                        ["--card-h-mm"]: cardHeightMm,
+                        ["--cols"]: cols,
+                        ["--rows"]: rows,
                       }}
                     >
-                      {pageCards.map((card, index) => {
-                        const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
-                        return isBackPage
-                          ? renderBackOnlyForPrint(card, true, overlay)
-                          : renderCardForPrint(card, true, overlay);
-                      })}
+                      <div
+                        className="print-cards-grid print-cards-grid--preview"
+                        style={{
+                          gridTemplateColumns: `repeat(${cols}, ${cardWidthMm}mm)`,
+                          gridTemplateRows: `repeat(${rows}, ${cardHeightMm}mm)`,
+                          columnGap: `${layoutPreviewGapHorizontalMm}mm`,
+                          rowGap: `${layoutPreviewGapVerticalMm}mm`,
+                          ...(isBackPage ? { direction: "rtl" } : {}),
+                        }}
+                      >
+                        {pageCards.map((card, index) => {
+                          const overlay = getCardCropMarks(index, pageCards.length, cols, isBackPage);
+                          return isBackPage
+                            ? renderBackOnlyForPrint(card, true, overlay)
+                            : renderCardForPrint(card, true, overlay);
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          <div className="print-btn-group">
-            <button
-              type="button"
-              className="btn btn-secondary print-hide-in-print"
-              onClick={() => setShowPrintView(false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary print-hide-in-print"
-              disabled={
-                previewPrintCardsStillLoading || spreadPagesCount === 0
-              }
-              onClick={() => window.print()}
-            >
-              Print Now
-            </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -8188,16 +8251,13 @@ export default function SavedIdCardsList({
           inset: 0;
           background: #1a1a1a;
           z-index: 9999;
-          overflow: auto;
-          padding: 72px 20px 20px;
-        }
-        .print-btn-group {
-          position: fixed;
-          top: 16px;
-          right: 16px;
-          z-index: 10000;
           display: flex;
-          gap: 8px;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .print-overlay-pages-scroll.preview-cards-scroll {
+          flex: 1;
+          min-height: 0;
         }
         .preview-overlay {
           position: fixed;
@@ -8257,7 +8317,7 @@ export default function SavedIdCardsList({
           display: flex;
           flex-direction: column;
           align-items: flex-start;
-          gap: 0;
+          gap: 24px;
           width: max-content;
           min-width: 100%;
           margin: 0;
@@ -8392,12 +8452,7 @@ export default function SavedIdCardsList({
           width: 100%;
           height: 100%;
           max-width: 100%;
-          transform: none;
           box-sizing: border-box;
-        }
-        .single-card-preview-card-wrap .print-card-cell.idcard-card[style*="width"] .idcard {
-          width: 100%;
-          height: 100%;
         }
         .single-card-preview-card-wrap .print-card-cell.fabric-card {
           padding: 0;
@@ -8413,10 +8468,12 @@ export default function SavedIdCardsList({
           align-items: flex-start;
           justify-content: flex-start;
         }
+        .print-page--center,
         .preview-page--center {
           align-items: center !important;
           justify-content: center !important;
         }
+        .print-page--center .print-cards-grid.print-cards-grid--preview,
         .preview-page--center .print-cards-grid.print-cards-grid--preview {
           width: max-content !important;
           height: max-content !important;
@@ -8504,8 +8561,6 @@ export default function SavedIdCardsList({
             margin: 0;
           }
           .print-hide-in-print { display: none !important; }
-          .print-btn-group { display: none !important; }
-          .print-overlay-toolbar { display: none !important; }
           .print-page {
             width: ${pageWidthMm}mm !important;
             height: ${pageHeightMm}mm !important;
@@ -8526,7 +8581,9 @@ export default function SavedIdCardsList({
             display: grid;
             grid-template-columns: repeat(var(--cols, 2), calc(var(--card-w-mm, 90) * 1mm));
             grid-template-rows: repeat(var(--rows, 4), calc(var(--card-h-mm, 57) * 1mm));
-            gap: ${PRINT_GAP_MM}mm;
+            gap: unset;
+            column-gap: ${layoutPreviewGapHorizontalMm}mm;
+            row-gap: ${layoutPreviewGapVerticalMm}mm;
             margin: 0;
             padding: 0;
             box-sizing: border-box;

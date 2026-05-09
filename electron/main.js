@@ -809,6 +809,7 @@ function applyShapeClipping(ctx, shape, width, height) {
   
   const centerX = width / 2;
   const centerY = height / 2;
+  const roundedRectCornerRatio = 0.08;
   
   switch (shape) {
     case 'circle':
@@ -841,8 +842,8 @@ function applyShapeClipping(ctx, shape, width, height) {
       break;
 
     case 'rounded-rectangle':
-      // Keep corners clearly visible even on smaller crops.
-      drawRoundedRect(ctx, 0, 0, width, height, Math.min(width, height) * 0.2);
+      // Match UI preview shape radius (same 8% corner ratio as SVG frame path).
+      drawRoundedRect(ctx, 0, 0, width, height, Math.min(width, height) * roundedRectCornerRatio);
       break;
       
     default:
