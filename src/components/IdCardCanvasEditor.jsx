@@ -1088,7 +1088,7 @@ export default function IdCardCanvasEditor({
     <div className="idcard-canvas-editor">
       <div className="idcard-canvas-toolbar">
         <span className="idcard-canvas-hint">
-          Preview zoomed for editing — positions stay relative to your card dimensions · Drag to move · Photo: corner resize or sliders · Text: box width in sidebar
+          Preview zoomed for editing — positions stay relative to your card dimensions · Drag to move · Photo: corner resize · Text: box width in sidebar
         </span>
         <div className="idcard-canvas-toolbar-center">
           {selectedId && selectedEl && SHOW_ALIGN_ON_CARD && (
@@ -1485,6 +1485,7 @@ export default function IdCardCanvasEditor({
                         )
                       }
                     />
+                    
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 10}px</span>
                   </div>
                   <div style={{ marginTop: 10 }}>
@@ -1734,92 +1735,8 @@ export default function IdCardCanvasEditor({
               ) : (
                 <div>
                   <p className="text-muted" style={{ marginBottom: 12 }}>
-                    Drag on canvas to move; drag the corner to resize. Or use the sliders (limited to template edges).
+                    Drag on canvas to move and drag the corner to resize.
                   </p>
-                  <div style={{ marginBottom: 10 }}>
-                    <label className="input-label">
-                      {selectedEl.type === 'colorCode' ? 'House image box width (% of card)' : 'Photo box width (% of card)'}
-                    </label>
-                    <input
-                      type="range"
-                      min={MIN_PHOTO_LIKE_WIDTH_PCT}
-                      max={Math.max(
-                        MIN_PHOTO_LIKE_WIDTH_PCT,
-                        Math.min(100, Math.floor(100 - selectedEl.x))
-                      )}
-                      value={Math.min(
-                        selectedEl.width ?? DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
-                        Math.max(MIN_PHOTO_LIKE_WIDTH_PCT, 100 - selectedEl.x)
-                      )}
-                      onChange={(e) => {
-                        const nw = Number(e.target.value);
-                        const maxW = Math.max(MIN_PHOTO_LIKE_WIDTH_PCT, 100 - selectedEl.x);
-                        const v = Math.max(MIN_PHOTO_LIKE_WIDTH_PCT, Math.min(maxW, nw));
-                        setElements((prev) =>
-                          prev.map((x) => (x.id === selectedEl.id ? { ...x, width: v } : x))
-                        );
-                      }}
-                    />
-                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
-                      {Math.round(
-                        Math.min(
-                          selectedEl.width ?? DEFAULT_PHOTO_BOX_WIDTH_PERCENT,
-                          Math.max(MIN_PHOTO_LIKE_WIDTH_PCT, 100 - selectedEl.x)
-                        )
-                      )}
-                      %
-                    </span>
-                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
-                      Max{' '}
-                      {Math.max(
-                        MIN_PHOTO_LIKE_WIDTH_PCT,
-                        Math.floor(100 - selectedEl.x)
-                      )}
-                      % (template width from left edge)
-                    </p>
-                  </div>
-                  <div>
-                    <label className="input-label">
-                      {selectedEl.type === 'colorCode' ? 'House image box height (% of card)' : 'Photo box height (% of card)'}
-                    </label>
-                    <input
-                      type="range"
-                      min={MIN_PHOTO_LIKE_HEIGHT_PCT}
-                      max={Math.max(
-                        MIN_PHOTO_LIKE_HEIGHT_PCT,
-                        Math.min(100, Math.floor(100 - selectedEl.y))
-                      )}
-                      value={Math.min(
-                        selectedEl.height ?? 48,
-                        Math.max(MIN_PHOTO_LIKE_HEIGHT_PCT, 100 - selectedEl.y)
-                      )}
-                      onChange={(e) => {
-                        const nh = Number(e.target.value);
-                        const maxH = Math.max(MIN_PHOTO_LIKE_HEIGHT_PCT, 100 - selectedEl.y);
-                        const v = Math.max(MIN_PHOTO_LIKE_HEIGHT_PCT, Math.min(maxH, nh));
-                        setElements((prev) =>
-                          prev.map((x) => (x.id === selectedEl.id ? { ...x, height: v } : x))
-                        );
-                      }}
-                    />
-                    <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>
-                      {Math.round(
-                        Math.min(
-                          selectedEl.height ?? 48,
-                          Math.max(MIN_PHOTO_LIKE_HEIGHT_PCT, 100 - selectedEl.y)
-                        )
-                      )}
-                      %
-                    </span>
-                    <p className="text-muted" style={{ margin: '6px 0 0', fontSize: '0.75rem' }}>
-                      Max{' '}
-                      {Math.max(
-                        MIN_PHOTO_LIKE_HEIGHT_PCT,
-                        Math.floor(100 - selectedEl.y)
-                      )}
-                      % (template height from top)
-                    </p>
-                  </div>
                 </div>
               )}
             </>

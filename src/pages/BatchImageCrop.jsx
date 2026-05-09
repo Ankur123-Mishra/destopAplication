@@ -12,6 +12,9 @@ PROCESSING: 4,
 COMPLETE: 5
 };
 
+const DEFAULT_FRAME_SIZE_MM = { width: 50, height: 60 };
+const DEFAULT_FRAME_ASPECT = DEFAULT_FRAME_SIZE_MM.width / DEFAULT_FRAME_SIZE_MM.height;
+
 const CROP_FRAMES = [
 {
 id: 'rectangle',
@@ -19,8 +22,8 @@ name: 'Rectangle',
 icon: '▭',
 description: 'Standard rectangular frame',
 shape: 'rectangle',
-aspectRatio: 4 / 5,
-crop: { unit: '%', width: 45, height: 56, x: 27.5, y: 22 },
+aspectRatio: DEFAULT_FRAME_ASPECT,
+crop: { unit: '%', width: 45, height: 54, x: 27.5, y: 23 },
 /* Unit square in 0–100 space; mask transform matches other frames so dim/overlay look identical */
 svgPath: 'M 0 0 L 100 0 L 100 100 L 0 100 Z'
 },
@@ -30,10 +33,10 @@ name: 'Rounded Rectangle',
 icon: '▢',
 description: 'Rectangle with smooth rounded corners',
 shape: 'rounded-rectangle',
-aspectRatio: 4 / 5,
-crop: { unit: '%', width: 45, height: 56, x: 27.5, y: 22 },
-// Keep frame boundary near crop-selection bounds so resize handles stay visually attached.
-svgPath: 'M 12 0 H 88 Q 100 0 100 12 V 88 Q 100 100 88 100 H 12 Q 0 100 0 88 V 12 Q 0 0 12 0 Z'
+aspectRatio: DEFAULT_FRAME_ASPECT,
+crop: { unit: '%', width: 45, height: 54, x: 27.5, y: 23 },
+// Slightly smaller corner radius so cropped corners are less rounded.
+svgPath: 'M 8 0 H 92 Q 100 0 100 8 V 92 Q 100 100 92 100 H 8 Q 0 100 0 92 V 8 Q 0 0 8 0 Z'
 },
 {
 id: 'circle',
@@ -176,7 +179,10 @@ const preloadedImageUrlsRef = useRef(new Set());
 const [pendingSaveCount, setPendingSaveCount] = useState(0);
 const [displayedImageSize, setDisplayedImageSize] = useState({ width: 0, height: 0 });
 const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
-const [fixedOutputSizePx, setFixedOutputSizePx] = useState({ width: 0, height: 0 });
+const [fixedOutputSizePx, setFixedOutputSizePx] = useState({
+width: mmToPx(DEFAULT_FRAME_SIZE_MM.width),
+height: mmToPx(DEFAULT_FRAME_SIZE_MM.height)
+});
 const [frameSizeUnit, setFrameSizeUnit] = useState('mm');
 const [frameWidthInputDraft, setFrameWidthInputDraft] = useState(null);
 const [frameHeightInputDraft, setFrameHeightInputDraft] = useState(null);
@@ -185,6 +191,7 @@ const [lockedPixelAspect, setLockedPixelAspect] = useState(null);
 const [cropMode, setCropMode] = useState('manual');
 const autoBatchStartedRef = useRef(false);
 const autoCropCancelledRef = useRef(false);
+const frameSizeInitializedForSelectionRef = useRef(false);
 const cropRef = useRef(crop);
 const displayedImageSizeRef = useRef(displayedImageSize);
 const shapeDimMaskId = `sdm-${useId().replace(/:/g, '')}`;
@@ -272,19 +279,6 @@ setFrameWidthInputDraft(null);
 setFrameHeightInputDraft(null);
 }, [frameSizeUnit, previewImage]);
 
-React.useEffect(() => {
-if (step !== STEPS.DEFINE_CROP) return;
-if (!imageNaturalSize.width || !imageNaturalSize.height) return;
-if (fixedOutputSizePx.width > 0 && fixedOutputSizePx.height > 0) return;
-
-const defaultWidthPx = (crop.width / 100) * imageNaturalSize.width;
-const defaultHeightPx = (crop.height / 100) * imageNaturalSize.height;
-if (!Number.isFinite(defaultWidthPx) || !Number.isFinite(defaultHeightPx)) return;
-if (defaultWidthPx <= 0 || defaultHeightPx <= 0) return;
-
-setFixedOutputSizePx({ width: defaultWidthPx, height: defaultHeightPx });
-}, [step, imageNaturalSize, crop.width, crop.height, fixedOutputSizePx.width, fixedOutputSizePx.height]);
-
 const frameDisplayDims = useMemo(() => {
 const wPx = fixedOutputSizePx.width;
 const hPx = fixedOutputSizePx.height;
@@ -352,6 +346,7 @@ alert('Failed to select folder. Please try again.');
 const handleSelectFrame = (frame) => {
 autoCropCancelledRef.current = false;
 autoBatchStartedRef.current = false;
+frameSizeInitializedForSelectionRef.current = false;
 setSelectedFrame(frame);
 setCrop(frame.crop);
 setCompletedCrop(frame.crop);
@@ -407,6 +402,22 @@ const nextCrop = applyCropBoxSize(cropRef.current, widthPct, heightPct);
 setCrop(nextCrop);
 setCompletedCrop(nextCrop);
 }, [imageNaturalSize.width, imageNaturalSize.height, applyCropBoxSize]);
+
+React.useEffect(() => {
+if (step !== STEPS.DEFINE_CROP) return;
+if (frameSizeInitializedForSelectionRef.current) return;
+if (!imageNaturalSize.width || !imageNaturalSize.height) return;
+if (!fixedOutputSizePx.width || !fixedOutputSizePx.height) return;
+syncCropBoxToFixedOutputSize(fixedOutputSizePx);
+frameSizeInitializedForSelectionRef.current = true;
+}, [
+step,
+imageNaturalSize.width,
+imageNaturalSize.height,
+fixedOutputSizePx.width,
+fixedOutputSizePx.height,
+syncCropBoxToFixedOutputSize
+]);
 
 const convertDisplaySizeToPx = (value, unit) => {
 switch (unit) {
@@ -933,18 +944,23 @@ activeSavesRef.current = 0;
 saveCompletionResolversRef.current = [];
 preloadedImageUrlsRef.current = new Set();
 setImageNaturalSize({ width: 0, height: 0 });
-setFixedOutputSizePx({ width: 0, height: 0 });
+setFixedOutputSizePx({
+width: mmToPx(DEFAULT_FRAME_SIZE_MM.width),
+height: mmToPx(DEFAULT_FRAME_SIZE_MM.height)
+});
 setFrameSizeUnit('mm');
 setFrameWidthInputDraft(null);
 setFrameHeightInputDraft(null);
 setCropMode('manual');
 autoCropCancelledRef.current = true;
 autoBatchStartedRef.current = false;
+frameSizeInitializedForSelectionRef.current = false;
 };
 
 const handleBackToFrameSelection = () => {
 autoCropCancelledRef.current = true;
 autoBatchStartedRef.current = false;
+frameSizeInitializedForSelectionRef.current = false;
 setStep(STEPS.SELECT_FRAME);
 setSelectedFrame(null);
 setCurrentImageIndex(0);
@@ -957,7 +973,10 @@ saveDrainTimeoutRef.current = null;
 activeSavesRef.current = 0;
 saveCompletionResolversRef.current = [];
 preloadedImageUrlsRef.current = new Set();
-setFixedOutputSizePx({ width: 0, height: 0 });
+setFixedOutputSizePx({
+width: mmToPx(DEFAULT_FRAME_SIZE_MM.width),
+height: mmToPx(DEFAULT_FRAME_SIZE_MM.height)
+});
 setFrameWidthInputDraft(null);
 setFrameHeightInputDraft(null);
 };
