@@ -17,25 +17,143 @@ const placeholderJpegBuffer = (() => {
 })();
 
 /**
- * Batch / folder crop saves as PNG (`crop image` folder).
- * Full crop pixel dimensions are preserved (no byte-cap downscaling — that was shrinking exports and hurting quality).
+ * Rectangle crops stay JPEG for speed and smaller size.
+ * Shape crops use PNG so clipped regions remain transparent.
  */
-function getCropExportMeta() {
-  return { ext: '.png', mime: 'image/png' };
+function getCropExportMeta(shape) {
+  if (shape && shape !== 'rectangle') {
+    return { ext: '.png', mime: 'image/png' };
+  }
+  return { ext: '.jpg', mime: 'image/jpeg' };
 }
 
 /**
- * Encode cropped bitmap for disk. PNG: zlib level 6 (good balance of speed vs size). JPEG: high quality if used later.
+ * Encode cropped bitmap for disk. PNG: zlib level 6 (good balance of speed vs size).
+ * JPEG quality is intentionally moderate to keep cropped file sizes lower.
  */
 function canvasBufferFast(canvas, mime) {
   if (mime === 'image/png') {
+    // Balanced PNG compression (faster than level 9, still reasonably compact).
     return canvas.toBuffer('image/png', { compressionLevel: 6 });
   }
   return canvas.toBuffer('image/jpeg', {
-    quality: 0.94,
+    quality: 0.86,
     progressive: true,
-    chromaSubsampling: false,
+    chromaSubsampling: true,
   });
+}
+
+function resolveOutputRasterSize(outputSize, fallbackWidth, fallbackHeight) {
+  const requestedWidth = Number(outputSize?.width);
+  const requestedHeight = Number(outputSize?.height);
+  const width =
+    Number.isFinite(requestedWidth) && requestedWidth > 0
+      ? Math.max(1, Math.round(requestedWidth))
+      : Math.max(1, Math.round(fallbackWidth));
+  const height =
+    Number.isFinite(requestedHeight) && requestedHeight > 0
+      ? Math.max(1, Math.round(requestedHeight))
+      : Math.max(1, Math.round(fallbackHeight));
+  return { width, height };
+}
+
+function setJpegDpiMetadata(buffer, dpi) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 20) return buffer;
+  const density = Math.max(1, Math.min(65535, Math.round(Number(dpi) || 300)));
+  let offset = 2; // skip SOI marker
+  while (offset + 9 < buffer.length && buffer[offset] === 0xff) {
+    const marker = buffer[offset + 1];
+    if (marker === 0xda || marker === 0xd9) break; // SOS or EOI
+    if (offset + 4 > buffer.length) break;
+    const segmentLength = (buffer[offset + 2] << 8) | buffer[offset + 3];
+    if (segmentLength < 2 || offset + 2 + segmentLength > buffer.length) break;
+    if (
+      marker === 0xe0 &&
+      buffer[offset + 4] === 0x4a &&
+      buffer[offset + 5] === 0x46 &&
+      buffer[offset + 6] === 0x49 &&
+      buffer[offset + 7] === 0x46 &&
+      buffer[offset + 8] === 0x00
+    ) {
+      const out = Buffer.from(buffer);
+      out[offset + 11] = 0x01; // units: dots per inch
+      out[offset + 12] = (density >> 8) & 0xff; // X density
+      out[offset + 13] = density & 0xff;
+      out[offset + 14] = (density >> 8) & 0xff; // Y density
+      out[offset + 15] = density & 0xff;
+      return out;
+    }
+    offset += 2 + segmentLength;
+  }
+  return buffer;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function makePngChunk(typeAscii, data) {
+  const type = Buffer.from(typeAscii, 'ascii');
+  const len = data.length;
+  const chunk = Buffer.alloc(12 + len);
+  chunk.writeUInt32BE(len, 0);
+  type.copy(chunk, 4);
+  data.copy(chunk, 8);
+  const crcInput = Buffer.concat([type, data]);
+  chunk.writeUInt32BE(crc32(crcInput), 8 + len);
+  return chunk;
+}
+
+function setPngDpiMetadata(buffer, dpi) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 33) return buffer;
+  const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!buffer.subarray(0, 8).equals(pngSig)) return buffer;
+  const densityPpm = Math.max(1, Math.round((Number(dpi) || 300) * 39.37007874));
+  const pHYsData = Buffer.alloc(9);
+  pHYsData.writeUInt32BE(densityPpm, 0);
+  pHYsData.writeUInt32BE(densityPpm, 4);
+  pHYsData[8] = 1; // unit: meter
+  const pHYsChunk = makePngChunk('pHYs', pHYsData);
+
+  const chunks = [buffer.subarray(0, 8)];
+  let offset = 8;
+  let inserted = false;
+  while (offset + 12 <= buffer.length) {
+    const len = buffer.readUInt32BE(offset);
+    const type = buffer.toString('ascii', offset + 4, offset + 8);
+    const total = 12 + len;
+    if (offset + total > buffer.length) break;
+    if (type === 'pHYs') {
+      if (!inserted) {
+        chunks.push(pHYsChunk);
+        inserted = true;
+      }
+    } else {
+      chunks.push(buffer.subarray(offset, offset + total));
+      if (type === 'IHDR' && !inserted) {
+        chunks.push(pHYsChunk);
+        inserted = true;
+      }
+    }
+    offset += total;
+  }
+  if (offset < buffer.length) {
+    chunks.push(buffer.subarray(offset));
+  }
+  return Buffer.concat(chunks);
+}
+
+function setImageDpiMetadata(buffer, mime, dpi = 300) {
+  if (mime === 'image/png') return setPngDpiMetadata(buffer, dpi);
+  if (mime === 'image/jpeg') return setJpegDpiMetadata(buffer, dpi);
+  return buffer;
 }
 
 /**
@@ -535,7 +653,7 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
 });
 
 ipcMain.handle('crop-images', async (event, data) => {
-  const { images, crop, outputFolder, shape, svgPath } = data;
+  const { images, crop, outputFolder, shape, svgPath, outputSize } = data;
   
   try {
     let processedCount = 0;
@@ -545,7 +663,7 @@ ipcMain.handle('crop-images', async (event, data) => {
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
       const normalizedFileName = fileName.replace(/_cropped$/i, '');
-      const { ext: outputExt, mime: outputMime } = getCropExportMeta();
+      const { ext: outputExt, mime: outputMime } = getCropExportMeta(shape);
       const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
       const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
       if (legacyOutputPath !== outputPath) {
@@ -565,21 +683,27 @@ ipcMain.handle('crop-images', async (event, data) => {
         crop
       );
       
-      const canvas = createCanvas(cropWidth, cropHeight);
+      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
+        outputSize,
+        cropWidth,
+        cropHeight
+      );
+      const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
       configureHighQualityRasterContext(ctx);
       
       if (shape && shape !== 'rectangle') {
-        applyShapeClipping(ctx, shape, cropWidth, cropHeight);
+        applyShapeClipping(ctx, shape, outputWidth, outputHeight);
       }
       
       ctx.drawImage(
         image,
         cropX, cropY, cropWidth, cropHeight,
-        0, 0, cropWidth, cropHeight
+        0, 0, outputWidth, outputHeight
       );
       
-      const buffer = canvasBufferFast(canvas, outputMime);
+      const rasterBuffer = canvasBufferFast(canvas, outputMime);
+      const buffer = setImageDpiMetadata(rasterBuffer, outputMime, 300);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
@@ -607,7 +731,7 @@ ipcMain.handle('crop-images', async (event, data) => {
 });
 
 ipcMain.handle('crop-images-individually', async (event, data) => {
-  const { images, outputFolder, shape, svgPath } = data;
+  const { images, outputFolder, shape, svgPath, outputSize } = data;
 
   try {
     let processedCount = 0;
@@ -620,7 +744,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       const inputExt = path.extname(imagePath);
       const fileName = path.basename(imagePath, inputExt);
       const normalizedFileName = fileName.replace(/_cropped$/i, '');
-      const { ext: outputExt, mime: outputMime } = getCropExportMeta();
+      const { ext: outputExt, mime: outputMime } = getCropExportMeta(shape);
       const outputPath = path.join(outputFolder, `${normalizedFileName}${outputExt}`);
       const legacyOutputPath = path.join(outputFolder, `${fileName}${outputExt}`);
       if (legacyOutputPath !== outputPath) {
@@ -640,10 +764,11 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         crop
       );
 
-      // Always write at native crop pixel size so aspect ratio matches the selection
-      // (no stretching from a shared outputSize across different images or crop edits).
-      const outputWidth = Math.max(1, Math.round(cropWidth));
-      const outputHeight = Math.max(1, Math.round(cropHeight));
+      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
+        outputSize,
+        cropWidth,
+        cropHeight
+      );
 
       const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
@@ -659,7 +784,8 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         0, 0, outputWidth, outputHeight
       );
       
-      const buffer = canvasBufferFast(canvas, outputMime);
+      const rasterBuffer = canvasBufferFast(canvas, outputMime);
+      const buffer = setImageDpiMetadata(rasterBuffer, outputMime, 300);
       await fs.writeFile(outputPath, buffer);
       
       processedCount++;
