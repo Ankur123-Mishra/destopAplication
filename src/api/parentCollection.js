@@ -100,6 +100,7 @@ export async function exportCollectionSubmissions(filters = {}) {
   if (filters.classId) params.set('classId', filters.classId);
   if (filters.className) params.set('className', filters.className);
   if (filters.section) params.set('section', filters.section);
+  if (filters.collectionSchoolLabel) params.set('collectionSchoolLabel', filters.collectionSchoolLabel);
   const query = params.toString();
 
   const res = await fetch(
