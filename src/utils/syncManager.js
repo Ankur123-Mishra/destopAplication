@@ -39,6 +39,73 @@ function isUploadableTemplate(tpl) {
   );
 }
 
+/** Dexie / offline rows keep many Excel columns on the student root; only `extraFields` was synced — merge the rest into the bulk XLSX. */
+const SYNC_STUDENT_META_KEYS = new Set([
+  'id',
+  '_id',
+  'schoolId',
+  'classId',
+  'className',
+  'section',
+  'template',
+  'hasTemplate',
+  'photoUrl',
+  'colorCodeImageUrl',
+  'colorCodePhotoUrl',
+  'status',
+  'excelRowOrder',
+  'createdAt',
+  'updatedAt',
+  '__v',
+  'extraFields',
+  'uploadedVia',
+]);
+
+/** Root keys already written to fixed columns (see {@link bulkUploadStudentsXls} in dashboard.js). */
+const SYNC_STUDENT_ROOT_KEYS_IN_BASE_COLUMNS = new Set([
+  'studentName',
+  'admissionNo',
+  'rollNo',
+  'studentId',
+  'photoNo',
+  'dateOfBirth',
+  'phone',
+  'email',
+  'address',
+  'gender',
+  'bloodGroup',
+  'uniqueCode',
+  'fatherName',
+  'fatherPrimaryContact',
+  'fatherPhone',
+  'motherName',
+  'motherPrimaryContact',
+  'motherPhone',
+  'house',
+  'marking',
+  'colorCodeKey',
+]);
+
+function scalarToCell(value) {
+  if (value == null) return '';
+  const t = typeof value;
+  if (t === 'string' || t === 'number' || t === 'boolean') return String(value).trim();
+  return '';
+}
+
+/** Any other primitive root fields (custom Excel columns stored only on the row) become extra columns again on upload. */
+function appendRemainingTopLevelFields(row, student) {
+  for (const [key, value] of Object.entries(student)) {
+    if (SYNC_STUDENT_META_KEYS.has(key) || SYNC_STUDENT_ROOT_KEYS_IN_BASE_COLUMNS.has(key)) {
+      continue;
+    }
+    const cell = scalarToCell(value);
+    if (!cell) continue;
+    if (Object.prototype.hasOwnProperty.call(row, key)) continue;
+    row[key] = cell;
+  }
+}
+
 export async function syncAllBackgroundData(onProgress) {
   // Graceful fallback callback
   const reportProgress = typeof onProgress === 'function' ? onProgress : console.log;
@@ -86,7 +153,22 @@ export async function syncAllBackgroundData(onProgress) {
 
       const excelRows = localStudents.map((student) => {
         const cls = classMap[student.classId];
-        return {
+        const extraRaw =
+          student.extraFields && typeof student.extraFields === 'object' ? student.extraFields : {};
+        const extra = { ...extraRaw };
+        delete extra.fatherPrimaryContact;
+        delete extra.fatherPhone;
+        delete extra.motherPrimaryContact;
+        delete extra.motherPhone;
+        const fatherContact =
+          String(student.fatherPrimaryContact || student.fatherPhone || '').trim() ||
+          String(extraRaw.fatherPrimaryContact || extraRaw.fatherPhone || '').trim();
+        const motherContact =
+          String(student.motherPrimaryContact || student.motherPhone || '').trim() ||
+          String(extraRaw.motherPrimaryContact || extraRaw.motherPhone || '').trim();
+        const colorKey = student.colorCodeKey != null ? String(student.colorCodeKey).trim() : '';
+        const row = {
+          ...extra,
           STD: cls ? cls.className : '',
           Division: cls ? cls.section : '',
           'Student Id': student.studentId || '',
@@ -101,11 +183,16 @@ export async function syncAllBackgroundData(onProgress) {
           BloodGroup: student.bloodGroup || '',
           Address: student.address || '',
           'Fathers Name': student.fatherName || '',
+          'Father Primary Contact': fatherContact,
           'Mother Name': student.motherName || '',
+          'Mother Primary Contact': motherContact,
           House: student.house || '',
+          Marking: student.marking || '',
           UniqueCode: student.uniqueCode || '',
-          ...(student.extraFields || {}),
+          ...(colorKey ? { 'Color Code': colorKey } : {}),
         };
+        appendRemainingTopLevelFields(row, student);
+        return row;
       });
 
 

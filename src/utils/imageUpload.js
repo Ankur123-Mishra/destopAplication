@@ -109,6 +109,28 @@ export function getStudentColorCodeBasename(student) {
   return '';
 }
 
+/**
+ * Resolved URL for the color-code badge image. Online API may send `colorCodePhotoUrl`;
+ * local/offline rows often use `colorCodeImageUrl`.
+ */
+export function getStudentColorCodeImageUrl(student) {
+  if (!student || typeof student !== 'object') return null;
+  const ex = student.extraFields;
+  const fromExtra =
+    ex && typeof ex === 'object'
+      ? [ex.colorCodeImageUrl, ex.colorCodePhotoUrl, ex.colorCodeImage]
+      : [];
+  const candidates = [
+    student.colorCodeImageUrl,
+    student.colorCodePhotoUrl,
+    ...fromExtra,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim() !== '') return c.trim();
+  }
+  return null;
+}
+
 /** Map basename (lowercase) → File for `*.png` only (color badges: `0.png`, `1.png`, …). */
 export function buildColorCodePngFileMap(files) {
   const map = {};

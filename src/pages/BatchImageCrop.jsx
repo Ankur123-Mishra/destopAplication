@@ -137,7 +137,7 @@ return 1;
 case 'mm':
 return 0.1;
 case 'cm':
-return 0.01;
+return 0.01; 
 case 'inch':
 return 0.001;
 default:
