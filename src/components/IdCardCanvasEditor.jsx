@@ -56,6 +56,7 @@ const NON_IMPORT_FIELD_KEYS = new Set([
   'extraFields',
   /** Shown via the house/color badge checkbox, not as a bindable text field */
   'colorCodeImageUrl',
+  'colorCodePhotoUrl',
   'colorCodeImage',
   /** Excel / file-map keys for which PNG to load — not printable template fields */
   'colorCodeKey',
@@ -114,11 +115,17 @@ function getPhotoLikeBoxPercentForBounds(el) {
 /** Prop may be stale; merged template data / extraFields can carry the same URL (Dexie data URL). */
 function resolveColorCodeImageFromInitialData(initialData) {
   if (!initialData || typeof initialData !== 'object') return null;
-  const top = initialData.colorCodeImage ?? initialData.colorCodeImageUrl;
+  const top =
+    initialData.colorCodeImage ??
+    initialData.colorCodeImageUrl ??
+    initialData.colorCodePhotoUrl;
   if (typeof top === 'string' && top.trim()) return top;
   const ex = initialData.extraFields;
   if (ex && typeof ex === 'object') {
-    const v = ex.colorCodeImageUrl ?? ex.colorCodeImage;
+    const v =
+      ex.colorCodeImageUrl ??
+      ex.colorCodePhotoUrl ??
+      ex.colorCodeImage;
     if (typeof v === 'string' && v.trim()) return v;
   }
   return null;
@@ -1485,7 +1492,7 @@ export default function IdCardCanvasEditor({
                         )
                       }
                     />
-                    
+
                     <span style={{ marginLeft: 8, fontSize: '0.9rem' }}>{selectedEl.fontSize || 10}px</span>
                   </div>
                   <div style={{ marginTop: 10 }}>

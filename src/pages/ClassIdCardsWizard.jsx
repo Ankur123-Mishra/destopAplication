@@ -23,6 +23,7 @@ import {
   subscribeProjectBulkPhotoPreview,
 } from '../utils/projectBulkPhotoPreview';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
+import { getStudentColorCodeImageUrl } from '../utils/imageUpload';
 import { List } from 'react-window';
 import '../components/IdCardRenderer.css';
 import '../components/IdCardCanvasEditor.css';
@@ -46,7 +47,6 @@ function uploadedTemplateDefaultElements() {
 }
 
 const LAYOUT_DRAFT_STORAGE_PREFIX = 'classIdCardsWizard.layoutDraft.v1:';
-
 function dataUrlFingerprint(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return '';
   return `${dataUrl.length}:${dataUrl.slice(0, 160)}`;
@@ -192,7 +192,9 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _offlineMod
     if (s) schoolDoc = s;
   }
 
-  const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  const fallbackOfflineTemplate = _offlineMode
+    ? offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc)
+    : null;
   const responseTemplate = studentsRes?.template;
   if (isFullCanvasTemplateShape(responseTemplate)) {
     if (
@@ -359,6 +361,7 @@ function mapApiStudent(s) {
     'classId',
     'photoUrl',
     'colorCodeImageUrl',
+    'colorCodePhotoUrl',
     'colorCodeKey',
     'extraFields',
     'createdAt',
@@ -412,6 +415,7 @@ function mapApiStudent(s) {
     dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
     photoUrl: fullPhotoUrl(s.photoUrl),
     ...(s.colorCodeImageUrl ? { colorCodeImageUrl: fullPhotoUrl(s.colorCodeImageUrl) } : {}),
+    ...(s.colorCodePhotoUrl ? { colorCodePhotoUrl: fullPhotoUrl(s.colorCodePhotoUrl) } : {}),
     ...(s.colorCodeKey != null && String(s.colorCodeKey).trim() !== ''
       ? { colorCodeKey: String(s.colorCodeKey).trim().toLowerCase() }
       : {}),
@@ -868,12 +872,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       const blobOrSaved = getProjectBulkColorCodePreviewUrl(bulkSchoolId, student.id);
       if (blobOrSaved) return blobOrSaved;
     }
-    if (student.colorCodeImageUrl) return student.colorCodeImageUrl;
-    const ex = student.extraFields;
-    if (ex && typeof ex === 'object') {
-      const v = ex.colorCodeImageUrl ?? ex.colorCodeImage;
-      if (v) return typeof v === 'string' ? v : null;
-    }
+    const resolved = getStudentColorCodeImageUrl(student);
+    if (resolved) return resolved;
     return null;
   }, [bulkSchoolId, bulkPreviewEpoch]);
 
@@ -1604,6 +1604,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         'photoNo',
         'colorCodeKey',
         'colorCodeImageUrl',
+        'colorCodePhotoUrl',
         'status',
         'hasTemplate',
         'excelRowOrder',
@@ -1628,6 +1629,9 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       });
       return merged;
     })();
+    const previewColorBadgeUrl = previewStudent
+      ? getStudentColorCodeImageUrl(previewStudent)
+      : null;
     const initialData = previewStudent
       ? {
           name: previewStudent.name || '',
@@ -1651,8 +1655,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           house: previewStudent.house || '',
           marking: previewStudent.marking || '',
           photoNo: previewStudent.photoNo || '',
-          ...(previewStudent.colorCodeImageUrl
-            ? { colorCodeImageUrl: previewStudent.colorCodeImageUrl }
+          ...(previewColorBadgeUrl
+            ? { colorCodeImageUrl: previewColorBadgeUrl }
             : {}),
           extraFields: previewStudentExtraFields,
         }

@@ -8,6 +8,7 @@ import FabricIdCardGenerator from '../components/FabricIdCardGenerator';
 import { exportFabricCanvasToPNG } from '../components/FabricIdCardGenerator';
 import { getTemplateById, SCHOOL_CARD_TEMPLATE_IDS } from '../data/idCardTemplates';
 import { getFabricTemplateById } from '../data/fabricTemplatesStorage';
+import { getStudentColorCodeImageUrl } from '../utils/imageUpload';
 
 export default function IdCardFill() {
   const navigate = useNavigate();
@@ -258,7 +259,7 @@ export default function IdCardFill() {
         <IdCardCanvasEditor
           templateImage={template.image}
           studentImage={student?.photoUrl || null}
-          colorCodeImage={student?.colorCodeImageUrl || null}
+          colorCodeImage={getStudentColorCodeImageUrl(student) || null}
           initialElements={template.elements}
           dimension={student?.dimension}
           dimensionUnit={student?.dimensionUnit}

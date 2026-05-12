@@ -8,7 +8,10 @@ import {
   slimStudentTemplateField,
   stripStudentRowMediaForListView,
 } from '../utils/slimStudentTemplateForClient';
-import { normalizeColorCodeBasename } from '../utils/imageUpload';
+import {
+  normalizeColorCodeBasename,
+  getStudentColorCodeImageUrl,
+} from '../utils/imageUpload';
 
 export { sortStudentsByExcelRowOrder };
 
@@ -37,6 +40,7 @@ function mapStudentRowForApi(s, schoolRef, retainPhotos = true) {
         const {
           photoUrl,
           colorCodeImageUrl,
+          colorCodePhotoUrl,
           template,
           ...rest
         } = source;
@@ -46,9 +50,7 @@ function mapStudentRowForApi(s, schoolRef, retainPhotos = true) {
           school: schoolRef,
           schoolId: schoolRef,
           hasPhoto: typeof photoUrl === 'string' && photoUrl.trim() !== '',
-          hasColorCodeImage:
-            typeof colorCodeImageUrl === 'string' &&
-            colorCodeImageUrl.trim() !== '',
+          hasColorCodeImage: Boolean(getStudentColorCodeImageUrl(source)),
           ...(template ? { template } : {}),
         };
       })();

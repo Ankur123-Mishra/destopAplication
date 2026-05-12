@@ -40,7 +40,10 @@ import {
   renderSpreadPageToCanvas,
   blobToDataUrl,
 } from "../utils/dataExportCanvasRenderer";
-import { compressImageForUpload } from "../utils/imageUpload";
+import {
+  compressImageForUpload,
+  getStudentColorCodeImageUrl,
+} from "../utils/imageUpload";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 
@@ -207,7 +210,9 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _isOnlineMo
     if (s) schoolDoc = s;
   }
 
-  const fallbackOfflineTemplate = offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
+  const fallbackOfflineTemplate = _isOnlineMode
+    ? null
+    : offlineApi.resolveSchoolUploadedPhotographerTemplate(schoolId, schoolDoc);
   const responseTemplate = studentsRes?.template;
   if (isFullApiCanvasTemplate(responseTemplate)) {
     if (
@@ -344,6 +349,63 @@ function buildEditStudentDraft(student) {
       extraFields.motherMobile,
     ),
   };
+}
+
+/** Top-level keys the edit modal writes; mirror into extraFields before save so canvas/API stay in sync. */
+const STUDENT_SAVE_EXTRA_SYNC_KEYS = [
+  "studentName",
+  "name",
+  "admissionNo",
+  "rollNo",
+  "sNo",
+  "sno",
+  "srNo",
+  "srno",
+  "serialNo",
+  "serial",
+  "fatherName",
+  "motherName",
+  "guardianName",
+  "gender",
+  "bloodGroup",
+  "email",
+  "phone",
+  "mobile",
+  "address",
+  "dateOfBirth",
+  "dob",
+  "birthDate",
+  "photoNo",
+  "fatherPrimaryContact",
+  "motherPrimaryContact",
+  "fatherMobile",
+  "motherMobile",
+  "uniqueCode",
+  "house",
+  "marking",
+  "className",
+  "section",
+  "program",
+  "programName",
+  "course",
+  "courseName",
+  "stream",
+  "status",
+  "studentId",
+];
+
+function syncStudentSaveFieldsIntoExtraFields(student) {
+  if (!student || typeof student !== "object") return student;
+  const baseEx =
+    student.extraFields && typeof student.extraFields === "object"
+      ? { ...student.extraFields }
+      : {};
+  for (const key of STUDENT_SAVE_EXTRA_SYNC_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(student, key)) continue;
+    const v = student[key];
+    if (v !== undefined) baseEx[key] = v;
+  }
+  return { ...student, extraFields: baseEx };
 }
 
 function resolveClassNameForIdCard(student) {
@@ -3748,10 +3810,11 @@ export default function SavedIdCardsList({
     if (!editStudentData) return;
     setSavingEdit(true);
     try {
-      const studentId = editStudentData._id || editStudentData.id;
-      
+      const syncedStudent = syncStudentSaveFieldsIntoExtraFields(editStudentData);
+      const studentId = syncedStudent._id || syncedStudent.id;
+
       // Clean populated fields before update so we don't corrupt the DB keys
-      const { school, _id, ...cleanData } = editStudentData;
+      const { school, _id, ...cleanData } = syncedStudent;
       if (typeof cleanData.schoolId === 'object') {
         cleanData.schoolId = cleanData.schoolId.id || cleanData.schoolId._id;
       }
@@ -3803,7 +3866,7 @@ export default function SavedIdCardsList({
         if (!prevList) return prevList;
         return prevList.map((s) => {
           const sid = s._id || s.id;
-          if (sid === studentId) return { ...s, ...editStudentData };
+          if (sid === studentId) return { ...s, ...syncedStudent };
           return s;
         });
       };
@@ -4559,14 +4622,17 @@ export default function SavedIdCardsList({
     classes,
   ]);
 
-  /** Stripped list rows have hasPhoto but empty photoUrl — must finish bulk fetch before building preview cards. */
+  /** Stripped list rows may omit heavy photo/color URLs — bulk fetch must finish before preview/print. */
   const previewNeedsBulkPhotoData = React.useMemo(() => {
     if (!needPreviewPrintSortedOrder) return false;
-    return studentsForPreviewPrint.some(
-      (s) =>
+    return studentsForPreviewPrint.some((s) => {
+      const needPhoto =
         studentHasUploadedPhoto(s) &&
-        (!s.photoUrl || !String(s.photoUrl).trim()),
-    );
+        (!s.photoUrl || !String(s.photoUrl).trim());
+      const needColor =
+        s?.hasColorCodeImage === true && !getStudentColorCodeImageUrl(s);
+      return needPhoto || needColor;
+    });
   }, [needPreviewPrintSortedOrder, studentsForPreviewPrint]);
 
   useEffect(() => {
@@ -4724,7 +4790,10 @@ export default function SavedIdCardsList({
       templateId,
       uploadedTemplate: isApiTemplateRenderable ? uploadedTemplateForCard : null,
       studentImage: fullPhotoUrl(student.photoUrl),
-      ...(student.colorCodeImageUrl ? { colorCodeImage: fullPhotoUrl(student.colorCodeImageUrl) } : {}),
+      ...(function resolveColorCodeForCard() {
+        const cc = getStudentColorCodeImageUrl(student);
+        return cc ? { colorCodeImage: fullPhotoUrl(cc) } : {};
+      })(),
       className: resolveClassNameForIdCard(student),
       schoolName:
         student.school?.schoolName ||
@@ -4797,22 +4866,35 @@ export default function SavedIdCardsList({
         };
       };
       const id = student?._id || student?.id;
-      const needsHydrate =
+      const needsPhotoHydrate =
         studentHasUploadedPhoto(student) &&
         (!student.photoUrl || !String(student.photoUrl).trim());
+      const needsColorHydrate =
+        student?.hasColorCodeImage === true &&
+        !getStudentColorCodeImageUrl(student);
+      const needsHydrate = needsPhotoHydrate || needsColorHydrate;
       if (needsHydrate && id) {
         const pool = bulkPhotoDetailPayload?.data?.students;
         if (Array.isArray(pool)) {
           const hit = pool.find((x) => (x._id || x.id) === id);
-          if (
-            hit &&
-            typeof hit.photoUrl === "string" &&
-            hit.photoUrl.trim() !== ""
-          ) {
-            st = mergePreviewStudentData(student, hit);
+          if (hit) {
+            const poolPhotoOk =
+              typeof hit.photoUrl === "string" && hit.photoUrl.trim() !== "";
+            const poolColorOk = Boolean(getStudentColorCodeImageUrl(hit));
+            if (
+              (needsPhotoHydrate && poolPhotoOk) ||
+              (needsColorHydrate && poolColorOk)
+            ) {
+              st = mergePreviewStudentData(student, hit);
+            }
           }
         }
-        if (!st.photoUrl || !String(st.photoUrl).trim()) {
+        const stillNeedPhoto =
+          needsPhotoHydrate &&
+          (!st.photoUrl || !String(st.photoUrl).trim());
+        const stillNeedColor =
+          needsColorHydrate && !getStudentColorCodeImageUrl(st);
+        if (stillNeedPhoto || stillNeedColor) {
           try {
             const classIdStr =
               typeof student.classId === "object" && student.classId != null
@@ -7418,19 +7500,211 @@ export default function SavedIdCardsList({
                     .filter(Boolean)
                     .join(" · ") ||
                   "—";
+                const editModalClassIdStr =
+                  getStudentClassIdStringForSort(editStudentData) || "";
+                const classIdInSchoolList =
+                  editModalClassIdStr &&
+                  classes.some((c) => String(c._id) === String(editModalClassIdStr));
                 return (
                   <>
                     <div>
                       <label style={lab}>Class</label>
-                      <div
-                        style={{
-                          ...inp,
-                          opacity: 0.85,
-                          cursor: "default",
-                        }}
-                      >
-                        {classLabel}
-                      </div>
+                      {!schoolId ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 12,
+                          }}
+                        >
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Class name"
+                            value={editStudentData.className || ""}
+                            onChange={(e) =>
+                              setEditStudentData((prev) => {
+                                if (!prev) return prev;
+                                const v = e.target.value;
+                                return {
+                                  ...prev,
+                                  className: v,
+                                  class:
+                                    prev.class && typeof prev.class === "object"
+                                      ? { ...prev.class, className: v }
+                                      : prev.class,
+                                };
+                              })
+                            }
+                            style={inp}
+                          />
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Section"
+                            value={editStudentData.section || ""}
+                            onChange={(e) =>
+                              setEditStudentData((prev) => {
+                                if (!prev) return prev;
+                                const v = e.target.value;
+                                return {
+                                  ...prev,
+                                  section: v,
+                                  class:
+                                    prev.class && typeof prev.class === "object"
+                                      ? { ...prev.class, section: v }
+                                      : prev.class,
+                                };
+                              })
+                            }
+                            style={inp}
+                          />
+                        </div>
+                      ) : loadingClasses ? (
+                        <div
+                          style={{
+                            ...inp,
+                            opacity: 0.85,
+                            cursor: "default",
+                          }}
+                        >
+                          Loading classes…
+                        </div>
+                      ) : classes.length > 0 ? (
+                        <>
+                          <select
+                            className="form-control"
+                            value={editModalClassIdStr}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const picked = classes.find(
+                                (c) => String(c._id) === String(val),
+                              );
+                              if (!picked) return;
+                              setEditStudentData((prev) => {
+                                if (!prev) return prev;
+                                const nextClass = {
+                                  _id: picked._id,
+                                  id: picked._id,
+                                  className: picked.className,
+                                  section: picked.section ?? "",
+                                };
+                                return {
+                                  ...prev,
+                                  classId: picked._id,
+                                  className: picked.className,
+                                  section: picked.section ?? "",
+                                  class: nextClass,
+                                };
+                              });
+                            }}
+                            style={inp}
+                          >
+                            {!editModalClassIdStr && (
+                              <option value="">Select class…</option>
+                            )}
+                            {editModalClassIdStr && !classIdInSchoolList && (
+                              <option value={editModalClassIdStr}>
+                                {classLabel} (current)
+                              </option>
+                            )}
+                            {classes.map((c) => (
+                              <option key={String(c._id)} value={String(c._id)}>
+                                {formatStudentClassForIdCard(c) ||
+                                  String(c.className || "").trim() ||
+                                  String(c._id)}
+                              </option>
+                            ))}
+                          </select>
+                          {errorClasses ? (
+                            <p
+                              style={{
+                                margin: "6px 0 0",
+                                fontSize: 12,
+                                color: "#e88",
+                              }}
+                            >
+                              {errorClasses}
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 12,
+                          }}
+                        >
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Class name"
+                            value={editStudentData.className || ""}
+                            onChange={(e) =>
+                              setEditStudentData((prev) => {
+                                if (!prev) return prev;
+                                const v = e.target.value;
+                                return {
+                                  ...prev,
+                                  className: v,
+                                  class:
+                                    prev.class && typeof prev.class === "object"
+                                      ? { ...prev.class, className: v }
+                                      : prev.class,
+                                };
+                              })
+                            }
+                            style={inp}
+                          />
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Section"
+                            value={editStudentData.section || ""}
+                            onChange={(e) =>
+                              setEditStudentData((prev) => {
+                                if (!prev) return prev;
+                                const v = e.target.value;
+                                return {
+                                  ...prev,
+                                  section: v,
+                                  class:
+                                    prev.class && typeof prev.class === "object"
+                                      ? { ...prev.class, section: v }
+                                      : prev.class,
+                                };
+                              })
+                            }
+                            style={inp}
+                          />
+                          {errorClasses ? (
+                            <p
+                              style={{
+                                gridColumn: "1 / -1",
+                                margin: 0,
+                                fontSize: 12,
+                                color: "#e88",
+                              }}
+                            >
+                              {errorClasses} — you can still edit the class label
+                              above.
+                            </p>
+                          ) : (
+                            <p
+                              style={{
+                                gridColumn: "1 / -1",
+                                margin: 0,
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.55)",
+                              }}
+                            >
+                              No class list for this school — edit the label shown
+                              on the card.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label style={lab}>Student name</label>
