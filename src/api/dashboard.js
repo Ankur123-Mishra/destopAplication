@@ -15,6 +15,18 @@ import {
 
 export { sortStudentsByExcelRowOrder };
 
+/** Each word capitalized (e.g. "ankur kumar" → "Ankur Kumar"); aligns with server Excel normalization. */
+function titleCaseWords(input) {
+  if (input === undefined || input === null) return input;
+  const s = String(input).trim();
+  if (!s) return '';
+  return s
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function buildOfflineSchoolRef(schoolDoc) {
   if (!schoolDoc || typeof schoolDoc !== 'object') return null;
   return {
@@ -692,8 +704,8 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
           
           if (!clsStr && !divStr && !getCol(row, "Student Name")) continue; // Skip empty rows
           
-          const className = clsStr || "Class"; // ensure we don't completely fail
-          const section = divStr;
+          const className = clsStr ? titleCaseWords(clsStr) : "Class";
+          const section = divStr ? titleCaseWords(divStr) : "";
 
           let classNameKey = `${className}`;
           if (section) classNameKey += `_${section}`;
@@ -770,8 +782,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             if (!stringValue) return;
             const fieldKey = toExtraFieldKey(header);
             if (!fieldKey) return;
-            extraFields[fieldKey] = value;
+            extraFields[fieldKey] = titleCaseWords(stringValue);
           });
+          const nameRaw = String(getCol(row, 'Student Name', 'StudentName', 'Name')).trim();
           const student = {
             id: nanoid(),
             schoolId,
@@ -780,7 +793,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             section,
             /** 0-based index in parsed sheet (XLSX row order) — used to preserve Excel sequence in UI */
             excelRowOrder: sheetRowIndex,
-            studentName: getCol(row, 'Student Name', 'StudentName', 'Name'),
+            studentName: nameRaw ? titleCaseWords(nameRaw) : '',
             admissionNo: admissionNoVal,
             rollNo: rollNoVal,
             /** ID-card “Student ID” text — never the photo number; photo file match uses `photoNo`. */
@@ -799,18 +812,27 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'Contact No',
             ),
             email: getCol(row, 'Email', 'E-mail', 'EMail'),
-            address: getCol(row, 'Address'),
-            gender: getCol(row, 'Gender'),
-            bloodGroup: getCol(row, 'BloodGroup', 'Blood Group'),
+            address: (() => {
+              const t = String(getCol(row, 'Address')).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
+            gender: (() => {
+              const t = String(getCol(row, 'Gender')).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
+            bloodGroup: String(getCol(row, 'BloodGroup', 'Blood Group')).trim(),
             uniqueCode: uniqueCodeVal,
-            fatherName: getCol(
-              row,
-              'Father Name',
-              'Fathers Name',
-              'FatherName',
-              "Father's Name",
-              'Father',
-            ),
+            fatherName: (() => {
+              const t = String(getCol(
+                row,
+                'Father Name',
+                'Fathers Name',
+                'FatherName',
+                "Father's Name",
+                'Father',
+              )).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
             fatherPrimaryContact: getCol(
               row,
               'Father Primary Contact',
@@ -819,7 +841,10 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'Father Phone',
               'Father Tel',
             ),
-            motherName: getCol(row, 'Mother Name', 'MotherName', "Mother's Name"),
+            motherName: (() => {
+              const t = String(getCol(row, 'Mother Name', 'MotherName', "Mother's Name")).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
             motherPrimaryContact: getCol(
               row,
               'Mother Primary Contact',
@@ -827,8 +852,14 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'Mother Mobile',
               'Mother Phone',
             ),
-            house: getCol(row, 'House'),
-            marking: getCol(row, 'Marking'),
+            house: (() => {
+              const t = String(getCol(row, 'House')).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
+            marking: (() => {
+              const t = String(getCol(row, 'Marking')).trim();
+              return t ? titleCaseWords(t) : '';
+            })(),
             ...(colorCodeRaw ? { colorCodeKey: normalizeColorCodeBasename(colorCodeRaw) } : {}),
             extraFields,
             status: 'Active',

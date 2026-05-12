@@ -73,6 +73,17 @@ export function revokeCollectionLink(token) {
   }).then((res) => parseJsonOrThrow(res, 'Failed to revoke link'));
 }
 
+export function activateCollectionLink(token) {
+  return fetch(`${API_BASE_URL}/api/photographer/collection-links/${encodeURIComponent(token)}/activate`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+  }).then((res) => parseJsonOrThrow(res, 'Failed to activate link'));
+}
+
+export function setCollectionLinkActive(token, isActive) {
+  return isActive ? activateCollectionLink(token) : revokeCollectionLink(token);
+}
+
 export function deleteCollectionLink(token) {
   return fetch(`${API_BASE_URL}/api/photographer/collection-links/${encodeURIComponent(token)}`, {
     method: 'DELETE',

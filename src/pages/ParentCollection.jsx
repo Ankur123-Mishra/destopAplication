@@ -11,6 +11,7 @@ import {
   listCollectionLinks,
   listCollectionSubmissions,
   revokeCollectionLink,
+  activateCollectionLink,
   deleteCollectionLink,
 } from '../api/parentCollection';
 import {
@@ -85,6 +86,21 @@ function formatFieldsSummary(fields) {
   return `${fields.length} dynamic field(s)`;
 }
 
+/** Title-case each word for field labels (e.g. "mother name" → "Mother Name"). Preserves leading/trailing spaces so spaces work while typing. */
+function toTitleCaseLabel(str) {
+  if (str == null || typeof str !== 'string') return '';
+  const lead = str.match(/^\s*/)?.[0] ?? '';
+  const trail = str.match(/\s*$/)?.[0] ?? '';
+  const core = str.slice(lead.length, trail.length ? str.length - trail.length : undefined);
+  const trimmedCore = core.trim();
+  if (!trimmedCore) return lead + trail;
+  const titled = trimmedCore
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+  return lead + titled + trail;
+}
+
 export default function ParentCollection() {
   const [loading, setLoading] = useState(true);
   const [featureEnabled, setFeatureEnabled] = useState(false);
@@ -100,6 +116,7 @@ export default function ParentCollection() {
   const [lastCreatedLink, setLastCreatedLink] = useState('');
   const [creating, setCreating] = useState(false);
   const [revokingToken, setRevokingToken] = useState('');
+  const [togglingToken, setTogglingToken] = useState('');
   const [deletingToken, setDeletingToken] = useState('');
   const [exporting, setExporting] = useState(false);
   const [expandedSchool, setExpandedSchool] = useState(null);
@@ -237,15 +254,15 @@ export default function ParentCollection() {
         .filter((f) => f.enabled)
         .map(({ key, label, isRequired, fieldType }) => ({
           key,
-          label,
+          label: toTitleCaseLabel(label).trim(),
           isRequired,
           fieldType
         }));
       const payload = {
-        projectName: projectName.trim(),
+        projectName: toTitleCaseLabel(projectName).trim(),
         fields,
         expiresInDays: Number.parseInt(expiresInDays, 10) || 180,
-        collectionSchoolLabel: collectionSchoolLabel.trim() || undefined,
+        collectionSchoolLabel: toTitleCaseLabel(collectionSchoolLabel).trim() || undefined,
       };
 
       const result = await createCollectionLink(payload);
@@ -289,6 +306,46 @@ export default function ParentCollection() {
       setFeedback({ type: 'error', message: err?.message || 'Failed to deactivate link' });
     } finally {
       setRevokingToken('');
+    }
+  }
+
+  async function handleToggleLinkStatus(link) {
+    if (!link?.token) return;
+    const willActivate = !link.isActive;
+
+    if (!willActivate) {
+      const approved = window.confirm(
+        'Deactivate this parent form link? Parents will no longer be able to submit.'
+      );
+      if (!approved) return;
+    }
+
+    setFeedback(null);
+    setTogglingToken(link.token);
+
+    setLinks((prev) =>
+      prev.map((l) => (l.token === link.token ? { ...l, isActive: willActivate } : l))
+    );
+
+    try {
+      if (willActivate) {
+        await activateCollectionLink(link.token);
+        setFeedback({ type: 'success', message: 'Link activated. Parents can submit again.' });
+      } else {
+        await revokeCollectionLink(link.token);
+        setFeedback({ type: 'success', message: 'Link deactivated successfully.' });
+      }
+      await loadLinks();
+    } catch (err) {
+      setLinks((prev) =>
+        prev.map((l) => (l.token === link.token ? { ...l, isActive: !willActivate } : l))
+      );
+      setFeedback({
+        type: 'error',
+        message: err?.message || (willActivate ? 'Failed to activate link' : 'Failed to deactivate link'),
+      });
+    } finally {
+      setTogglingToken('');
     }
   }
 
@@ -464,7 +521,7 @@ export default function ParentCollection() {
                 className="input-field"
                 placeholder="e.g. Satish Project 1"
                 value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
+                onChange={(e) => setProjectName(toTitleCaseLabel(e.target.value))}
               />
             </label>
             <label className="parent-collection-field">
@@ -474,7 +531,7 @@ export default function ParentCollection() {
                 className="input-field"
                 placeholder="Enter School Name"
                 value={collectionSchoolLabel}
-                onChange={(e) => setCollectionSchoolLabel(e.target.value)}
+                onChange={(e) => setCollectionSchoolLabel(toTitleCaseLabel(e.target.value))}
               />
             </label>
           </div>
@@ -543,7 +600,9 @@ export default function ParentCollection() {
                             type="text"
                             value={field.label}
                             placeholder="Label shown to parents"
-                            onChange={(e) => updateField(field.key, { label: e.target.value })}
+                            onChange={(e) =>
+                              updateField(field.key, { label: toTitleCaseLabel(e.target.value) })
+                            }
                             className="config-input"
                           />
                         </div>
@@ -653,9 +712,27 @@ export default function ParentCollection() {
                       </td>
                       <td>{formatFieldsSummary(link.fields)}</td>
                       <td>
-                        <span className={`badge ${link.isActive ? 'badge-approved' : 'badge-printed'}`}>
-                          {link.isActive ? 'Active' : 'Revoked'}
-                        </span>
+                        <div className="status-toggle-wrap">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={link.isActive ? 'true' : 'false'}
+                            aria-label={link.isActive ? 'Deactivate link' : 'Activate link'}
+                            title={link.isActive ? 'Click to deactivate' : 'Click to activate'}
+                            className={`status-toggle ${link.isActive ? 'is-on' : 'is-off'}`}
+                            onClick={() => handleToggleLinkStatus(link)}
+                            disabled={togglingToken === link.token}
+                          >
+                            <span className="status-toggle-knob" />
+                          </button>
+                          <span className={`status-toggle-label ${link.isActive ? 'on' : 'off'}`}>
+                            {togglingToken === link.token
+                              ? 'Updating...'
+                              : link.isActive
+                                ? 'Active'
+                                : 'Inactive'}
+                          </span>
+                        </div>
                       </td>
                       <td>{formatDateTime(link.createdAt)}</td>
                       <td>
@@ -667,17 +744,6 @@ export default function ParentCollection() {
                           >
                             Copy
                           </button>
-                          {link.isActive && (
-                            <button
-                              type="button"
-                              className="btn btn-warning btn-sm"
-                              onClick={() => handleRevokeLink(link.token)}
-                              disabled={revokingToken === link.token}
-                              style={{ color: 'white' }}
-                            >
-                              {revokingToken === link.token ? '...' : 'Revoke'}
-                            </button>
-                          )}
                           <button
                             type="button"
                             className="btn btn-danger btn-sm"
@@ -1201,6 +1267,71 @@ export default function ParentCollection() {
 
         .btn-warning:hover {
           background: #d97706;
+        }
+
+        .status-toggle-wrap {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .status-toggle {
+          position: relative;
+          width: 40px;
+          height: 22px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.08);
+          padding: 0;
+          cursor: pointer;
+          transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+          flex-shrink: 0;
+        }
+
+        .status-toggle:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .status-toggle.is-on {
+          background: #16a34a;
+          border-color: #15803d;
+          box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.15);
+        }
+
+        .status-toggle.is-off {
+          background: rgba(248, 113, 113, 0.25);
+          border-color: rgba(248, 113, 113, 0.45);
+        }
+
+        .status-toggle-knob {
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+          transition: transform 0.2s ease;
+        }
+
+        .status-toggle.is-on .status-toggle-knob {
+          transform: translateX(18px);
+        }
+
+        .status-toggle-label {
+          font-size: 0.8rem;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+        }
+
+        .status-toggle-label.on {
+          color: #4ade80;
+        }
+
+        .status-toggle-label.off {
+          color: #fca5a5;
         }
 
         @media (max-width: 900px) {
