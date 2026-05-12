@@ -859,8 +859,7 @@ export default function IdCardCanvasEditor({
     setSelectedId(null);
   };
 
-  // Keyboard nudges: selected element ko Arrow keys se move karna (edit mode only).
-  
+  // Keyboard: Arrow keys = nudge selected element; B = bold toggle for text (edit mode only).
   useEffect(() => {
     if (showPreview) return;
     if (!selectedId) return;
@@ -879,6 +878,21 @@ export default function IdCardCanvasEditor({
     };
 
     const onKeyDown = (e) => {
+      // Bold toggle — same as “Font style → Bold” (selected text element only).
+      if (e.key === 'b' || e.key === 'B') {
+        if (isTypingTarget(e.target)) return;
+        const sel = elementsRef.current.find((el) => el.id === selectedId);
+        if (!sel || sel.type !== 'text') return;
+        e.preventDefault();
+        setElements((prev) =>
+          prev.map((x) => {
+            if (x.id !== selectedId || x.type !== 'text') return x;
+            return { ...x, fontWeight: isTextElementBold(x) ? '400' : '700' };
+          })
+        );
+        return;
+      }
+
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
       if (isTypingTarget(e.target)) return;
       e.preventDefault();
