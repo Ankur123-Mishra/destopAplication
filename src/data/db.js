@@ -81,3 +81,24 @@ db.version(5)
         Object.keys(nextTemplate).length > 0 ? nextTemplate : undefined;
     });
   });
+
+// Large uploaded ID card layouts (data URLs) exceed localStorage quota (~5MB).
+// Store the same bundle shape in IndexedDB instead.
+db.version(6).stores({
+  schools: 'id, schoolName, syncStatus, mongoId, lastSyncedAt',
+  classes: 'id, schoolId, className, section',
+  students: [
+    'id',
+    'schoolId',
+    'classId',
+    'studentId',
+    'photoNo',
+    'excelRowOrder',
+    'studentName',
+    'hasTemplate',
+    '[schoolId+excelRowOrder]',
+    '[schoolId+classId]',
+    '[schoolId+classId+excelRowOrder]',
+  ].join(', '),
+  uploadedTemplatesBundle: 'id',
+});

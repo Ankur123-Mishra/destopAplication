@@ -3563,9 +3563,6 @@ export default function SavedIdCardsList({
     done: false,
     show: false,
   });
-  const allowPreviewWithoutPhoto =
-    normalizeProjectType(selectedSchool?.projectType) === "badge";
-  const allowRootTemplateFallbackForAllStudents = allowPreviewWithoutPhoto;
 
   const [editStudentData, setEditStudentData] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -4456,6 +4453,30 @@ export default function SavedIdCardsList({
   const studentsForList = isAllSchoolStudents
     ? allSchoolStudentsRaw
     : classStudentsRaw;
+
+  /** Badge projects allow preview without photos; use school row or embedded school on list students (offline rows always carry projectType on school). */
+  const projectTypeForBadgeRules = React.useMemo(() => {
+    const direct = selectedSchool?.projectType;
+    if (direct != null && String(direct).trim() !== "") return direct;
+    const first =
+      Array.isArray(studentsForList) && studentsForList.length > 0
+        ? studentsForList[0]
+        : null;
+    if (!first || typeof first !== "object") return null;
+    if (first.school && typeof first.school === "object") {
+      const p = first.school.projectType;
+      if (p != null && String(p).trim() !== "") return p;
+    }
+    if (typeof first.schoolId === "object" && first.schoolId != null) {
+      const p = first.schoolId.projectType;
+      if (p != null && String(p).trim() !== "") return p;
+    }
+    return null;
+  }, [selectedSchool?.projectType, studentsForList]);
+
+  const allowPreviewWithoutPhoto =
+    normalizeProjectType(projectTypeForBadgeRules) === "badge";
+  const allowRootTemplateFallbackForAllStudents = allowPreviewWithoutPhoto;
 
   const filteredStudentsForList = React.useMemo(
     () =>

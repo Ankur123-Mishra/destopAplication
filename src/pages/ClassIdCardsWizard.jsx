@@ -986,8 +986,27 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
    * Save selected students' ID cards for `templateId`, then open the template preview list.
    * For Badge projects, photo is optional and all selected students are saved.
    */
-  const saveAllIdCardsForTemplate = async (templateId, { manageSavingState = true } = {}) => {
-    if (!cls || !school || !templateId) return;
+  const saveAllIdCardsForTemplate = async (
+    templateId,
+    { manageSavingState = true, serverTemplateId = null } = {},
+  ) => {
+    const resolvedSchoolId =
+      school?.id ?? schoolIdFromUrl ?? selectedSchoolId ?? effectiveSchoolId ?? null;
+    const resolvedClassId = cls?.id ?? classIdFromUrl ?? effectiveClassId ?? null;
+
+    if (!templateId) {
+      alert('No template selected. Pick a template and try again.');
+      return;
+    }
+    if (!resolvedSchoolId) {
+      alert('School could not be determined. Use the back button, open this class again from the school list, then save.');
+      return;
+    }
+    if (!resolvedClassId) {
+      alert('Class could not be determined. Use the back button, pick the class again, then save.');
+      return;
+    }
+
     const isUploaded =
       templateId === 'uploaded-custom' || (typeof templateId === 'string' && templateId.startsWith('uploaded-'));
     const effectiveUploadedTemplate =
@@ -995,17 +1014,23 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     const template = isUploaded
       ? effectiveUploadedTemplate && { name: effectiveUploadedTemplate.name }
       : getTemplateById(templateId) || getFabricTemplateById(templateId);
-    if (!template && !isUploaded) return;
-    if (isUploaded && !effectiveUploadedTemplate?.elements) return;
+    if (!template && !isUploaded) {
+      alert('That template could not be found. Go back to template selection and try again.');
+      return;
+    }
+    if (isUploaded && !effectiveUploadedTemplate?.elements) {
+      alert('Uploaded template has no layout elements. Re-open arrange elements or re-upload the template.');
+      return;
+    }
     const studentIds = selectedStudentsForSave.map((s) => s.id);
     const viewTemplatePath =
-      cls.id === 'all'
-        ? `/view-template/school/${school.id}/all-students`
-        : `/view-template/school/${school.id}/class/${cls.id}`;
+      resolvedClassId === 'all'
+        ? `/view-template/school/${resolvedSchoolId}/all-students`
+        : `/view-template/school/${resolvedSchoolId}/class/${resolvedClassId}`;
     if (studentIds.length === 0) {
       // Even when no rows are selected/ready, user explicitly confirmed save.
       // Keep behavior consistent with successful save flow.
-      writeSavedIdCardsFlagForSchool(school.id);
+      writeSavedIdCardsFlagForSchool(resolvedSchoolId);
       navigate(viewTemplatePath, { replace: true });
       return { skipped: true, navigated: true };
     }
@@ -1017,6 +1042,14 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         await (offlineMode
           ? offlineApi.bulkSaveTemplates(apiTemplateId, studentIds)
           : onlineApi.bulkSaveTemplates(apiTemplateId, studentIds));
+      } else if (
+        !offlineMode &&
+        serverTemplateId &&
+        typeof serverTemplateId === 'string' &&
+        studentIds.length > 0
+      ) {
+        // Uploaded layouts are stored locally as uploaded-*; server needs the real template id from upload.
+        await onlineApi.bulkSaveTemplates(serverTemplateId, studentIds);
       }
 
       const persistedStudentTemplate = buildSlimPerStudentOfflineTemplate(
@@ -1034,7 +1067,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       if (offlineUpdates.length > 0) {
         await offlineApi.bulkSaveFullOfflineTemplates(offlineUpdates);
       }
-      writeSavedIdCardsFlagForSchool(school.id);
+      writeSavedIdCardsFlagForSchool(resolvedSchoolId);
       navigate(viewTemplatePath, { replace: true });
     } catch (err) {
       alert(err?.message || 'Failed to save ID cards. Please try again.');
@@ -1220,6 +1253,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setEditorOpenedFromApiClassTemplate(false);
     setSavingAll(true);
     try {
+      if (!payload || !Array.isArray(payload.elements)) {
+        alert('Could not read the card layout from the editor. Please adjust an element and try saving again.');
+        return;
+      }
       const draftSub = uploadedTemplate ? layoutDraftSubKey(uploadedTemplate) : '';
       if (draftSub) clearLayoutDraft(effectiveSchoolId, effectiveClassId, draftSub);
       const front = uploadedTemplate?.frontImage;
@@ -1245,14 +1282,16 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         elements: frontElementsToSave,
         ...(templateUploadMode === 'both' && back ? { backElements: backElementsToSave ?? [] } : {}),
       };
-      const savedId = saveUploadedTemplate(toSave);
+      const savedId = await saveUploadedTemplate(toSave);
 
+      let serverTemplateId = null;
       try {
         const frontData = await imageRefToDataUrlForUpload(toSave.frontImage);
         const backData = await imageRefToDataUrlForUpload(toSave.backImage);
         const templatePayload = {
           name: toSave.name,
           schoolId: effectiveSchoolId,
+          ...(effectiveClassId != null && effectiveClassId !== '' ? { classId: effectiveClassId } : {}),
           frontImage: frontData,
           backImage: backData,
           elements: toSave.elements,
@@ -1262,7 +1301,16 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         if (offlineMode) {
           await offlineApi.uploadTemplate(templatePayload);
         } else {
-          await onlineApi.uploadTemplate(templatePayload);
+          const uploadRes = await onlineApi.uploadTemplate(templatePayload);
+          serverTemplateId =
+            uploadRes?.templateId ||
+            uploadRes?.data?._id ||
+            uploadRes?.template?._id ||
+            uploadRes?._id ||
+            null;
+          if (typeof serverTemplateId !== 'string') {
+            serverTemplateId = serverTemplateId != null ? String(serverTemplateId) : null;
+          }
         }
       } catch (err) {
         console.error('Template upload to API failed:', err);
@@ -1273,7 +1321,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       }
 
       try {
-        const bulkResult = await saveAllIdCardsForTemplate(savedId, { manageSavingState: false });
+        const bulkResult = await saveAllIdCardsForTemplate(savedId, {
+          manageSavingState: false,
+          serverTemplateId: serverTemplateId || undefined,
+        });
         setUploadedTemplate(null);
         setArrangingUploaded(false);
         setSelectedTemplateId(savedId);
@@ -1281,9 +1332,16 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           setStep(STEPS.REVIEW_SAVE);
           navigate(`${basePath}/review/${effectiveSchoolId}/${effectiveClassId}/${savedId}`, { replace: true });
         }
-      } catch {
-        /* bulk save failed; template is still in localStorage — keep editor state */
+      } catch (bulkErr) {
+        console.error(bulkErr);
+        alert(
+          bulkErr?.message ||
+            'Failed to assign the template to all students. The layout may be saved locally — please try again.',
+        );
       }
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || 'Save failed unexpectedly. Please try again.');
     } finally {
       setSavingAll(false);
     }
