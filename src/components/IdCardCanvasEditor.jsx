@@ -375,12 +375,14 @@ function normalizeCssDimensionUnit(unit) {
 
 /** When set, the stage renders at real card size (e.g. 88mm × 56mm). */
 function getPhysicalStageSizeStyle(dimension, dimensionUnit) {
-  if (!dimension || typeof dimension.width !== 'number' || typeof dimension.height !== 'number') return null;
-  if (dimension.width <= 0 || dimension.height <= 0) return null;
+  if (!dimension || typeof dimension !== 'object') return null;
+  const width = Number(dimension.width);
+  const height = Number(dimension.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
   const unit = normalizeCssDimensionUnit(dimensionUnit);
   return {
-    width: `${dimension.width}${unit}`,
-    height: `${dimension.height}${unit}`,
+    width: `${width}${unit}`,
+    height: `${height}${unit}`,
     maxWidth: 'none',
     minHeight: 0,
     aspectRatio: 'auto',
@@ -956,14 +958,10 @@ export default function IdCardCanvasEditor({
   }, [allFieldDefs, getFieldValue, selectedEl?.dataField, selectedEl?.type]);
 
   const openDimensionForm = useCallback(() => {
-    const h =
-      effectiveDimension && typeof effectiveDimension.height === 'number'
-        ? effectiveDimension.height
-        : 56;
-    const w =
-      effectiveDimension && typeof effectiveDimension.width === 'number'
-        ? effectiveDimension.width
-        : 88;
+    const rawH = effectiveDimension && effectiveDimension.height != null ? Number(effectiveDimension.height) : NaN;
+    const rawW = effectiveDimension && effectiveDimension.width != null ? Number(effectiveDimension.width) : NaN;
+    const h = Number.isFinite(rawH) && rawH > 0 ? rawH : 56;
+    const w = Number.isFinite(rawW) && rawW > 0 ? rawW : 88;
     const u = normalizeCssDimensionUnit(effectiveDimensionUnit);
     setDimHeightDraft(String(h));
     setDimWidthDraft(String(w));

@@ -571,7 +571,8 @@ export async function createSchool({
 
 // Bulk Upload students: Parse Excel locally -> db.classes & db.students
 export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
-  const { onUploadProgress } = options;
+  const { onUploadProgress, projectType: uploadProjectType } = options;
+  const isBadgeProject = String(uploadProjectType || '').trim().toLowerCase() === 'badge';
   if (typeof onUploadProgress === 'function') onUploadProgress(10);
   const toExtraFieldKey = (header) => {
     const raw = String(header || '').trim();
@@ -687,12 +688,21 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
 
         for (let sheetRowIndex = 0; sheetRowIndex < json.length; sheetRowIndex++) {
           const row = json[sheetRowIndex];
+          const rowHasAnyValue = Object.values(row).some((v) => {
+            if (v == null) return false;
+            return String(v).trim() !== '';
+          });
           const clsStr = String(getCol(row, "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
           const divStr = String(getCol(row, "Division", "Section")).trim();
-          
-          if (!clsStr && !divStr && !getCol(row, "Student Name")) continue; // Skip empty rows
-          
-          const className = clsStr || "Class"; // ensure we don't completely fail
+          const studentNameCol = String(getCol(row, "Student Name", "StudentName", "Name") || "").trim();
+
+          if (isBadgeProject) {
+            if (!rowHasAnyValue) continue;
+          } else if (!clsStr && !divStr && !studentNameCol) {
+            continue; // Skip empty / non-student rows for ID-card style sheets
+          }
+
+          const className = clsStr || (isBadgeProject ? "All" : "Class");
           const section = divStr;
 
           let classNameKey = `${className}`;
@@ -761,6 +771,23 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'ColorCodePNG',
             ),
           ).trim();
+          const studentNameFromSheet = studentNameCol;
+          let resolvedStudentName = studentNameFromSheet;
+          if (!resolvedStudentName && isBadgeProject) {
+            const badgeTitle = String(
+              getCol(
+                row,
+                'Monitar',
+                'Monitor',
+                'Designation',
+                'Title',
+                'Role',
+                'Label',
+              ) || '',
+            ).trim();
+            resolvedStudentName =
+              badgeTitle || String(rollNoVal || '').trim() || `Entry ${sheetRowIndex + 1}`;
+          }
           const extraFields = {};
           Object.entries(row).forEach(([header, value]) => {
             const norm = String(header || '').replace(/[\s._]+/g, '').toLowerCase();
@@ -780,7 +807,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             section,
             /** 0-based index in parsed sheet (XLSX row order) — used to preserve Excel sequence in UI */
             excelRowOrder: sheetRowIndex,
-            studentName: getCol(row, 'Student Name', 'StudentName', 'Name'),
+            studentName: resolvedStudentName || getCol(row, 'Student Name', 'StudentName', 'Name'),
             admissionNo: admissionNoVal,
             rollNo: rollNoVal,
             /** ID-card “Student ID” text — never the photo number; photo file match uses `photoNo`. */

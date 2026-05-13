@@ -309,7 +309,51 @@ async function imageRefToDataUrlForUpload(ref) {
   }
 }
 
-function mapApiStudent(s) {
+/** Normalize school/card dimensions from API (numbers or numeric strings). */
+function coerceSchoolDimension(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const h = Number(raw.height);
+  const w = Number(raw.width);
+  if (!Number.isFinite(h) || !Number.isFinite(w) || h <= 0 || w <= 0) return null;
+  return { height: h, width: w };
+}
+
+function mergeStudentWithSchoolDimension(mappedStudent, schoolDoc) {
+  const fromSt = coerceSchoolDimension(mappedStudent?.dimension);
+  if (fromSt) {
+    return {
+      ...mappedStudent,
+      dimension: fromSt,
+      dimensionUnit: mappedStudent.dimensionUnit || 'mm',
+    };
+  }
+  const fromSchool = coerceSchoolDimension(schoolDoc?.dimension);
+  if (fromSchool) {
+    return {
+      ...mappedStudent,
+      dimension: fromSchool,
+      dimensionUnit: schoolDoc.dimensionUnit || 'mm',
+    };
+  }
+  return mappedStudent;
+}
+
+/** Wizard `apiSchool` shape — includes optional coerced physical card size. */
+function schoolRecordToWizardApiSchool(school) {
+  if (!school) return null;
+  const dim = coerceSchoolDimension(school.dimension);
+  return {
+    id: school._id,
+    name: school.schoolName,
+    address: school.address,
+    schoolCode: school.schoolCode || '',
+    allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+    projectType: school.projectType || 'idCard',
+    ...(dim ? { dimension: dim, dimensionUnit: school.dimensionUnit || 'mm' } : {}),
+  };
+}
+
+function mapApiStudent(s, schoolListRecord = null) {
   const popClass = s.classId && typeof s.classId === 'object' ? s.classId : null;
   const classNameFallback =
     s.className ||
@@ -377,7 +421,7 @@ function mapApiStudent(s) {
     }
   });
   return {
-    id: s._id,
+    id: s._id ?? s.id,
     name: s.studentName,
     studentId: s.studentId || s.admissionNo || s.rollNo || s.uniqueCode || '',
     admissionNo: s.admissionNo || '',
@@ -411,8 +455,24 @@ function mapApiStudent(s) {
     status: s.status,
     uploadedVia: s.uploadedVia || '',
     extraFields,
-    dimension: s?.schoolId?.dimension,
-    dimensionUnit: s?.schoolId?.dimensionUnit ?? 'mm',
+    ...(() => {
+      const popSchool =
+        s?.schoolId && typeof s.schoolId === 'object' && !Array.isArray(s.schoolId) ? s.schoolId : null;
+      const nestedSchool = s?.school && typeof s.school === 'object' ? s.school : null;
+      let dimension = coerceSchoolDimension(popSchool?.dimension);
+      let dimensionUnit = popSchool?.dimensionUnit ?? 'mm';
+      if (!dimension && nestedSchool) {
+        dimension = coerceSchoolDimension(nestedSchool.dimension);
+        dimensionUnit = nestedSchool.dimensionUnit ?? dimensionUnit;
+      }
+      if (!dimension && schoolListRecord) {
+        dimension = coerceSchoolDimension(schoolListRecord.dimension);
+        dimensionUnit = schoolListRecord.dimensionUnit ?? dimensionUnit;
+      }
+      return dimension
+        ? { dimension, dimensionUnit: dimensionUnit || 'mm' }
+        : {};
+    })(),
     photoUrl: fullPhotoUrl(s.photoUrl),
     ...(s.colorCodeImageUrl ? { colorCodeImageUrl: fullPhotoUrl(s.colorCodeImageUrl) } : {}),
     ...(s.colorCodePhotoUrl ? { colorCodePhotoUrl: fullPhotoUrl(s.colorCodePhotoUrl) } : {}),
@@ -567,16 +627,20 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     if (hasStateData) {
       setApiClassTemplate(null);
       setSchoolHasSavedIdCards(readSavedIdCardsFlagForSchool(stateSchool._id));
-      setApiSchool({
-        id: stateSchool._id,
-        name: stateSchool.schoolName,
-        address: stateSchool.address,
-        schoolCode: stateSchool.schoolCode || '',
-        allowedMobiles: Array.isArray(stateSchool.allowedMobiles) ? stateSchool.allowedMobiles : [],
-        projectType: stateSchool.projectType || 'idCard',
-      });
+      setApiSchool(
+        schoolRecordToWizardApiSchool({
+          _id: stateSchool._id,
+          schoolName: stateSchool.schoolName,
+          address: stateSchool.address,
+          schoolCode: stateSchool.schoolCode,
+          allowedMobiles: stateSchool.allowedMobiles,
+          projectType: stateSchool.projectType,
+          dimension: stateSchool.dimension,
+          dimensionUnit: stateSchool.dimensionUnit,
+        }),
+      );
       setApiClass({ id: stateClass._id, name: `Class ${stateClass.className}` });
-      setApiStudents(stateStudents);
+      setApiStudents(stateStudents.map((st) => mergeStudentWithSchoolDimension(st, stateSchool)));
       setApiDataLoaded(true);
       return;
     }
@@ -586,22 +650,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setSchoolHasSavedIdCards(false);
 
     const applySchoolStudentsPayload = (schoolsList, studentsRes) => {
-      const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
+      const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
+      const studentsList = (studentsRes.students ?? []).map((st) => mapApiStudent(st, school));
       setApiClassTemplate(pickSchoolLevelTemplate(studentsRes, schoolIdFromUrl, schoolsList, offlineMode));
       setSchoolHasSavedIdCards(computeSchoolHasSavedIdCards(schoolIdFromUrl, studentsRes.students));
-      const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
-      setApiSchool(
-        school
-          ? {
-              id: school._id,
-              name: school.schoolName,
-              address: school.address,
-              schoolCode: school.schoolCode || '',
-              allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
-              projectType: school.projectType || 'idCard',
-            }
-          : null,
-      );
+      setApiSchool(schoolRecordToWizardApiSchool(school));
       setApiStudents(studentsList);
       setApiDataLoaded(true);
     };
@@ -646,23 +699,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           if (cancelled) return;
           const schoolsList = schoolsRes.schools ?? [];
           const classesList = classesRes.classes ?? [];
-          const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
+          const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
+          const studentsList = (studentsRes.students ?? []).map((st) => mapApiStudent(st, school));
           setApiClassTemplate(pickSchoolLevelTemplate(studentsRes, schoolIdFromUrl, schoolsList, offlineMode));
           setSchoolHasSavedIdCards(computeSchoolHasSavedIdCards(schoolIdFromUrl, studentsRes.students));
-          const school = schoolsList.find((s) => s._id === schoolIdFromUrl);
           const cls = classesList.find((c) => c._id === classIdFromUrl);
-          setApiSchool(
-            school
-              ? {
-                  id: school._id,
-                  name: school.schoolName,
-                  address: school.address,
-                  schoolCode: school.schoolCode || '',
-                  allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
-                  projectType: school.projectType || 'idCard',
-                }
-              : null,
-          );
+          setApiSchool(schoolRecordToWizardApiSchool(school));
           setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}` } : null);
           setApiStudents(studentsList);
           setApiDataLoaded(true);
@@ -731,13 +773,17 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       .getStudentsBySchoolAndClass(effectiveSchoolId, effectiveClassId)
       .then((res) => {
         if (cancelled) return;
-        setApiStudents((res.students ?? []).map(mapApiStudent));
+        const schoolDimPass =
+          school && school.dimension
+            ? { dimension: school.dimension, dimensionUnit: school.dimensionUnit }
+            : null;
+        setApiStudents((res.students ?? []).map((st) => mapApiStudent(st, schoolDimPass)));
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [showArrangeUploaded, effectiveSchoolId, effectiveClassId, offlineMode]);
+  }, [showArrangeUploaded, effectiveSchoolId, effectiveClassId, offlineMode, school?.dimension, school?.dimensionUnit]);
 
   // When school/class changes, default selection = all students in that class
   useEffect(() => {
@@ -1632,6 +1678,9 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     const previewColorBadgeUrl = previewStudent
       ? getStudentColorCodeImageUrl(previewStudent)
       : null;
+    const arrangeCanvasDimension = coerceSchoolDimension(previewStudent?.dimension ?? school?.dimension);
+    const arrangeCanvasDimensionUnit =
+      previewStudent?.dimensionUnit ?? school?.dimensionUnit ?? 'mm';
     const initialData = previewStudent
       ? {
           name: previewStudent.name || '',
@@ -1750,8 +1799,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           onElementsChange={
             arrangeEditSide === 'back' ? setArrangeBackElements : handleArrangeElementsPersist
           }
-          dimension={previewStudent?.dimension}
-          dimensionUnit={previewStudent?.dimensionUnit}
+          dimension={arrangeCanvasDimension ?? undefined}
+          dimensionUnit={arrangeCanvasDimensionUnit}
           schoolId={schoolIdFromUrl || effectiveSchoolId}
           schoolPutPayload={{
             schoolName: school?.name || '',
@@ -1760,6 +1809,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
             allowedMobiles: school?.allowedMobiles || [],
           }}
           onDimensionUpdated={(next) => {
+            setApiSchool((prev) =>
+              prev && next?.dimension
+                ? { ...prev, dimension: next.dimension, dimensionUnit: next.dimensionUnit ?? prev.dimensionUnit }
+                : prev,
+            );
             setApiStudents((prev) =>
               prev.map((s) => ({ ...s, dimension: next.dimension, dimensionUnit: next.dimensionUnit })),
             );
