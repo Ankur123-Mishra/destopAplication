@@ -156,18 +156,127 @@ function setImageDpiMetadata(buffer, mime, dpi = 300) {
   return buffer;
 }
 
+/** Read JPEG EXIF orientation (1–8). Returns 1 when unknown or not JPEG. */
+function readJpegExifOrientation(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return 1;
+  if (buffer[0] !== 0xff || buffer[1] !== 0xd8) return 1;
+  let offset = 2;
+  while (offset + 4 < buffer.length) {
+    if (buffer[offset] !== 0xff) break;
+    const marker = buffer[offset + 1];
+    if (marker === 0xda || marker === 0xd9) break;
+    const segmentLength = buffer.readUInt16BE(offset + 2);
+    if (segmentLength < 2 || offset + 2 + segmentLength > buffer.length) break;
+    if (marker === 0xe1) {
+      const exifHeader = buffer.toString('ascii', offset + 4, offset + 10);
+      if (exifHeader !== 'Exif\0\0') break;
+      const tiffStart = offset + 10;
+      if (tiffStart + 8 > buffer.length) break;
+      const endian = buffer.toString('ascii', tiffStart, tiffStart + 2);
+      const le = endian === 'II';
+      const readU16 = (pos) => (le ? buffer.readUInt16LE(pos) : buffer.readUInt16BE(pos));
+      const readU32 = (pos) => (le ? buffer.readUInt32LE(pos) : buffer.readUInt32BE(pos));
+      if (readU16(tiffStart + 2) !== 0x002a) break;
+      const ifd0Offset = tiffStart + readU32(tiffStart + 4);
+      if (ifd0Offset + 2 > buffer.length) break;
+      const entryCount = readU16(ifd0Offset);
+      for (let i = 0; i < entryCount; i += 1) {
+        const entryOffset = ifd0Offset + 2 + i * 12;
+        if (entryOffset + 12 > buffer.length) break;
+        if (readU16(entryOffset) === 0x0112) {
+          const value = readU16(entryOffset + 8);
+          return value >= 1 && value <= 8 ? value : 1;
+        }
+      }
+      break;
+    }
+    offset += 2 + segmentLength;
+  }
+  return 1;
+}
+
+/** Match browser preview: bake EXIF orientation into pixels (node-canvas ignores EXIF). */
+function rasterizeWithExifOrientation(image, orientation) {
+  if (!orientation || orientation === 1) return image;
+  const srcW = image.width;
+  const srcH = image.height;
+  const swap = orientation >= 5 && orientation <= 8;
+  const canvas = createCanvas(swap ? srcH : srcW, swap ? srcW : srcH);
+  const ctx = canvas.getContext('2d');
+  configureHighQualityRasterContext(ctx);
+  switch (orientation) {
+    case 2:
+      ctx.translate(srcW, 0);
+      ctx.scale(-1, 1);
+      break;
+    case 3:
+      ctx.translate(srcW, srcH);
+      ctx.rotate(Math.PI);
+      break;
+    case 4:
+      ctx.translate(0, srcH);
+      ctx.scale(1, -1);
+      break;
+    case 5:
+      ctx.rotate(0.5 * Math.PI);
+      ctx.scale(1, -1);
+      break;
+    case 6:
+      ctx.rotate(0.5 * Math.PI);
+      ctx.translate(0, -srcH);
+      break;
+    case 7:
+      ctx.rotate(-0.5 * Math.PI);
+      ctx.translate(-srcW, 0);
+      ctx.scale(1, -1);
+      break;
+    case 8:
+      ctx.rotate(-0.5 * Math.PI);
+      ctx.translate(-srcW, 0);
+      break;
+    default:
+      break;
+  }
+  ctx.drawImage(image, 0, 0);
+  return canvas;
+}
+
+async function loadOrientedImage(imagePath) {
+  const ext = path.extname(imagePath).toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') {
+    const buffer = await fs.readFile(imagePath);
+    const orientation = readJpegExifOrientation(buffer);
+    const image = await loadImage(buffer);
+    return rasterizeWithExifOrientation(image, orientation);
+  }
+  return loadImage(imagePath);
+}
+
 /**
  * Snap crop to whole source pixels so drawImage does not sample between pixels (reduces blur).
  */
+
 function computeIntegralCropRect(imageWidth, imageHeight, crop) {
   const x = Number(crop?.x);
   const y = Number(crop?.y);
   const w = Number(crop?.width);
   const h = Number(crop?.height);
-  let cropX = Math.round((x / 100) * imageWidth);
-  let cropY = Math.round((y / 100) * imageHeight);
-  let cropWidth = Math.round((w / 100) * imageWidth);
-  let cropHeight = Math.round((h / 100) * imageHeight);
+  let cropX;
+  let cropY;
+  let cropWidth;
+  let cropHeight;
+
+  if (crop?.unit === 'px') {
+    cropX = Math.round(x);
+    cropY = Math.round(y);
+    cropWidth = Math.round(w);
+    cropHeight = Math.round(h);
+  } else {
+    cropX = Math.round((x / 100) * imageWidth);
+    cropY = Math.round((y / 100) * imageHeight);
+    cropWidth = Math.round((w / 100) * imageWidth);
+    cropHeight = Math.round((h / 100) * imageHeight);
+  }
 
   cropX = Math.max(0, Math.min(cropX, Math.max(0, imageWidth - 1)));
   cropY = Math.max(0, Math.min(cropY, Math.max(0, imageHeight - 1)));
@@ -180,6 +289,58 @@ function computeIntegralCropRect(imageWidth, imageHeight, crop) {
     cropHeight = Math.max(1, imageHeight - cropY);
   }
   return { cropX, cropY, cropWidth, cropHeight };
+}
+
+/** Trim source crop to output aspect so drawImage does not stretch height/width. */
+function fitCropRectToOutputAspect(
+  cropX,
+  cropY,
+  cropWidth,
+  cropHeight,
+  imageWidth,
+  imageHeight,
+  outputWidth,
+  outputHeight
+) {
+  const targetAspect = outputWidth / outputHeight;
+  if (!Number.isFinite(targetAspect) || targetAspect <= 0) {
+    return { cropX, cropY, cropWidth, cropHeight };
+  }
+
+  let w = cropWidth;
+  let h = cropHeight;
+  const cx = cropX + w / 2;
+  const cy = cropY + h / 2;
+  const currentAspect = w / h;
+
+  if (Math.abs(currentAspect - targetAspect) > 0.0005) {
+    if (currentAspect > targetAspect) {
+      w = Math.max(1, Math.round(h * targetAspect));
+    } else {
+      h = Math.max(1, Math.round(w / targetAspect));
+    }
+  }
+
+  let x = Math.round(cx - w / 2);
+  let y = Math.round(cy - h / 2);
+
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  if (x + w > imageWidth) {
+    x = Math.max(0, imageWidth - w);
+  }
+  if (y + h > imageHeight) {
+    y = Math.max(0, imageHeight - h);
+  }
+  if (x + w > imageWidth) w = Math.max(1, imageWidth - x);
+  if (y + h > imageHeight) h = Math.max(1, imageHeight - y);
+
+  return {
+    cropX: x,
+    cropY: y,
+    cropWidth: Math.max(1, w),
+    cropHeight: Math.max(1, h),
+  };
 }
 
 /** node-canvas / Cairo: use highest-quality filters when scaling crops to output size. */
@@ -675,27 +836,37 @@ ipcMain.handle('crop-images', async (event, data) => {
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
       
-      const image = await loadImage(imagePath);
-      
-      const { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
+      const image = await loadOrientedImage(imagePath);
+
+      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
+        outputSize,
+        image.width,
+        image.height
+      );
+      let { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
         image.width,
         image.height,
         crop
       );
-      
-      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
-        outputSize,
+      ({ cropX, cropY, cropWidth, cropHeight } = fitCropRectToOutputAspect(
+        cropX,
+        cropY,
         cropWidth,
-        cropHeight
-      );
+        cropHeight,
+        image.width,
+        image.height,
+        outputWidth,
+        outputHeight
+      ));
+
       const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
       configureHighQualityRasterContext(ctx);
-      
+
       if (shape && shape !== 'rectangle') {
         applyShapeClipping(ctx, shape, outputWidth, outputHeight);
       }
-      
+
       ctx.drawImage(
         image,
         cropX, cropY, cropWidth, cropHeight,
@@ -756,19 +927,28 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
 
-      const image = await loadImage(imagePath);
+      const image = await loadOrientedImage(imagePath);
 
-      const { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
+      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
+        outputSize,
+        image.width,
+        image.height
+      );
+      let { cropX, cropY, cropWidth, cropHeight } = computeIntegralCropRect(
         image.width,
         image.height,
         crop
       );
-
-      const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
-        outputSize,
+      ({ cropX, cropY, cropWidth, cropHeight } = fitCropRectToOutputAspect(
+        cropX,
+        cropY,
         cropWidth,
-        cropHeight
-      );
+        cropHeight,
+        image.width,
+        image.height,
+        outputWidth,
+        outputHeight
+      ));
 
       const canvas = createCanvas(outputWidth, outputHeight);
       const ctx = canvas.getContext('2d');
