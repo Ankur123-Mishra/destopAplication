@@ -373,6 +373,27 @@ function normalizeCssDimensionUnit(unit) {
   return 'mm';
 }
 
+/** True when the event target is a real text field — block B/arrow shortcuts there only. */
+function isTextEntryTarget(t) {
+  if (!t || typeof t !== 'object' || !(t instanceof Element)) return false;
+  if (t.isContentEditable) return true;
+  const tag = t.tagName?.toLowerCase?.() || '';
+  if (tag === 'textarea' || tag === 'select') return true;
+  if (tag === 'input') {
+    const type = (t.getAttribute('type') || 'text').toLowerCase();
+    const skip = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'range', 'hidden'];
+    return !skip.includes(type);
+  }
+  if (t.closest?.('[contenteditable="true"], textarea, select')) return true;
+  const input = t.closest?.('input');
+  if (input) {
+    const type = (input.getAttribute('type') || 'text').toLowerCase();
+    const skip = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'range', 'hidden'];
+    return !skip.includes(type);
+  }
+  return false;
+}
+
 /** When set, the stage renders at real card size (e.g. 88mm × 56mm). */
 function getPhysicalStageSizeStyle(dimension, dimensionUnit) {
   if (!dimension || typeof dimension !== 'object') return null;
@@ -451,6 +472,8 @@ export default function IdCardCanvasEditor({
   onElementsChangeRef.current = onElementsChange;
   const elementsRef = useRef(elements);
   elementsRef.current = elements;
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   const onSelectedIdChangeRef = useRef(onSelectedIdChange);
   onSelectedIdChangeRef.current = onSelectedIdChange;
@@ -752,6 +775,7 @@ export default function IdCardCanvasEditor({
     const el = elements.find((x) => x.id === id);
     if (!el) return;
     setSelectedId(id);
+    canvasRef.current?.focus({ preventScroll: true });
     if (isResizeHandle) {
       setResizeState({
         id,
@@ -882,13 +906,15 @@ export default function IdCardCanvasEditor({
     const onKeyDown = (e) => {
       // Bold toggle — same as “Font style → Bold” (selected text element only).
       if (e.key === 'b' || e.key === 'B') {
-        if (isTypingTarget(e.target)) return;
-        const sel = elementsRef.current.find((el) => el.id === selectedId);
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if (isTextEntryTarget(e.target)) return;
+        const sid = selectedIdRef.current;
+        const sel = elementsRef.current.find((el) => el.id === sid);
         if (!sel || sel.type !== 'text') return;
         e.preventDefault();
         setElements((prev) =>
           prev.map((x) => {
-            if (x.id !== selectedId || x.type !== 'text') return x;
+            if (x.id !== sid || x.type !== 'text') return x;
             return { ...x, fontWeight: isTextElementBold(x) ? '400' : '700' };
           })
         );
@@ -1272,6 +1298,7 @@ export default function IdCardCanvasEditor({
             ) : (
               <div
                 ref={canvasRef}
+                tabIndex={-1}
                 className={`idcard-canvas-stage ${physicalStageStyle ? 'idcard-canvas-stage--physical' : ''}`}
                 style={{
                   backgroundImage: templateImage ? `url(${templateImage})` : undefined,
@@ -1279,7 +1306,10 @@ export default function IdCardCanvasEditor({
                   transform: `scale(${EDITOR_PREVIEW_ZOOM})`,
                   transformOrigin: 'top center',
                 }}
-                onClick={(e) => e.target === e.currentTarget && setSelectedId(null)}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) setSelectedId(null);
+                  e.currentTarget.focus({ preventScroll: true });
+                }}
               >
           {elementsPaintOrder.map((el) => {
             if (el.type === 'photo') {
