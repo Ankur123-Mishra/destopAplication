@@ -687,6 +687,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             'motherphone',
             'house',
             'marking',
+            /* Badge-style sheets: role/title column (common spelling in school exports) */
+            'monitar',
+            'monitor',
             /* Excel color badge column — stored on row, not duplicate in extraFields */
             'colorcode',
             'colorcodepng',

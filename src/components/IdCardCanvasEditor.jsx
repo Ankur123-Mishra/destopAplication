@@ -1101,8 +1101,25 @@ export default function IdCardCanvasEditor({
   }, [initialData, photoUrl, effectiveColorCodeImage, getFieldValue, elements]);
 
   const handleSaveClick = () => {
-    const { elements: _els, ...snapshot } = getMergedCanvasData();
-    onSave({ elements, ...snapshot });
+    if (!onSave) {
+      console.warn('IdCardCanvasEditor: onSave is not set; save button does nothing.');
+      return;
+    }
+    try {
+      // Flush debounced layout so parents (e.g. ClassIdCardsWizard) have the latest side before onSave reads state.
+      onElementsChangeRef.current?.(elementsRef.current);
+      const merged = getMergedCanvasData();
+      const result = onSave(merged);
+      if (result != null && typeof result.then === 'function') {
+        result.catch((err) => {
+          console.error(err);
+          alert(err?.message || 'Save failed. Please try again.');
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || 'Save failed. Please try again.');
+    }
   };
  
   return (

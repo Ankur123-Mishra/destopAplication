@@ -189,6 +189,7 @@ export default function CreateSchoolForm({ onSuccess, onCancel, onExcelSuccess, 
           onUploadProgress: (pct) => {
             targetRef.current = Math.max(targetRef.current, pct);
           },
+          projectType,
         })
           .then((data) => {
             requestPendingRef.current = false;
