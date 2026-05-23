@@ -136,6 +136,10 @@
   min-width: 0;
 }
 
+.idcard-canvas-stage:focus {
+  outline: none;
+}
+
 .idcard-canvas-stage {
   position: relative;
   overflow: hidden;
