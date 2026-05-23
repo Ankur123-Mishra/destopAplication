@@ -204,26 +204,6 @@ export default function BatchImageCrop() {
         return (c.width / c.height) * (disp.width / disp.height);
     }, []);
 
-    /** Map on-screen crop (%) to natural pixels using displayed size — matches preview, avoids stretch on save. */
-    const cropToExportPixels = useCallback((percentCrop) => {
-        if (!percentCrop || percentCrop.unit !== '%') return percentCrop;
-        const nw = imageNaturalSize.width;
-        const nh = imageNaturalSize.height;
-        const imgEl = imgRef.current;
-        const dw = imgEl?.clientWidth || displayedImageSize.width;
-        const dh = imgEl?.clientHeight || displayedImageSize.height;
-        if (!nw || !nh || !dw || !dh) return percentCrop;
-        const scaleX = nw / dw;
-        const scaleY = nh / dh;
-        return {
-            unit: 'px',
-            x: (percentCrop.x / 100) * dw * scaleX,
-            y: (percentCrop.y / 100) * dh * scaleY,
-            width: (percentCrop.width / 100) * dw * scaleX,
-            height: (percentCrop.height / 100) * dh * scaleY
-        };
-    }, [imageNaturalSize.width, imageNaturalSize.height, displayedImageSize.width, displayedImageSize.height]);
-
     const MIN_CROP_PCT = 0.5;
     const RESTORE_CROP_PCT = 12;
 
@@ -650,8 +630,7 @@ export default function BatchImageCrop() {
     };
 
     const scheduleImageSave = (imageIndex, cropData) => {
-        const exportCrop = cropMode === 'auto' ? cropData : cropToExportPixels(cropData);
-        saveBufferRef.current.set(imageIndex, exportCrop);
+        saveBufferRef.current.set(imageIndex, cropData);
         if (saveDrainTimeoutRef.current) return;
         const launchDelayMs = 0;
         saveDrainTimeoutRef.current = window.setTimeout(runSaveDrain, launchDelayMs);
@@ -914,10 +893,7 @@ export default function BatchImageCrop() {
                 const validImages = imagesToCrop.filter(img => img);
 
                 const result = await window.electron.cropImagesIndividually({
-                    images: validImages.map((item) => ({
-                        ...item,
-                        crop: cropToExportPixels(item.crop)
-                    })),
+                    images: validImages,
                     outputFolder: outputPath,
                     shape: selectedFrame?.shape || 'rectangle',
                     svgPath: selectedFrame?.svgPath || null,
