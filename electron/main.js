@@ -395,31 +395,31 @@ function createWindow() {
 function registerJpegExportIpcHandlers() {
   try {
     ipcMain.removeHandler('save-jpeg-export-folder');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('ensure-jpeg-export-dir');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('write-jpeg-file');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('save-pdf-export-file');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('save-png-export-folder');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('ensure-png-export-dir');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('write-png-file');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('capture-view-rect');
-  } catch (_) {}
+  } catch (_) { }
   try {
     ipcMain.removeHandler('print-to-pdf');
-  } catch (_) {}
+  } catch (_) { }
 
   ipcMain.handle('save-jpeg-export-folder', async (event, payload) => {
     try {
@@ -746,7 +746,7 @@ ipcMain.handle('select-folder', async () => {
 
     const folderPath = result.filePaths[0];
     const files = await fs.readdir(folderPath);
-    
+
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp'];
     const images = files
       .filter(file => imageExtensions.includes(path.extname(file).toLowerCase()))
@@ -786,7 +786,7 @@ ipcMain.handle('select-output-folder', async () => {
 ipcMain.handle('create-crop-output-folder', async (event, sourceFolderPath) => {
   try {
     const cropFolderPath = path.join(sourceFolderPath, 'crop image');
-    
+
     try {
       await fs.access(cropFolderPath);
     } catch {
@@ -815,10 +815,10 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
 
 ipcMain.handle('crop-images', async (event, data) => {
   const { images, crop, outputFolder, shape, svgPath, outputSize } = data;
-  
+
   try {
     let processedCount = 0;
-    
+
     for (let i = 0; i < images.length; i++) {
       const imagePath = images[i];
       const inputExt = path.extname(imagePath);
@@ -830,12 +830,12 @@ ipcMain.handle('crop-images', async (event, data) => {
       if (legacyOutputPath !== outputPath) {
         try {
           await fs.unlink(legacyOutputPath);
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Write a valid tiny file immediately so output appears instantly in folder.
       await fs.writeFile(outputPath, getPlaceholderBufferForMime(outputMime));
-      
+
       const image = await loadOrientedImage(imagePath);
 
       const { width: outputWidth, height: outputHeight } = resolveOutputRasterSize(
@@ -872,14 +872,14 @@ ipcMain.handle('crop-images', async (event, data) => {
         cropX, cropY, cropWidth, cropHeight,
         0, 0, outputWidth, outputHeight
       );
-      
+
       const rasterBuffer = canvasBufferFast(canvas, outputMime);
       const buffer = setImageDpiMetadata(rasterBuffer, outputMime, 300);
       await fs.writeFile(outputPath, buffer);
-      
+
       processedCount++;
       const progress = Math.round((processedCount / images.length) * 100);
-      
+
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('crop-progress', {
           progress,
@@ -887,7 +887,7 @@ ipcMain.handle('crop-images', async (event, data) => {
         });
       }
     }
-    
+
     return {
       success: true,
       processedCount
@@ -921,7 +921,7 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
       if (legacyOutputPath !== outputPath) {
         try {
           await fs.unlink(legacyOutputPath);
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Write a valid tiny file immediately so output appears instantly in folder.
@@ -963,14 +963,14 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
         cropX, cropY, cropWidth, cropHeight,
         0, 0, outputWidth, outputHeight
       );
-      
+
       const rasterBuffer = canvasBufferFast(canvas, outputMime);
       const buffer = setImageDpiMetadata(rasterBuffer, outputMime, 300);
       await fs.writeFile(outputPath, buffer);
-      
+
       processedCount++;
     }
-    
+
     return {
       success: true,
       processedCount
@@ -986,37 +986,37 @@ ipcMain.handle('crop-images-individually', async (event, data) => {
 
 function applyShapeClipping(ctx, shape, width, height) {
   ctx.beginPath();
-  
+
   const centerX = width / 2;
   const centerY = height / 2;
   const roundedRectCornerRatio = 0.08;
-  
+
   switch (shape) {
     case 'circle':
       const radius = Math.min(width, height) / 2;
       ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       break;
-      
+
     case 'star':
       drawStar(ctx, centerX, centerY, 5, Math.min(width, height) / 2, Math.min(width, height) / 4);
       break;
-      
+
     case 'pentagon':
       drawPolygon(ctx, centerX, centerY, 5, Math.min(width, height) / 2);
       break;
-      
+
     case 'hexagon':
       drawPolygon(ctx, centerX, centerY, 6, Math.min(width, height) / 2);
       break;
-      
+
     case 'octagon':
       drawPolygon(ctx, centerX, centerY, 8, Math.min(width, height) / 2);
       break;
-      
+
     case 'triangle':
       drawPolygon(ctx, centerX, centerY, 3, Math.min(width, height) / 2);
       break;
-      
+
     case 'heart':
       drawHeart(ctx, centerX, centerY, Math.min(width, height) / 2);
       break;
@@ -1025,11 +1025,11 @@ function applyShapeClipping(ctx, shape, width, height) {
       // Match UI preview shape radius (same 8% corner ratio as SVG frame path).
       drawRoundedRect(ctx, 0, 0, width, height, Math.min(width, height) * roundedRectCornerRatio);
       break;
-      
+
     default:
       ctx.rect(0, 0, width, height);
   }
-  
+
   ctx.closePath();
   ctx.clip();
 }
@@ -1058,12 +1058,12 @@ function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
 function drawPolygon(ctx, cx, cy, sides, radius) {
   const angle = (Math.PI * 2) / sides;
   const startAngle = -Math.PI / 2;
-  
+
   ctx.moveTo(
     cx + radius * Math.cos(startAngle),
     cy + radius * Math.sin(startAngle)
   );
-  
+
   for (let i = 1; i <= sides; i++) {
     ctx.lineTo(
       cx + radius * Math.cos(startAngle + angle * i),
@@ -1075,25 +1075,25 @@ function drawPolygon(ctx, cx, cy, sides, radius) {
 function drawHeart(ctx, cx, cy, size) {
   const topCurveHeight = size * 0.3;
   ctx.moveTo(cx, cy + size * 0.3);
-  
+
   ctx.bezierCurveTo(
     cx, cy,
     cx - size * 0.5, cy - topCurveHeight,
     cx - size * 0.5, cy + topCurveHeight * 0.5
   );
-  
+
   ctx.bezierCurveTo(
     cx - size * 0.5, cy + topCurveHeight * 1.5,
     cx, cy + topCurveHeight * 2.5,
     cx, cy + size
   );
-  
+
   ctx.bezierCurveTo(
     cx, cy + topCurveHeight * 2.5,
     cx + size * 0.5, cy + topCurveHeight * 1.5,
     cx + size * 0.5, cy + topCurveHeight * 0.5
   );
-  
+
   ctx.bezierCurveTo(
     cx + size * 0.5, cy - topCurveHeight,
     cx, cy,
