@@ -3265,12 +3265,18 @@ export default function SavedIdCardsList({
     pathnameIsSchoolAllStudentsRoute(location.pathname, basePath);
   const showStudentsView =
     (schoolId != null && classId != null) || isAllSchoolStudents;
-  const { user, setOfflineMode } = useApp();
+  const preferredOfflineMode = location.state?.preferredOfflineMode;
+  const { user, offlineMode, setOfflineMode } = useApp();
   const isViewTemplateFlow = basePath === "/view-template";
-  const [viewMode, setViewMode] = useState("offline"); // offline | online
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof preferredOfflineMode === "boolean") {
+      return preferredOfflineMode ? "offline" : "online";
+    }
+    return offlineMode ? "offline" : "online";
+  }); // offline | online
   const showOnlineProjects = user?.id !== "offline-user";
   const canDownloadIdCards = user?.id !== "offline-user";
-  const isOnlineMode = viewMode === "online";
+  const isOnlineMode = showOnlineProjects && viewMode === "online";
   const activeApi = isOnlineMode ? onlineApi : offlineApi;
   const [showPrintView, setShowPrintView] = useState(false);
   const [showPreviewView, setShowPreviewView] = useState(false);
@@ -3854,10 +3860,10 @@ export default function SavedIdCardsList({
       if (!shouldDelete) return;
       setDeletingStudentId(studentId);
       try {
-        if (viewMode === "offline") {
-          await offlineApi.deleteStudent(studentId);
-        } else {
+        if (isOnlineMode) {
           await onlineApi.deleteStudent(studentId);
+        } else {
+          await offlineApi.deleteStudent(studentId);
         }
 
         const removeById = (prevList) =>
@@ -3897,7 +3903,7 @@ export default function SavedIdCardsList({
         setDeletingStudentId((prev) => (prev === studentId ? null : prev));
       }
     },
-    [isAllSchoolStudents, viewMode],
+    [isAllSchoolStudents, isOnlineMode],
   );
 
   const openAddStudentFromEditModal = React.useCallback(() => {
@@ -4136,6 +4142,11 @@ export default function SavedIdCardsList({
       setSavingNewStudent(false);
     }
   };
+
+  useEffect(() => {
+    if (typeof preferredOfflineMode !== "boolean") return;
+    setViewMode(preferredOfflineMode ? "offline" : "online");
+  }, [preferredOfflineMode]);
 
   useEffect(() => {
     if (showOnlineProjects) return;

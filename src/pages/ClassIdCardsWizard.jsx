@@ -1029,7 +1029,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       // Even when no rows are selected/ready, user explicitly confirmed save.
       // Keep behavior consistent with successful save flow.
       writeSavedIdCardsFlagForSchool(resolvedSchoolId);
-      navigate(viewTemplatePath, { replace: true });
+      navigate(viewTemplatePath, {
+        replace: true,
+        state: { preferredOfflineMode: offlineMode },
+      });
       return { skipped: true, navigated: true };
     }
 
@@ -1066,7 +1069,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         await offlineApi.bulkSaveFullOfflineTemplates(offlineUpdates);
       }
       writeSavedIdCardsFlagForSchool(resolvedSchoolId);
-      navigate(viewTemplatePath, { replace: true });
+      navigate(viewTemplatePath, {
+        replace: true,
+        state: { preferredOfflineMode: offlineMode },
+      });
     } catch (err) {
       alert(err?.message || 'Failed to save ID cards. Please try again.');
       throw err;
