@@ -86,12 +86,15 @@ export async function getStudentsBySchoolAndClass(schoolId, classId, options = {
 }
 
 export async function updateStudent(studentId, data) {
+  console.log('updateStudent', studentId, data);
   const res = await fetch(`${API_BASE_URL}/api/photographer/students/${studentId}`, {
     method: 'PUT',
     headers: authHeaders(),
     body: JSON.stringify(data)
   });
+  console.log('res', res);
   const resData = await res.json().catch(() => ({}));
+  console.log('resData', resData);
   if (!res.ok) {
     const msg = resData?.message || resData?.error || res.statusText || 'Failed to update student';
     throw new Error(msg);
@@ -100,6 +103,7 @@ export async function updateStudent(studentId, data) {
 }
 
 export async function deleteStudent(studentId) {
+  console.log('deleteStudent', studentId);
   const res = await fetch(
     `${API_BASE_URL}/api/photographer/students/${encodeURIComponent(studentId)}`,
     {
@@ -107,7 +111,9 @@ export async function deleteStudent(studentId) {
       headers: authHeaders(),
     },
   );
+  console.log('res', res);
   const data = await res.json().catch(() => ({}));
+  console.log('data', data);
   if (!res.ok) {
     const msg =
       data?.message ||

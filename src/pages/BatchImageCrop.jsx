@@ -191,21 +191,56 @@ export default function BatchImageCrop() {
     const [cropMode, setCropMode] = useState('manual');
     const autoBatchStartedRef = useRef(false);
     const autoCropCancelledRef = useRef(false);
-    const frameSizeInitializedForSelectionRef = useRef(false);
+    const lastCropSyncPreviewRef = useRef(null);
     const cropRef = useRef(crop);
     const displayedImageSizeRef = useRef(displayedImageSize);
+    const fixedOutputSizePxRef = useRef(fixedOutputSizePx);
+    const imageNaturalSizeRef = useRef(imageNaturalSize);
     const shapeDimMaskId = `sdm-${useId().replace(/:/g, '')}`;
 
     cropRef.current = crop;
     displayedImageSizeRef.current = displayedImageSize;
+    fixedOutputSizePxRef.current = fixedOutputSizePx;
+    imageNaturalSizeRef.current = imageNaturalSize;
 
     const computePixelAspect = useCallback((c, disp) => {
         if (!c || c.width <= 0 || c.height <= 0 || !disp?.width || !disp?.height) return undefined;
         return (c.width / c.height) * (disp.width / disp.height);
     }, []);
 
+    /** width% / height% for a crop region that matches fixed output pixels on this image. */
+    const getFixedOutputPercentAspect = useCallback((naturalW, naturalH) => {
+        const outW = fixedOutputSizePxRef.current?.width;
+        const outH = fixedOutputSizePxRef.current?.height;
+        if (!outW || !outH || !naturalW || !naturalH) return 1;
+        return (outW / outH) * (naturalH / naturalW);
+    }, []);
+
     const MIN_CROP_PCT = 0.5;
     const RESTORE_CROP_PCT = 12;
+
+    const buildDefaultPercentCrop = useCallback((naturalW, naturalH) => {
+        const pctAspect = getFixedOutputPercentAspect(naturalW, naturalH);
+        let w = Math.min(100, Math.max(MIN_CROP_PCT, RESTORE_CROP_PCT));
+        let h = w / pctAspect;
+        if (h > 100) {
+            h = 100;
+            w = h * pctAspect;
+        }
+        if (w > 100) {
+            w = 100;
+            h = w / pctAspect;
+        }
+        w = Math.min(100, Math.max(MIN_CROP_PCT, w));
+        h = Math.min(100, Math.max(MIN_CROP_PCT, h));
+        return {
+            unit: '%',
+            width: w,
+            height: h,
+            x: (100 - w) / 2,
+            y: (100 - h) / 2
+        };
+    }, [getFixedOutputPercentAspect]);
 
     const sanitizePercentCrop = useCallback((percentCrop) => {
         if (!percentCrop || percentCrop.unit !== '%') {
@@ -220,15 +255,18 @@ export default function BatchImageCrop() {
         if (!Number.isFinite(x)) x = 0;
         if (!Number.isFinite(y)) y = 0;
 
+        const naturalW = imageNaturalSizeRef.current?.width || 0;
+        const naturalH = imageNaturalSizeRef.current?.height || 0;
+        const pctAspect = getFixedOutputPercentAspect(naturalW, naturalH);
+
         if (w <= 0 && h <= 0) {
-            const size = Math.min(100, Math.max(MIN_CROP_PCT, RESTORE_CROP_PCT));
-            return {
-                unit: '%',
-                width: size,
-                height: size,
-                x: (100 - size) / 2,
-                y: (100 - size) / 2
-            };
+            return buildDefaultPercentCrop(naturalW, naturalH);
+        }
+        if (w <= 0 && h > 0) {
+            w = Math.max(MIN_CROP_PCT, h * pctAspect);
+        }
+        if (h <= 0 && w > 0) {
+            h = Math.max(MIN_CROP_PCT, w / pctAspect);
         }
         if (w <= 0) w = MIN_CROP_PCT;
         if (h <= 0) h = MIN_CROP_PCT;
@@ -238,7 +276,7 @@ export default function BatchImageCrop() {
         x = Math.max(0, Math.min(x, 100 - w));
         y = Math.max(0, Math.min(y, 100 - h));
         return { unit: '%', width: w, height: h, x, y };
-    }, []);
+    }, [getFixedOutputPercentAspect, buildDefaultPercentCrop]);
 
     const updateDisplayedImageSize = useCallback(() => {
         const el = cropMediaWrapperRef.current || imgRef.current;
@@ -261,18 +299,6 @@ export default function BatchImageCrop() {
         ro.observe(el);
         return () => ro.disconnect();
     }, [step, previewImage, updateDisplayedImageSize]);
-
-    React.useEffect(() => {
-        setImageNaturalSize({ width: 0, height: 0 });
-    }, [previewImage]);
-
-    useLayoutEffect(() => {
-        if (step !== STEPS.DEFINE_CROP || !previewImage) return;
-        const el = imgRef.current;
-        if (el && el.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
-            setImageNaturalSize({ width: el.naturalWidth, height: el.naturalHeight });
-        }
-    }, [previewImage, step]);
 
     React.useEffect(() => {
         setFrameWidthInputDraft(null);
@@ -300,15 +326,6 @@ export default function BatchImageCrop() {
     }, [fixedOutputSizePx.width, fixedOutputSizePx.height, frameSizeUnit]);
 
     const frameUnitLabel = frameSizeUnit === 'inch' ? 'in' : frameSizeUnit;
-
-    const handleCropDragStart = useCallback(() => {
-        const ar = computePixelAspect(cropRef.current, displayedImageSizeRef.current);
-        setLockedPixelAspect(typeof ar === 'number' && Number.isFinite(ar) ? ar : null);
-    }, [computePixelAspect]);
-
-    const handleCropDragEnd = useCallback(() => {
-        setLockedPixelAspect(null);
-    }, []);
 
     React.useEffect(() => {
         if (window.electron && window.electron.onCropProgress) {
@@ -346,7 +363,7 @@ export default function BatchImageCrop() {
     const handleSelectFrame = (frame) => {
         autoCropCancelledRef.current = false;
         autoBatchStartedRef.current = false;
-        frameSizeInitializedForSelectionRef.current = false;
+        lastCropSyncPreviewRef.current = null;
         setSelectedFrame(frame);
         setCrop(frame.crop);
         setCompletedCrop(frame.crop);
@@ -383,14 +400,16 @@ export default function BatchImageCrop() {
         return { unit: '%', width: w, height: h, x, y };
     }, []);
 
-    const syncCropBoxToFixedOutputSize = useCallback((nextSizePx) => {
-        if (!imageNaturalSize.width || !imageNaturalSize.height) return;
+    const syncCropBoxToFixedOutputSize = useCallback((nextSizePx, naturalOverride) => {
+        const natW = naturalOverride?.width ?? imageNaturalSizeRef.current?.width ?? 0;
+        const natH = naturalOverride?.height ?? imageNaturalSizeRef.current?.height ?? 0;
+        if (!natW || !natH) return;
         const widthPx = Number(nextSizePx?.width);
         const heightPx = Number(nextSizePx?.height);
         if (!Number.isFinite(widthPx) || !Number.isFinite(heightPx) || widthPx <= 0 || heightPx <= 0) return;
 
-        let widthPct = (widthPx / imageNaturalSize.width) * 100;
-        let heightPct = (heightPx / imageNaturalSize.height) * 100;
+        let widthPct = (widthPx / natW) * 100;
+        let heightPct = (heightPx / natH) * 100;
         if (!Number.isFinite(widthPct) || !Number.isFinite(heightPct) || widthPct <= 0 || heightPct <= 0) return;
 
         // Keep requested ratio and fit inside image bounds.
@@ -401,23 +420,84 @@ export default function BatchImageCrop() {
         const nextCrop = applyCropBoxSize(cropRef.current, widthPct, heightPct);
         setCrop(nextCrop);
         setCompletedCrop(nextCrop);
-    }, [imageNaturalSize.width, imageNaturalSize.height, applyCropBoxSize]);
+    }, [applyCropBoxSize]);
+
+    const normalizeFilePathKey = (value) =>
+        (value || '').replace(/^file:\/+/, '').replace(/\\/g, '/').toLowerCase();
+
+    const imgElementMatchesPreview = useCallback((el, preview) => {
+        if (!el || !preview) return false;
+        const srcKey = normalizeFilePathKey(el.currentSrc || el.src);
+        const previewKey = normalizeFilePathKey(preview);
+        return srcKey === previewKey || srcKey.endsWith(previewKey) || previewKey.endsWith(srcKey);
+    }, []);
+
+    const syncCropBoxForCurrentPreview = useCallback(() => {
+        if (!fixedOutputSizePxRef.current?.width || !fixedOutputSizePxRef.current?.height) return;
+        if (!previewImage) return;
+        const el = imgRef.current;
+        if (!el?.naturalWidth || !el?.naturalHeight || !imgElementMatchesPreview(el, previewImage)) return;
+        const nat = { width: el.naturalWidth, height: el.naturalHeight };
+        imageNaturalSizeRef.current = nat;
+        setImageNaturalSize(nat);
+        syncCropBoxToFixedOutputSize(fixedOutputSizePxRef.current, nat);
+        lastCropSyncPreviewRef.current = previewImage;
+    }, [previewImage, syncCropBoxToFixedOutputSize, imgElementMatchesPreview]);
 
     React.useEffect(() => {
         if (step !== STEPS.DEFINE_CROP) return;
-        if (frameSizeInitializedForSelectionRef.current) return;
-        if (!imageNaturalSize.width || !imageNaturalSize.height) return;
-        if (!fixedOutputSizePx.width || !fixedOutputSizePx.height) return;
-        syncCropBoxToFixedOutputSize(fixedOutputSizePx);
-        frameSizeInitializedForSelectionRef.current = true;
-    }, [
-        step,
-        imageNaturalSize.width,
-        imageNaturalSize.height,
-        fixedOutputSizePx.width,
-        fixedOutputSizePx.height,
-        syncCropBoxToFixedOutputSize
-    ]);
+        lastCropSyncPreviewRef.current = null;
+    }, [previewImage, step]);
+
+    useLayoutEffect(() => {
+        if (step !== STEPS.DEFINE_CROP || !previewImage) return;
+        if (lastCropSyncPreviewRef.current === previewImage) return;
+        syncCropBoxForCurrentPreview();
+    }, [step, previewImage, syncCropBoxForCurrentPreview]);
+
+    useLayoutEffect(() => {
+        if (step !== STEPS.DEFINE_CROP || !previewImage) return;
+        const el = imgRef.current;
+        if (
+            el &&
+            el.complete &&
+            el.naturalWidth > 0 &&
+            el.naturalHeight > 0 &&
+            imgElementMatchesPreview(el, previewImage)
+        ) {
+            const nat = { width: el.naturalWidth, height: el.naturalHeight };
+            imageNaturalSizeRef.current = nat;
+            setImageNaturalSize(nat);
+        }
+    }, [previewImage, step, imgElementMatchesPreview]);
+
+    const handleCropDragStart = useCallback(() => {
+        const outW = fixedOutputSizePxRef.current?.width;
+        const outH = fixedOutputSizePxRef.current?.height;
+        const natW = imageNaturalSizeRef.current?.width;
+        const natH = imageNaturalSizeRef.current?.height;
+        const disp = displayedImageSizeRef.current;
+        if (outW > 0 && outH > 0 && natW > 0 && natH > 0 && disp?.width && disp?.height) {
+            const sourceAspect = outW / outH;
+            const ar = sourceAspect * (disp.width / disp.height) * (natH / natW);
+            setLockedPixelAspect(typeof ar === 'number' && Number.isFinite(ar) ? ar : null);
+            return;
+        }
+        const ar = computePixelAspect(cropRef.current, disp);
+        setLockedPixelAspect(typeof ar === 'number' && Number.isFinite(ar) ? ar : null);
+    }, [computePixelAspect]);
+
+    const handleCropDragEnd = useCallback(() => {
+        setLockedPixelAspect(null);
+        if (
+            fixedOutputSizePxRef.current?.width > 0 &&
+            fixedOutputSizePxRef.current?.height > 0 &&
+            imageNaturalSizeRef.current?.width > 0 &&
+            imageNaturalSizeRef.current?.height > 0
+        ) {
+            syncCropBoxToFixedOutputSize(fixedOutputSizePxRef.current);
+        }
+    }, [syncCropBoxToFixedOutputSize]);
 
     const convertDisplaySizeToPx = (value, unit) => {
         switch (unit) {
@@ -491,14 +571,21 @@ export default function BatchImageCrop() {
     const fixedOutputAspect = useMemo(() => {
         if (!fixedOutputSizePx.width || !fixedOutputSizePx.height) return null;
         if (!displayedImageSize.width || !displayedImageSize.height) return null;
-        if (!imageNaturalSize.width || !imageNaturalSize.height) return null;
         const sourceAspect = fixedOutputSizePx.width / fixedOutputSizePx.height;
-        return sourceAspect
-            * (displayedImageSize.width / displayedImageSize.height)
-            * (imageNaturalSize.height / imageNaturalSize.width);
+        if (imageNaturalSize.width > 0 && imageNaturalSize.height > 0) {
+            return sourceAspect
+                * (displayedImageSize.width / displayedImageSize.height)
+                * (imageNaturalSize.height / imageNaturalSize.width);
+        }
+        return sourceAspect * (displayedImageSize.width / displayedImageSize.height);
     }, [fixedOutputSizePx.width, fixedOutputSizePx.height, displayedImageSize.width, displayedImageSize.height, imageNaturalSize.width, imageNaturalSize.height]);
 
-    const reactCropAspect = lockedPixelAspect ?? fixedOutputAspect ?? computePixelAspect(crop, displayedImageSize);
+    const reactCropAspect =
+        lockedPixelAspect ??
+        (fixedOutputSizePx.width > 0 && fixedOutputSizePx.height > 0
+            ? fixedOutputAspect
+            : undefined) ??
+        computePixelAspect(crop, displayedImageSize);
 
     const frameWidthFieldValue =
         frameWidthInputDraft !== null
@@ -954,13 +1041,13 @@ export default function BatchImageCrop() {
         setCropMode('manual');
         autoCropCancelledRef.current = true;
         autoBatchStartedRef.current = false;
-        frameSizeInitializedForSelectionRef.current = false;
+        lastCropSyncPreviewRef.current = null;
     };
 
     const handleBackToFrameSelection = () => {
         autoCropCancelledRef.current = true;
         autoBatchStartedRef.current = false;
-        frameSizeInitializedForSelectionRef.current = false;
+        lastCropSyncPreviewRef.current = null;
         setStep(STEPS.SELECT_FRAME);
         setSelectedFrame(null);
         setCurrentImageIndex(0);
@@ -1377,11 +1464,21 @@ export default function BatchImageCrop() {
                                             loading="eager"
                                             style={{ width: 'auto', maxWidth: '95vw', maxHeight: '74vh', display: 'block', margin: '0 auto' }}
                                             onLoad={(e) => {
-                                                setImageNaturalSize({
+                                                const nat = {
                                                     width: e.target.naturalWidth,
                                                     height: e.target.naturalHeight
-                                                });
+                                                };
+                                                imageNaturalSizeRef.current = nat;
+                                                setImageNaturalSize(nat);
                                                 updateDisplayedImageSize();
+                                                if (
+                                                    fixedOutputSizePxRef.current?.width > 0 &&
+                                                    fixedOutputSizePxRef.current?.height > 0 &&
+                                                    imgElementMatchesPreview(e.target, previewImage)
+                                                ) {
+                                                    syncCropBoxToFixedOutputSize(fixedOutputSizePxRef.current, nat);
+                                                    lastCropSyncPreviewRef.current = previewImage;
+                                                }
                                             }}
                                             onError={(e) => {
                                                 console.error('Image load error');
