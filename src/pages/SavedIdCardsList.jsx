@@ -3600,7 +3600,7 @@ export default function SavedIdCardsList({
     }
     return out;
   }, [editStudentData]);
-  /** Full-screen “Add new student” form opened from the edit modal (black overlay). */
+  /** Full-screen “Add new student” form opened from the students list toolbar (black overlay). */
   const [addStudentOverlayOpen, setAddStudentOverlayOpen] = useState(false);
   const [newStudentDraft, setNewStudentDraft] = useState(null);
   const [savingNewStudent, setSavingNewStudent] = useState(false);
@@ -3906,17 +3906,12 @@ export default function SavedIdCardsList({
     [isAllSchoolStudents, isOnlineMode],
   );
 
-  const openAddStudentFromEditModal = React.useCallback(() => {
-    const baseClass =
-      typeof editStudentData?.classId === "object" && editStudentData.classId != null
-        ? editStudentData.classId._id || editStudentData.classId.id
-        : editStudentData?.classId;
-    const initialClassId =
-      (typeof baseClass === "string" && baseClass.trim() !== ""
-        ? baseClass
-        : null) ||
-      (typeof classId === "string" && classId.trim() !== "" ? classId : "") ||
-      "";
+  const openAddStudentOverlay = React.useCallback(() => {
+    const initialClassId = isAllSchoolStudents
+      ? ""
+      : typeof classId === "string" && classId.trim() !== ""
+        ? classId
+        : "";
     clearNewStudentPhotoSelection();
     setNewStudentDraft({
       classId: initialClassId,
@@ -3935,7 +3930,7 @@ export default function SavedIdCardsList({
       house: "",
     });
     setAddStudentOverlayOpen(true);
-  }, [editStudentData, classId, clearNewStudentPhotoSelection]);
+  }, [isAllSchoolStudents, classId, clearNewStudentPhotoSelection]);
 
   const handleSubmitNewStudent = async (e) => {
     e.preventDefault();
@@ -6781,8 +6776,7 @@ export default function SavedIdCardsList({
         )}
       {!loadingStudents &&
         !errorStudents &&
-        studentsForList.length > 0 &&
-        studentsForPreviewPrint.length > 0 && (
+        studentsForList.length > 0 && (
           <div
             style={{
               marginBottom: 20,
@@ -6790,21 +6784,35 @@ export default function SavedIdCardsList({
               gap: 12,
               flexWrap: "wrap",
               alignItems: "center",
+              justifyContent: "space-between",
             }}
           >
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setShowPreviewView(true)}
-            >
-              👁️ Preview ID Cards
-            </button>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {studentsForPreviewPrint.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowPreviewView(true)}
+                  >
+                    👁️ Preview ID Cards
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShowPrintView(true)}
+                  >
+                    🖨️ Print Cards
+                  </button>
+                </>
+              )}
+            </div>
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => setShowPrintView(true)}
+              onClick={openAddStudentOverlay}
             >
-              🖨️ Print Cards
+              Add new
             </button>
           </div>
         )}
@@ -7428,33 +7436,21 @@ export default function SavedIdCardsList({
                 padding: "0 0 16px",
                 borderBottom: "1px solid rgba(255,255,255,0.1)",
                 flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
               }}
             >
               <h3 style={{ margin: 0 }}>Edit student</h3>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  flexShrink: 0,
-                }}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ margin: 0, flexShrink: 0 }}
+                onClick={() => setEditStudentData(null)}
               >
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ margin: 0 }}
-                  onClick={openAddStudentFromEditModal}
-                >
-                  Add new
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setEditStudentData(null)}
-                >
-                  Close
-                </button>
-              </div>
+                Close
+              </button>
             </div>
             <form
               onSubmit={handleSaveEdit}
