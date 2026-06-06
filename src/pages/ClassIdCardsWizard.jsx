@@ -24,6 +24,10 @@ import {
 } from '../utils/projectBulkPhotoPreview';
 import { sortStudentsByExcelRowOrder } from '../utils/studentListOrder';
 import { getStudentColorCodeImageUrl } from '../utils/imageUpload';
+import {
+  normalizeClassNameForDisplay,
+  resolveClassNameForIdCard,
+} from '../utils/studentClassName';
 import { List } from 'react-window';
 import '../components/IdCardRenderer.css';
 import '../components/IdCardCanvasEditor.css';
@@ -132,12 +136,6 @@ function fullPhotoUrl(url) {
   const base = API_BASE_URL.replace(/\/$/, '');
 
   return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
-}
-
-function normalizeClassNameForDisplay(label) {
-  if (!label || typeof label !== 'string') return label;
-  // Data is currently appending "– A" to all class/section labels; strip that suffix for display.
-  return label.replace(/\s*[–-]\s*A\s*$/i, '').trim();
 }
 
 /**
@@ -1701,7 +1699,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           phone: previewStudent.phone || '',
           email: previewStudent.email || '',
           address: previewStudent.address || '',
-          className: previewStudent.className || cls?.name || '',
+          className:
+            resolveClassNameForIdCard(previewStudent, apiClasses) ||
+            cls?.name ||
+            '',
           section: previewStudent.section || '',
           schoolName: school?.name || '',
           fatherName: previewStudent.fatherName || '',
@@ -1721,7 +1722,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       : {
           name: '',
           studentId: '',
-          className: cls?.name || '',
+          className: resolveClassNameForIdCard(previewStudent, apiClasses) || cls?.name || '',
           schoolName: school?.name || '',
           dateOfBirth: '',
           address: school?.address || '',

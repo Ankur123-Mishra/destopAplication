@@ -44,6 +44,11 @@ import {
   compressImageForUpload,
   getStudentColorCodeImageUrl,
 } from "../utils/imageUpload";
+import {
+  formatStudentClassForIdCard,
+  normalizeClassNameForDisplay,
+  resolveClassNameForIdCard,
+} from "../utils/studentClassName";
 
 // A4 size (mm). Preview and print show as many cards per page as fit on one A4.
 
@@ -105,33 +110,6 @@ function fullPhotoUrl(url) {
   if (url.startsWith("blob:")) return url;
   const base = API_BASE_URL.replace(/\/$/, "");
   return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
-}
-
-/** Strip erroneous trailing "– A" / "- A" from class labels (same as ClassIdCardsWizard). */
-function normalizeClassNameForDisplay(label) {
-  if (!label || typeof label !== "string") return label;
-  return label.replace(/\s*[–-]\s*A\s*$/i, "").trim();
-}
-
-/** Class + section for ID card preview without duplicating section or a stray leading " - …". */
-function formatStudentClassForIdCard(cls) {
-  if (!cls) return "";
-  const name = String(cls.className ?? "").trim();
-  const sec = String(cls.section ?? "").trim();
-  if (!name && !sec) return "";
-  let combined;
-  if (name && sec) {
-    const nl = name.toLowerCase();
-    const sl = sec.toLowerCase();
-    const alreadyHasSection =
-      nl.endsWith(`-${sl}`) ||
-      nl.endsWith(` - ${sl}`) ||
-      nl.endsWith(` ${sl}`);
-    combined = alreadyHasSection ? name : `${name} - ${sec}`;
-  } else {
-    combined = name || sec;
-  }
-  return normalizeClassNameForDisplay(combined);
 }
 
 function isFullApiCanvasTemplate(t) {
@@ -279,7 +257,7 @@ function mergeExtraFieldsFromStudent(student) {
   fill("fatherName", student.fatherName);
   fill("motherName", student.motherName);
   fill("guardianName", student.guardianName);
-  fill("className", student.className);
+  fill("className", resolveClassNameForIdCard(student));
   fill("section", student.section);
   fill("rollNo", resolveRollNo(student));
   fill("admissionNo", student.admissionNo);
@@ -406,22 +384,6 @@ function syncStudentSaveFieldsIntoExtraFields(student) {
     if (v !== undefined) baseEx[key] = v;
   }
   return { ...student, extraFields: baseEx };
-}
-
-function resolveClassNameForIdCard(student) {
-  if (
-    typeof student.className === "string" &&
-    student.className.trim() !== ""
-  ) {
-    return normalizeClassNameForDisplay(student.className.trim());
-  }
-  if (student.class && typeof student.class === "object") {
-    return formatStudentClassForIdCard(student.class);
-  }
-  if (student.classId && typeof student.classId === "object") {
-    return formatStudentClassForIdCard(student.classId);
-  }
-  return formatStudentClassForIdCard(student.class);
 }
 
 function compareClassForDisplay(a, b) {
@@ -4815,7 +4777,7 @@ export default function SavedIdCardsList({
         const cc = getStudentColorCodeImageUrl(student);
         return cc ? { colorCodeImage: fullPhotoUrl(cc) } : {};
       })(),
-      className: resolveClassNameForIdCard(student),
+      className: resolveClassNameForIdCard(student, classes),
       schoolName:
         student.school?.schoolName ||
         (typeof student.schoolId === "object" && student.schoolId?.schoolName
@@ -4847,6 +4809,7 @@ export default function SavedIdCardsList({
       schoolAllStudentsData?.template,
       templateStatus?.template,
       sharedUploadedCanvasTemplate,
+      classes,
     ],
   );
 
@@ -8206,9 +8169,9 @@ export default function SavedIdCardsList({
                         {(classes ?? []).map((c) => {
                           const id = c._id || c.id;
                           if (!id) return null;
-                          const label = normalizeClassNameForDisplay(
-                            [c.className, c.section].filter(Boolean).join(" · "),
-                          );
+                          const label =
+                            formatStudentClassForIdCard(c) ||
+                            [c.className, c.section].filter(Boolean).join(" · ");
                           return (
                             <option key={id} value={id}>
                               {label || id}
