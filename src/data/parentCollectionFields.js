@@ -1,16 +1,17 @@
 export const PARENT_FORM_OPTIONAL_FIELDS = [
-  { key: 'schoolName', label: 'School name' },
-  { key: 'className', label: 'Class name' },
+  { key: 'schoolName', label: 'School Name' },
+  { key: 'className', label: 'Class Name' },
   { key: 'section', label: 'Section' },
-  { key: 'fatherName', label: 'Father name' },
-  { key: 'parentName', label: 'Parent name' },
-  { key: 'admissionNo', label: 'Admission no' },
-  { key: 'rollNo', label: 'Roll no' },
+  { key: 'fatherName', label: 'Father Name' },
+  { key: 'motherName', label: 'Mother Name' },
+  { key: 'admissionNo', label: 'Admission No' },
+  { key: 'rollNo', label: 'Roll No' },
   { key: 'gender', label: 'Gender' },
-  { key: 'dob', label: 'Date of birth' },
-  { key: 'bloodGroup', label: 'Blood group' },
+  { key: 'dob', label: 'Date of Birth' },
+  { key: 'bloodGroup', label: 'Blood Group' },
   { key: 'mobile', label: 'Mobile' },
   { key: 'address', label: 'Address' },
+  { key: 'photoNo', label: 'Photo No.' },
 ];
 
 export function makeInitialFieldEnabled() {

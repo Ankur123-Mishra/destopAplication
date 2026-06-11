@@ -649,6 +649,8 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             'birthdate',
             'dob',
             'class',
+            'classname',
+            'class name',
             'std',
             'course',
             'coursename',
@@ -702,7 +704,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
 
         for (let sheetRowIndex = 0; sheetRowIndex < json.length; sheetRowIndex++) {
           const row = json[sheetRowIndex];
-          const clsStr = String(getCol(row, "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
+          const clsStr = String(getCol(row, "Class Name", "ClassName", "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
           const divStr = String(getCol(row, "Division", "Section")).trim();
           
           if (!clsStr && !divStr && !getCol(row, "Student Name")) continue; // Skip empty rows

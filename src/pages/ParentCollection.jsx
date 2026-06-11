@@ -18,6 +18,7 @@ import {
   PARENT_FORM_OPTIONAL_FIELDS,
   makeInitialFieldEnabled,
 } from '../data/parentCollectionFields';
+import * as XLSX from 'xlsx';
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -114,6 +115,7 @@ export default function ParentCollection() {
   const [projectName, setProjectName] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('180');
   const [lastCreatedLink, setLastCreatedLink] = useState('');
+  const [lastCreatedTemplateInfo, setLastCreatedTemplateInfo] = useState(null);
   const [creating, setCreating] = useState(false);
   const [revokingToken, setRevokingToken] = useState('');
   const [togglingToken, setTogglingToken] = useState('');
@@ -269,6 +271,10 @@ export default function ParentCollection() {
       const publicLink = buildParentCollectionLink(result?.token);
       console.log('publicLink', publicLink);
       setLastCreatedLink(publicLink);
+      setLastCreatedTemplateInfo({
+        fields,
+        projectName: payload.projectName || payload.collectionSchoolLabel || 'Project'
+      });
       setFeedback({
         type: 'success',
         message:
@@ -377,6 +383,21 @@ export default function ParentCollection() {
     } catch (err) {
       setFeedback({ type: 'error', message: err?.message || 'Failed to refresh submissions' });
     }
+  }
+
+  function handleDownloadTemplate(fields, projectName) {
+    const headers = ['Student Name'];
+    if (Array.isArray(fields)) {
+      fields.forEach(f => headers.push(f.label));
+    }
+    const worksheet = XLSX.utils.aoa_to_sheet([headers]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Template');
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    const safeName = (projectName || 'school').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    downloadBlob(blob, `template_${safeName}.xlsx`);
   }
 
   async function handleExport() {
@@ -521,7 +542,9 @@ export default function ParentCollection() {
                 className="input-field"
                 placeholder="e.g. Satish Project 1"
                 value={projectName}
-                onChange={(e) => setProjectName(toTitleCaseLabel(e.target.value))}
+                onChange={(e) => setProjectName(e.target.value)}
+                onBlur={() => setProjectName(toTitleCaseLabel(projectName))}
+                style={{ textTransform: 'capitalize' }}
               />
             </label>
             <label className="parent-collection-field">
@@ -531,7 +554,9 @@ export default function ParentCollection() {
                 className="input-field"
                 placeholder="Enter School Name"
                 value={collectionSchoolLabel}
-                onChange={(e) => setCollectionSchoolLabel(toTitleCaseLabel(e.target.value))}
+                onChange={(e) => setCollectionSchoolLabel(e.target.value)}
+                onBlur={() => setCollectionSchoolLabel(toTitleCaseLabel(collectionSchoolLabel))}
+                style={{ textTransform: 'capitalize' }}
               />
             </label>
           </div>
@@ -588,9 +613,18 @@ export default function ParentCollection() {
                     <div key={field.key} className="config-card-compact animate-in">
                       <div className="config-card-header">
                         <span className="config-card-title">{field.label}</span>
-                        <div className="config-card-badges">
+                        <div className="config-card-badges" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           {field.isRequired && <span className="badge-mini req">Required</span>}
                           <span className="badge-mini type">{field.fieldType}</span>
+                          <div
+                            onClick={() => field.isCustom ? removeField(field.key) : toggleField(field.key)}
+                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#94a3b8', padding: '2px', transition: 'color 0.2s' }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
+                            title="Remove field"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                          </div>
                         </div>
                       </div>
                       <div className="config-card-body">
@@ -601,9 +635,13 @@ export default function ParentCollection() {
                             value={field.label}
                             placeholder="Label shown to parents"
                             onChange={(e) =>
-                              updateField(field.key, { label: toTitleCaseLabel(e.target.value) })
+                              updateField(field.key, { label: e.target.value })
+                            }
+                            onBlur={() =>
+                              updateField(field.key, { label: toTitleCaseLabel(field.label) })
                             }
                             className="config-input"
+                            style={{ textTransform: 'capitalize' }}
                           />
                         </div>
                         <div className="config-input-group">
@@ -663,6 +701,11 @@ export default function ParentCollection() {
             {lastCreatedLink && (
               <button type="button" className="btn btn-secondary" onClick={() => handleCopyLink(lastCreatedLink)}>
                 Copy latest link
+              </button>
+            )}
+            {lastCreatedTemplateInfo && (
+              <button type="button" className="btn btn-secondary" onClick={() => handleDownloadTemplate(lastCreatedTemplateInfo.fields, lastCreatedTemplateInfo.projectName)}>
+                Download Template
               </button>
             )}
           </div>
@@ -743,6 +786,13 @@ export default function ParentCollection() {
                             onClick={() => handleCopyLink(buildParentCollectionLink(link.token))}
                           >
                             Copy
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleDownloadTemplate(link.fields, link.projectName || link.collectionSchoolLabel)}
+                          >
+                            Template
                           </button>
                           <button
                             type="button"
