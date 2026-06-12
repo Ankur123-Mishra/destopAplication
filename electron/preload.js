@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electron', {
   captureViewRect: (payload) => ipcRenderer.invoke('capture-view-rect', payload),
   printToPdf: (payload) => ipcRenderer.invoke('print-to-pdf', payload),
   createCropOutputFolder: (sourceFolderPath) => ipcRenderer.invoke('create-crop-output-folder', sourceFolderPath),
+  createClassFolders: (payload) => ipcRenderer.invoke('create-class-folders', payload),
   cropImages: (data) => ipcRenderer.invoke('crop-images', data),
   cropImagesIndividually: (data) => ipcRenderer.invoke('crop-images-individually', data),
   openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),

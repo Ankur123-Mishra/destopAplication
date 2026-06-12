@@ -622,6 +622,26 @@ ipcMain.handle('select-output-folder', async () => {
   }
 });
 
+ipcMain.handle('create-class-folders', async (event, payload) => {
+try {
+const { parentFolderPath, folderNames } = payload || {};
+if (!parentFolderPath || !Array.isArray(folderNames)) {
+return { success: false, error: 'Invalid folder payload' };
+}
+let created = 0;
+for (const raw of folderNames) {
+const safe = String(raw).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 120);
+if (!safe) continue;
+await fs.mkdir(path.join(parentFolderPath, safe), { recursive: true });
+created++;
+}
+return { success: true, created };
+} catch (error) {
+console.error('Error creating class folders:', error);
+return { success: false, error: error.message };
+}
+});
+
 ipcMain.handle('create-crop-output-folder', async (event, sourceFolderPath) => {
   try {
     const cropFolderPath = path.join(sourceFolderPath, 'crop image');

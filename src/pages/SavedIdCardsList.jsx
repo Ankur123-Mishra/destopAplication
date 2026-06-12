@@ -415,6 +415,34 @@ function sortClassesForDisplay(list) {
   return [...list].sort(compareClassForDisplay);
 }
 
+function safeClassFolderName(cls) {
+  const label =
+    formatStudentClassForIdCard(cls) ||
+    String(cls?.className ?? "").trim() ||
+    "Unnamed";
+  return (
+    label
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim()
+      .slice(0, 120) || "Unnamed"
+  );
+}
+
+/** Unique sanitized folder names for each class row (handles duplicate labels). */
+function getClassFolderNames(classesList) {
+  const seen = new Map();
+  return (classesList ?? []).map((cls) => {
+    let name = safeClassFolderName(cls);
+    const count = seen.get(name) ?? 0;
+    seen.set(name, count + 1);
+    if (count > 0) {
+      const suffix = String(cls?._id ?? cls?.id ?? count).slice(-8);
+      name = `${name}_${suffix}`;
+    }
+    return name;
+  });
+}
+
 function getStudentClassIdStringForSort(student) {
   if (!student || typeof student !== "object") return null;
   if (typeof student.classId === "string" && student.classId.trim() !== "")
@@ -3509,6 +3537,7 @@ export default function SavedIdCardsList({
   const [classes, setClasses] = useState([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [errorClasses, setErrorClasses] = useState("");
+  const [creatingClassFolders, setCreatingClassFolders] = useState(false);
   const [selectedSchool, setSelectedSchool] = useState(null);
 
   // Level 3: Students (with saved ID cards)
@@ -3520,6 +3549,14 @@ export default function SavedIdCardsList({
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
   /** Lets the input stay responsive while large lists catch up on the filtered result. */
   const deferredStudentSearchQuery = useDeferredValue(studentSearchQuery);
+  /** School-wide student search on the class picker screen (before a class is selected). */
+  const [classListSearchQuery, setClassListSearchQuery] = useState("");
+  const deferredClassListSearchQuery = useDeferredValue(classListSearchQuery);
+  const [classListSearchRoster, setClassListSearchRoster] = useState(null);
+  const [loadingClassListSearchRoster, setLoadingClassListSearchRoster] =
+    useState(false);
+  const [errorClassListSearchRoster, setErrorClassListSearchRoster] =
+    useState("");
   /** GET /api/photographer/schools/:schoolId/students — full school roster */
   const [schoolAllStudentsData, setSchoolAllStudentsData] = useState(null);
   /** Full inline photos for Preview/Print only (list rows use memory-safe payloads). */
@@ -4452,9 +4489,83 @@ export default function SavedIdCardsList({
     [studentsForList, deferredStudentSearchQuery],
   );
 
+  const showClasses =
+    schoolId != null && classId == null && !isAllSchoolStudents;
+
   useEffect(() => {
+    const preserved = location.state?.studentSearchQuery;
+    if (typeof preserved === "string") {
+      setStudentSearchQuery(preserved);
+      return;
+    }
     setStudentSearchQuery("");
-  }, [schoolId, classId, isAllSchoolStudents]);
+  }, [schoolId, classId, isAllSchoolStudents, location.state?.studentSearchQuery]);
+
+  useEffect(() => {
+    if (!showClasses) {
+      setClassListSearchQuery("");
+      setClassListSearchRoster(null);
+      setLoadingClassListSearchRoster(false);
+      setErrorClassListSearchRoster("");
+    }
+  }, [showClasses, schoolId]);
+
+  useEffect(() => {
+    if (!showClasses || !schoolId) return;
+    if (!deferredClassListSearchQuery.trim()) return;
+    if (classListSearchRoster?.schoolId === schoolId) return;
+
+    let cancelled = false;
+    setLoadingClassListSearchRoster(true);
+    setErrorClassListSearchRoster("");
+    activeApi
+      .getStudentsBySchool(schoolId, { retainPhotos: false })
+      .then((data) => {
+        if (!cancelled) {
+          setClassListSearchRoster({ schoolId, data });
+          setLoadingClassListSearchRoster(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setErrorClassListSearchRoster(
+            err?.message || "Failed to load students for search",
+          );
+          setLoadingClassListSearchRoster(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showClasses,
+    schoolId,
+    deferredClassListSearchQuery,
+    activeApi,
+    classListSearchRoster?.schoolId,
+  ]);
+
+  const classListSearchStudentsRaw =
+    classListSearchRoster?.data?.students ?? EMPTY_STUDENTS;
+  const classListSearchRosterReady =
+    classListSearchRoster?.schoolId === schoolId;
+  const filteredClassListSearchStudents = React.useMemo(
+    () =>
+      filterStudentsBySearchQuery(
+        classListSearchStudentsRaw,
+        deferredClassListSearchQuery,
+      ),
+    [classListSearchStudentsRaw, deferredClassListSearchQuery],
+  );
+
+  const handleClassListSearchStudentClick = (student) => {
+    const classIdStr = getStudentClassIdStringForSort(student);
+    if (!classIdStr) return;
+    const searchTerm = classListSearchQuery.trim();
+    navigate(`${basePath}/school/${schoolId}/class/${classIdStr}`, {
+      state: searchTerm ? { studentSearchQuery: searchTerm } : undefined,
+    });
+  };
 
   useLayoutEffect(() => {
     const el = savedIdStudentListWrapRef.current;
@@ -6050,6 +6161,68 @@ export default function SavedIdCardsList({
     return true;
   };
 
+  const handleCreateClassFolders = async () => {
+    if (creatingClassFolders || loadingClasses || classes.length === 0) return;
+
+    const folderNames = getClassFolderNames(classes);
+    if (folderNames.length === 0) {
+      window.alert("No classes found to create folders.");
+      return;
+    }
+
+    setCreatingClassFolders(true);
+    try {
+      if (typeof window !== "undefined" && window.electron?.selectOutputFolder) {
+        const pick = await window.electron.selectOutputFolder();
+        if (!pick.success) return;
+
+        if (!window.electron.createClassFolders) {
+          window.alert(
+            "Create folders is not available. Fully quit the app and start it again so Electron loads the latest code.",
+          );
+          return;
+        }
+
+        const result = await window.electron.createClassFolders({
+          parentFolderPath: pick.folderPath,
+          folderNames,
+        });
+        if (!result.success) {
+          throw new Error(result.error || "Could not create class folders.");
+        }
+        if (window.electron.openFolder) {
+          await window.electron.openFolder(pick.folderPath);
+        }
+        window.alert(
+          `${result.created ?? folderNames.length} class folder(s) created.`,
+        );
+        return;
+      }
+
+      if (
+        typeof window.showDirectoryPicker === "function" &&
+        window.isSecureContext !== false
+      ) {
+        const parentHandle = await window.showDirectoryPicker();
+        for (const name of folderNames) {
+          await parentHandle.getDirectoryHandle(name, { create: true });
+        }
+        window.alert(`${folderNames.length} class folder(s) created.`);
+        return;
+      }
+
+      window.alert(
+        "Folder picker is not available in this environment. Use the desktop app to create class folders.",
+      );
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+      console.error(e);
+      window.alert(e?.message || "Could not create class folders.");
+    } finally {
+      setCreatingClassFolders(false);
+    }
+  };
+
   /** Browser: folder picker here (must run in click handler). Then starts JPEG export. */
   const prepareAndStartJpegExport = async (mode) => {
     const isElectronApp = Boolean(
@@ -6227,7 +6400,8 @@ export default function SavedIdCardsList({
       if (isTopRight) marks.push(renderDot('tl', { top: 0, left: 0, transform: "translate(-50%, -50%)" }));
       if (isBottomLeft) marks.push(renderDot('br', { bottom: 0, right: 0, transform: "translate(50%, 50%)" }));
       if (isBottomRight) marks.push(renderDot('bl', { bottom: 0, left: 0, transform: "translate(-50%, 50%)" }));
-    } else {
+    }
+    else {
       if (isTopLeft) marks.push(renderDot('tl', { top: 0, left: 0, transform: "translate(-50%, -50%)" }));
       if (isTopRight) marks.push(renderDot('tr', { top: 0, right: 0, transform: "translate(50%, -50%)" }));
       if (isBottomLeft) marks.push(renderDot('bl', { bottom: 0, left: 0, transform: "translate(-50%, 50%)" }));
@@ -6558,76 +6732,206 @@ export default function SavedIdCardsList({
         >
           ← Back to schools
         </button>
-        <h3 style={{ margin: 0 }}>
+        <h3 style={{ margin: 0, flex: 1 }}>
           {selectedSchool?.schoolName || selectedSchool?.schoolCode || schoolId}{" "}
           – Select class
         </h3>
-      </div>
-      <p
-        className="text-muted"
-        style={{ marginBottom: 20, fontSize: "0.9rem" }}
-      >
-        {isViewTemplateFlow
-          ? "Click on a class to see its students."
-          : "Click on a class to see students who have saved ID cards."}
-      </p>
-      <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={() =>
-            navigate(`${basePath}/school/${schoolId}/all-students`)
-          }
-          style={{ padding: "10px 16px" }}
+        <span
+          style={{
+            fontSize: "0.95rem",
+            fontWeight: "500",
+            backgroundColor: "rgba(255, 255, 255, 0.1)",
+            padding: "4px 10px",
+            borderRadius: "6px",
+            flexShrink: 0,
+          }}
         >
-          See all students
-        </button>
-        {isViewTemplateFlow && (
-          <>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() =>
-                // Skip wizard "Students & photos" — go straight to template selection.
-                navigate(`/view-template/wizard/template/${schoolId}/all`, {
-                  state: { preferredOfflineMode: viewMode !== "online" },
-                })
-              }
-              style={{ padding: "10px 16px" }}
-            >
-              Create Template
-            </button>
-            {showEditTemplateButton ? (
+          {deferredClassListSearchQuery.trim()
+            ? loadingClassListSearchRoster
+              ? "Searching…"
+              : classListSearchRosterReady
+                ? `Matches: ${filteredClassListSearchStudents.length}`
+                : "Searching…"
+            : loadingClasses
+              ? "Loading…"
+              : `Total classes: ${classes.length}`}
+        </span>
+      </div>
+      <div style={{ marginBottom: 16, width: "100%" }}>
+        <label
+          className="text-muted"
+          style={{ display: "block", marginBottom: 6, fontSize: "0.85rem" }}
+        >
+          Search students
+        </label>
+        <input
+          type="search"
+          className="form-control"
+          placeholder="Name, mobile number, or photo number"
+          value={classListSearchQuery}
+          onChange={(e) => setClassListSearchQuery(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          style={{
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            padding: "10px 12px",
+            fontSize: "0.95rem",
+          }}
+        />
+      </div>
+      {!deferredClassListSearchQuery.trim() ? (
+        <p
+          className="text-muted"
+          style={{ marginBottom: 20, fontSize: "0.9rem" }}
+        >
+          {isViewTemplateFlow
+            ? "Click on a class to see its students, or search above to find any student in this school."
+            : "Click on a class to see students who have saved ID cards, or search above to find any student in this school."}
+        </p>
+      ) : (
+        <p
+          className="text-muted"
+          style={{ marginBottom: 20, fontSize: "0.9rem" }}
+        >
+          Click a student to open their class with the same search applied.
+        </p>
+      )}
+      <div
+        style={{
+          marginBottom: 20,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() =>
+              navigate(`${basePath}/school/${schoolId}/all-students`)
+            }
+            style={{ padding: "10px 16px" }}
+          >
+            See all students
+          </button>
+          {isViewTemplateFlow && (
+            <>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-primary"
                 onClick={() =>
+                  // Skip wizard "Students & photos" — go straight to template selection.
                   navigate(`/view-template/wizard/template/${schoolId}/all`, {
-                    state: {
-                      openEditTemplate: true,
-                      preferredOfflineMode: viewMode !== "online",
-                    },
+                    state: { preferredOfflineMode: viewMode !== "online" },
                   })
                 }
                 style={{ padding: "10px 16px" }}
               >
-                Edit template
+                Create Template
               </button>
-            ) : null}
-          </>
-        )}
-
-        {/* <span
-          className="text-muted"
-          style={{ fontSize: "0.9rem" }}
+              {showEditTemplateButton ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() =>
+                    navigate(`/view-template/wizard/template/${schoolId}/all`, {
+                      state: {
+                        openEditTemplate: true,
+                        preferredOfflineMode: viewMode !== "online",
+                      },
+                    })
+                  }
+                  style={{ padding: "10px 16px" }}
+                >
+                  Edit template
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={handleCreateClassFolders}
+          disabled={
+            creatingClassFolders || loadingClasses || classes.length === 0
+          }
+          style={{ padding: "10px 16px" }}
         >
-          {isViewTemplateFlow
-            ? "Entire school roster in one list, or create template for all."
-            : "All students in this school; preview and print use saved ID cards only."}
-        </span> */}
-        
-
+          {creatingClassFolders ? "Creating folders…" : "Create class folders"}
+        </button>
       </div>
+      {deferredClassListSearchQuery.trim() ? (
+        <>
+          {(loadingClassListSearchRoster ||
+            !classListSearchRosterReady) &&
+            !errorClassListSearchRoster && (
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Loading students…
+            </p>
+          )}
+          {errorClassListSearchRoster && (
+            <p className="text-danger" style={{ marginBottom: 16 }}>
+              {errorClassListSearchRoster}
+            </p>
+          )}
+          {!loadingClassListSearchRoster &&
+            !errorClassListSearchRoster &&
+            classListSearchRosterReady &&
+            filteredClassListSearchStudents.length === 0 && (
+              <p className="text-muted" style={{ marginBottom: 16 }}>
+                No students match your search. Try another name, mobile number, or photo number.
+              </p>
+            )}
+          {!loadingClassListSearchRoster &&
+            !errorClassListSearchRoster &&
+            classListSearchRosterReady &&
+            filteredClassListSearchStudents.length > 0 && (
+              <ul
+                className="saved-idcards-list"
+                style={{
+                  maxHeight: "min(60vh, 520px)",
+                  overflowY: "auto",
+                  marginBottom: 20,
+                }}
+              >
+                {filteredClassListSearchStudents.map((student) => {
+                  const studentId = student._id || student.id;
+                  const classLabel =
+                    formatStudentClassForIdCard(student.class) ||
+                    getPseudoClassForSort(student).className ||
+                    "—";
+                  return (
+                    <li key={studentId}>
+                      <button
+                        type="button"
+                        className="saved-idcard-item"
+                        onClick={() => handleClassListSearchStudentClick(student)}
+                      >
+                        <span className="saved-idcard-name">
+                          {student.studentName || student.name || "Unnamed student"}
+                        </span>
+                        <span className="text-muted saved-idcard-meta">
+                          {classLabel}
+                          {student.admissionNo || student.rollNo
+                            ? ` · ${student.admissionNo || student.rollNo}`
+                            : ""}
+                          {student.photoNo ? ` · Photo ${student.photoNo}` : ""}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+        </>
+      ) : (
+        <>
       {loadingClasses && <p className="text-muted">Loading classes…</p>}
       {errorClasses && <p className="text-danger">{errorClasses}</p>}
       {!loadingClasses && !errorClasses && classes.length === 0 && (
@@ -6652,6 +6956,8 @@ export default function SavedIdCardsList({
             </li>
           ))}
         </ul>
+      )}
+        </>
       )}
     </>
   );
@@ -6854,8 +7160,6 @@ export default function SavedIdCardsList({
   );
 
   const showSchools = schoolId == null;
-  const showClasses =
-    schoolId != null && classId == null && !isAllSchoolStudents;
   const showStudents =
     (schoolId != null && classId != null) || isAllSchoolStudents;
 

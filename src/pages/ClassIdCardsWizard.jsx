@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import Header from '../components/Header';
@@ -476,17 +476,25 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const [templateUploadMode, setTemplateUploadMode] = useState('single');
   const [arrangingUploaded, setArrangingUploaded] = useState(false); // true when user clicked "Arrange elements" for uploaded template
   const [arrangeEditSide, setArrangeEditSide] = useState('front'); // 'front' | 'back'
-  const [arrangeBackElements, setArrangeBackElements] = useState(null); // back-side edit draft
-  /** Last selected canvas element id per side (survives switching Edit Front / Edit Back). */
-  const [arrangeSelectedIdFront, setArrangeSelectedIdFront] = useState(null);
-  const [arrangeSelectedIdBack, setArrangeSelectedIdBack] = useState(null);
+  /** Live front/back layout during arrange — refs avoid parent re-render on every drag or click. */
+  const arrangeFrontElementsRef = useRef(null);
+  const arrangeBackElementsRef = useRef(null);
+  /** Last selected canvas element id per side (refs — avoid parent re-render on every click). */
+  const arrangeSelectedIdFrontRef = useRef(null);
+  const arrangeSelectedIdBackRef = useRef(null);
+  /** Stable key for IdCardCanvasEditor mount — set when arrange editor opens. */
+  const arrangeEditorSessionKeyRef = useRef('draft');
+  const arrangingUploadedRef = useRef(arrangingUploaded);
+  arrangingUploadedRef.current = arrangingUploaded;
+  const uploadedTemplateRef = useRef(uploadedTemplate);
+  uploadedTemplateRef.current = uploadedTemplate;
   /** Template object from GET /api/photographer/students (same response as students list) */
   const [apiClassTemplate, setApiClassTemplate] = useState(null);
   /** True once this school has at least one saved ID card (local flag or API student rows). Used to show "Edit template" only after a save. */
   const [schoolHasSavedIdCards, setSchoolHasSavedIdCards] = useState(false);
   const [editorOpenedFromApiClassTemplate, setEditorOpenedFromApiClassTemplate] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof preferredOfflineMode !== 'boolean') return;
     if (preferredOfflineMode === offlineMode) return;
     setOfflineMode(preferredOfflineMode);
@@ -559,9 +567,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const hasUrlIds = schoolIdFromUrl && classIdFromUrl;
   const hasStateData = fromUploadedPhotos && stateSchool && stateClass && stateStudents?.length;
 
-  
+
   useEffect(() => {
     if (!hasUrlIds) return;
+    // Never refetch while canvas editor is open — prevents full-screen blink and selection loss.
+    if (arrangingUploadedRef.current) return;
     if (hasStateData) {
       setApiClassTemplate(null);
       setSchoolHasSavedIdCards(readSavedIdCardsFlagForSchool(stateSchool._id));
@@ -579,9 +589,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       return;
     }
     let cancelled = false;
-    setApiDataLoaded(false);
-    setApiClassTemplate(null);
-    setSchoolHasSavedIdCards(false);
+    // Keep editor mounted while refetching — avoid "Loading…" blink on element click.
+    if (!arrangingUploadedRef.current) {
+      setApiDataLoaded(false);
+      setApiClassTemplate(null);
+      setSchoolHasSavedIdCards(false);
+    }
 
     const applySchoolStudentsPayload = (schoolsList, studentsRes) => {
       const studentsList = (studentsRes.students ?? []).map(mapApiStudent);
@@ -591,13 +604,13 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       setApiSchool(
         school
           ? {
-              id: school._id,
-              name: school.schoolName,
-              address: school.address,
-              schoolCode: school.schoolCode || '',
-              allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
-              projectType: school.projectType || 'idCard',
-            }
+            id: school._id,
+            name: school.schoolName,
+            address: school.address,
+            schoolCode: school.schoolCode || '',
+            allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+            projectType: school.projectType || 'idCard',
+          }
           : null,
       );
       setApiStudents(studentsList);
@@ -652,13 +665,13 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           setApiSchool(
             school
               ? {
-                  id: school._id,
-                  name: school.schoolName,
-                  address: school.address,
-                  schoolCode: school.schoolCode || '',
-                  allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
-                  projectType: school.projectType || 'idCard',
-                }
+                id: school._id,
+                name: school.schoolName,
+                address: school.address,
+                schoolCode: school.schoolCode || '',
+                allowedMobiles: Array.isArray(school.allowedMobiles) ? school.allowedMobiles : [],
+                projectType: school.projectType || 'idCard',
+              }
               : null,
           );
           setApiClass(cls ? { id: cls._id, name: `Class ${cls.className}` } : null);
@@ -711,8 +724,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     () =>
       Boolean(
         uploadedTemplate?.frontImage &&
-          uploadedTemplate?.elements &&
-          (templateUploadMode === 'single' || uploadedTemplate?.backImage),
+        uploadedTemplate?.elements &&
+        (templateUploadMode === 'single' || uploadedTemplate?.backImage),
       ),
     [uploadedTemplate?.frontImage, uploadedTemplate?.elements, uploadedTemplate?.backImage, templateUploadMode],
   );
@@ -720,22 +733,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   const showArrangeUploaded =
     step === STEPS.SELECT_TEMPLATE && Boolean(cls) && arrangingUploaded && uploadedReadyForArrange;
 
-  useEffect(() => {
-    if (!showArrangeUploaded) return undefined;
-    if (!effectiveSchoolId || !effectiveClassId || effectiveClassId === 'all') return undefined;
-    if (!offlineMode) return undefined;
-    let cancelled = false;
-    offlineApi
-      .getStudentsBySchoolAndClass(effectiveSchoolId, effectiveClassId)
-      .then((res) => {
-        if (cancelled) return;
-        setApiStudents((res.students ?? []).map(mapApiStudent));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [showArrangeUploaded, effectiveSchoolId, effectiveClassId, offlineMode]);
+  // Offline roster refresh is skipped while the canvas editor is open — avoids parent re-render blink.
 
   // When school/class changes, default selection = all students in that class
   useEffect(() => {
@@ -771,7 +769,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     // "Edit template" should open with the latest saved server/school layout.
     // Do not override it with any stale local draft from older sessions.
     if (editorOpenedFromApiClassTemplate) {
-      return uploadedTemplate?.elements ?? null;
+      return arrangeFrontElementsRef.current ?? uploadedTemplate?.elements ?? null;
     }
     if (!uploadedTemplate?.frontImage || !Array.isArray(uploadedTemplate.elements)) {
       return uploadedTemplate?.elements ?? null;
@@ -799,10 +797,17 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     [arrangeEditorElements, uploadedTemplate?.elements],
   );
 
+  const handleArrangeBackElementsPersist = useCallback((elements) => {
+    arrangeBackElementsRef.current = elements;
+  }, []);
+
   const handlePurgeFieldFromOppositeSide = useCallback(
     (fieldKey) => {
       if (arrangeEditSide === 'front') {
-        setArrangeBackElements((prev) => stripTextFieldFromElements(prev ?? [], fieldKey));
+        arrangeBackElementsRef.current = stripTextFieldFromElements(
+          arrangeBackElementsRef.current ?? [],
+          fieldKey,
+        );
       } else {
         setUploadedTemplate((prev) => {
           if (!prev?.frontImage || effectiveSchoolId == null || effectiveClassId == null) return prev;
@@ -826,20 +831,19 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
 
   const handleArrangeElementsPersist = useCallback(
     (elements) => {
-      setUploadedTemplate((prev) => {
-        if (!prev?.frontImage || effectiveSchoolId == null || effectiveClassId == null) return prev;
-        const subKey = layoutDraftSubKey(prev);
-        if (subKey) {
-          writeLayoutDraft(effectiveSchoolId, effectiveClassId, subKey, {
-            v: 1,
-            elements,
-            templateUploadMode,
-            fpFront: dataUrlFingerprint(prev.frontImage),
-            fpBack: prev.backImage ? dataUrlFingerprint(prev.backImage) : null,
-          });
-        }
-        return { ...prev, elements };
-      });
+      arrangeFrontElementsRef.current = elements;
+      const prev = uploadedTemplateRef.current;
+      if (!prev?.frontImage || effectiveSchoolId == null || effectiveClassId == null) return;
+      const subKey = layoutDraftSubKey(prev);
+      if (subKey) {
+        writeLayoutDraft(effectiveSchoolId, effectiveClassId, subKey, {
+          v: 1,
+          elements,
+          templateUploadMode,
+          fpFront: dataUrlFingerprint(prev.frontImage),
+          fpBack: prev.backImage ? dataUrlFingerprint(prev.backImage) : null,
+        });
+      }
     },
     [effectiveSchoolId, effectiveClassId, templateUploadMode],
   );
@@ -1081,9 +1085,16 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setTemplateUploadMode(t.backImage || (Array.isArray(backElements) && backElements.length > 0) ? 'both' : 'single');
     setEditorOpenedFromApiClassTemplate(true);
     setArrangeEditSide('front');
-    setArrangeBackElements(backElements);
-    setArrangeSelectedIdFront(null);
-    setArrangeSelectedIdBack(null);
+    arrangeFrontElementsRef.current = frontElements;
+    arrangeBackElementsRef.current = backElements;
+    arrangeSelectedIdFrontRef.current = null;
+    arrangeSelectedIdBackRef.current = null;
+    arrangeEditorSessionKeyRef.current =
+      layoutDraftSubKey({
+        frontImage: front,
+        backImage: back,
+        templateId: t.templateId,
+      }) || 'draft';
     setArrangingUploaded(true);
     setStep(STEPS.SELECT_TEMPLATE);
     navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
@@ -1104,8 +1115,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       schoolHasSavedIdCards &&
       Boolean(
         apiClassTemplate?.frontImage &&
-          Array.isArray(apiClassTemplate.elements) &&
-          apiClassTemplate.elements.length > 0,
+        Array.isArray(apiClassTemplate.elements) &&
+        apiClassTemplate.elements.length > 0,
       );
     openEditTemplateFromListRef.current = true;
     navigate(`${path}${location.search || ''}`, { replace: true, state: {} });
@@ -1230,7 +1241,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         templateUploadMode === 'both' && back
           ? arrangeEditSide === 'back'
             ? payload.elements
-            : (arrangeBackElements ?? uploadedTemplate?.backElements ?? [])
+            : (arrangeBackElementsRef.current ?? uploadedTemplate?.backElements ?? [])
           : undefined;
       const toSave = {
         name: uploadedTemplate?.name || 'Uploaded Template',
@@ -1274,7 +1285,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         console.error('Template upload to API failed:', err);
         alert(
           err?.message ||
-            'Template saved locally but upload to server failed. You can still use it for ID cards.',
+          'Template saved locally but upload to server failed. You can still use it for ID cards.',
         );
       }
 
@@ -1294,7 +1305,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         console.error(bulkErr);
         alert(
           bulkErr?.message ||
-            'Failed to assign the template to all students. The layout may be saved locally — please try again.',
+          'Failed to assign the template to all students. The layout may be saved locally — please try again.',
         );
       }
     } catch (err) {
@@ -1305,26 +1316,17 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     }
   };
 
-  const handleCancelUploadedTemplate = () => {
-    const backToStudents = editorOpenedFromApiClassTemplate;
+  /** Leave canvas editor and return to template selection — same as header back (keeps template selected). */
+  const exitArrangeEditorToTemplateSelect = useCallback(() => {
     setEditorOpenedFromApiClassTemplate(false);
-    setUploadedTemplate(null);
     setArrangeEditSide('front');
-    setArrangeBackElements(null);
-    setArrangeSelectedIdFront(null);
-    setArrangeSelectedIdBack(null);
+    arrangeFrontElementsRef.current = null;
+    arrangeBackElementsRef.current = null;
+    arrangeSelectedIdFrontRef.current = null;
+    arrangeSelectedIdBackRef.current = null;
     setArrangingUploaded(false);
-    setSelectedTemplateId(null);
-    if (backToStudents) {
-      if (basePath === '/view-template/wizard') {
-        setStep(STEPS.SELECT_TEMPLATE);
-        navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
-      } else {
-        setStep(STEPS.STUDENTS_IMAGES);
-        navigate(`${basePath}/students/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
-      }
-    }
-  };
+    navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
+  }, [basePath, effectiveSchoolId, effectiveClassId, navigate]);
 
   const backTo = '/uploaded-photos';
   const selectedSchoolForClassStep = apiSchools.find((s) => s._id === schoolIdForClasses);
@@ -1341,15 +1343,15 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3 style={{ margin: 0 }}>Select school</h3>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button 
-                className={`btn ${offlineMode ? 'btn-primary' : 'btn-secondary'}`} 
+              <button
+                className={`btn ${offlineMode ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setOfflineMode(true)}
                 style={{ padding: '6px 14px', fontSize: '13px' }}>
                 Offline Projects
               </button>
               {user?.id !== 'offline-user' && (
-                <button 
-                  className={`btn ${!offlineMode ? 'btn-primary' : 'btn-secondary'}`} 
+                <button
+                  className={`btn ${!offlineMode ? 'btn-primary' : 'btn-secondary'}`}
                   onClick={() => setOfflineMode(false)}
                   style={{ padding: '6px 14px', fontSize: '13px' }}>
                   Online Sync'd
@@ -1488,8 +1490,8 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       schoolHasSavedIdCards &&
       Boolean(
         apiClassTemplate?.frontImage &&
-          Array.isArray(apiClassTemplate.elements) &&
-          apiClassTemplate.elements.length > 0,
+        Array.isArray(apiClassTemplate.elements) &&
+        apiClassTemplate.elements.length > 0,
       );
     return (
       <>
@@ -1499,86 +1501,86 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           backTo={effectiveSchoolId ? `${basePath}/school/${effectiveSchoolId}` : basePath}
         />
         <div className="class-idcards-students-step-body">
-        <p className="text-muted" style={{ marginBottom: 16 }}>
-          Select which students to include. To continue, the first selected student (top of the list among checked rows) must have a photo; others can be added before save.
-        </p>
-        <div className="card" style={{ maxWidth: 900 }}>
-          <div
-            className="class-idcards-students-toolbar"
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 16,
-              marginBottom: 8,
-              flexWrap: 'wrap',
-            }}
-          >
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              <span className="text-muted" style={{ fontSize: '0.9rem' }}>
-                {selectedStudentIds.length} of {students.length} selected
-              </span>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={selectAllStudents}>
-                Select all
-              </button>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={deselectAllStudents}>
-                Deselect all
-              </button>
-            </div>
-
+          <p className="text-muted" style={{ marginBottom: 16 }}>
+            Select which students to include. To continue, the first selected student (top of the list among checked rows) must have a photo; others can be added before save.
+          </p>
+          <div className="card" style={{ maxWidth: 900 }}>
             <div
+              className="class-idcards-students-toolbar"
               style={{
                 display: 'flex',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                flexShrink: 0,
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: 16,
+                marginBottom: 8,
                 flexWrap: 'wrap',
-                justifyContent: 'flex-end',
               }}
             >
-              {showApiClassTemplateBar ? (
-                <button type="button" className="btn btn-secondary" onClick={openClassTemplateEditor}>
-                  Edit template
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <span className="text-muted" style={{ fontSize: '0.9rem' }}>
+                  {selectedStudentIds.length} of {students.length} selected
+                </span>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={selectAllStudents}>
+                  Select all
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!canProceedFromStudents}
-                onClick={goToTemplate}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={deselectAllStudents}>
+                  Deselect all
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexShrink: 0,
+                  flexWrap: 'wrap',
+                  justifyContent: 'flex-end',
+                }}
               >
-                Next step – Select template
-              </button>
+                {showApiClassTemplateBar ? (
+                  <button type="button" className="btn btn-secondary" onClick={openClassTemplateEditor}>
+                    Edit template
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!canProceedFromStudents}
+                  onClick={goToTemplate}
+                >
+                  Next step – Select template
+                </button>
+              </div>
+            </div>
+            <p className="text-muted class-idcards-students-next-hint" style={{ fontSize: '0.9rem', marginBottom: 16, marginTop: 0 }}>
+              {isBadgeProject
+                ? `Badge mode: photo optional · ${selectedStudents.length} selected`
+                : 'First selected needs a photo to continue'}
+              {!isBadgeProject && selectedStudents.length > 0
+                ? ` (${firstSelectedHasPhoto ? 'done' : 'missing'}) · ${selectedStudentsWithPhotos.length} / ${selectedStudents.length} with photos overall`
+                : ''}
+            </p>
+            <div ref={studentsListWrapRef} className="class-idcards-students-virtual-wrap">
+              {students.length > 0 ? (
+                <List
+                  rowCount={students.length}
+                  rowHeight={CLASS_IDCARD_STUDENT_ROW_HEIGHT}
+                  rowComponent={VirtualizedWizardStudentRow}
+                  rowProps={virtualizedStudentRowProps}
+                  overscanCount={8}
+                  style={{
+                    height: studentsListViewportHeight,
+                    width: studentsListWidth,
+                  }}
+                />
+              ) : (
+                <p className="text-muted" style={{ margin: 0 }}>No students found for this class.</p>
+              )}
             </div>
           </div>
-          <p className="text-muted class-idcards-students-next-hint" style={{ fontSize: '0.9rem', marginBottom: 16, marginTop: 0 }}>
-            {isBadgeProject
-              ? `Badge mode: photo optional · ${selectedStudents.length} selected`
-              : 'First selected needs a photo to continue'}
-            {!isBadgeProject && selectedStudents.length > 0
-              ? ` (${firstSelectedHasPhoto ? 'done' : 'missing'}) · ${selectedStudentsWithPhotos.length} / ${selectedStudents.length} with photos overall`
-              : ''}
-          </p>
-          <div ref={studentsListWrapRef} className="class-idcards-students-virtual-wrap">
-            {students.length > 0 ? (
-              <List
-                rowCount={students.length}
-                rowHeight={CLASS_IDCARD_STUDENT_ROW_HEIGHT}
-                rowComponent={VirtualizedWizardStudentRow}
-                rowProps={virtualizedStudentRowProps}
-                overscanCount={8}
-                style={{
-                  height: studentsListViewportHeight,
-                  width: studentsListWidth,
-                }}
-              />
-            ) : (
-              <p className="text-muted" style={{ margin: 0 }}>No students found for this class.</p>
-            )}
-          </div>
-        </div>
         </div>
         <style>{`
           .class-idcards-students-step-body {
@@ -1612,7 +1614,13 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
   }
 
   // Opening URL …/template/:schoolId/:classId (e.g. from View Template) loads API before cls exists — same as students step.
-  if (step === STEPS.SELECT_TEMPLATE && hasUrlIds && !hasStateData && !apiDataLoaded) {
+  if (
+    step === STEPS.SELECT_TEMPLATE &&
+    hasUrlIds &&
+    !hasStateData &&
+    !apiDataLoaded &&
+    !arrangingUploaded
+  ) {
     return (
       <>
         <Header
@@ -1696,67 +1704,60 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       : null;
     const initialData = previewStudent
       ? {
-          name: previewStudent.name || '',
-          studentId: previewStudent.studentId || '',
-          admissionNo: previewStudent.admissionNo || '',
-          rollNo: previewStudent.rollNo || '',
-          uniqueCode: previewStudent.uniqueCode || '',
-          dateOfBirth: previewStudent.dateOfBirth || '',
-          phone: previewStudent.phone || '',
-          email: previewStudent.email || '',
-          address: previewStudent.address || '',
-          className:
-            resolveClassNameForIdCard(previewStudent, apiClasses) ||
-            cls?.name ||
-            '',
-          section: previewStudent.section || '',
-          schoolName: school?.name || '',
-          fatherName: previewStudent.fatherName || '',
-          fatherPrimaryContact: previewStudent.fatherPrimaryContact || previewStudent.fatherPhone || '',
-          motherName: previewStudent.motherName || '',
-          motherPrimaryContact: previewStudent.motherPrimaryContact || previewStudent.motherPhone || '',
-          gender: previewStudent.gender || '',
-          bloodGroup: previewStudent.bloodGroup || '',
-          house: previewStudent.house || '',
-          marking: previewStudent.marking || '',
-          photoNo: previewStudent.photoNo || '',
-          ...(previewColorBadgeUrl
-            ? { colorCodeImageUrl: previewColorBadgeUrl }
-            : {}),
-          extraFields: previewStudentExtraFields,
-        }
+        name: previewStudent.name || '',
+        studentId: previewStudent.studentId || '',
+        admissionNo: previewStudent.admissionNo || '',
+        rollNo: previewStudent.rollNo || '',
+        uniqueCode: previewStudent.uniqueCode || '',
+        dateOfBirth: previewStudent.dateOfBirth || '',
+        phone: previewStudent.phone || '',
+        email: previewStudent.email || '',
+        address: previewStudent.address || '',
+        className:
+          resolveClassNameForIdCard(previewStudent, apiClasses) ||
+          cls?.name ||
+          '',
+        section: previewStudent.section || '',
+        schoolName: school?.name || '',
+        fatherName: previewStudent.fatherName || '',
+        fatherPrimaryContact: previewStudent.fatherPrimaryContact || previewStudent.fatherPhone || '',
+        motherName: previewStudent.motherName || '',
+        motherPrimaryContact: previewStudent.motherPrimaryContact || previewStudent.motherPhone || '',
+        gender: previewStudent.gender || '',
+        bloodGroup: previewStudent.bloodGroup || '',
+        house: previewStudent.house || '',
+        marking: previewStudent.marking || '',
+        photoNo: previewStudent.photoNo || '',
+        ...(previewColorBadgeUrl
+          ? { colorCodeImageUrl: previewColorBadgeUrl }
+          : {}),
+        extraFields: previewStudentExtraFields,
+      }
       : {
-          name: '',
-          studentId: '',
-          className: resolveClassNameForIdCard(previewStudent, apiClasses) || cls?.name || '',
-          schoolName: school?.name || '',
-          dateOfBirth: '',
-          address: school?.address || '',
-          extraFields: {},
-        };
-    const backFromArrange = () => {
-      setEditorOpenedFromApiClassTemplate(false);
-      setArrangeEditSide('front');
-      setArrangeBackElements(null);
-      setArrangeSelectedIdFront(null);
-      setArrangeSelectedIdBack(null);
-      setArrangingUploaded(false);
-      navigate(`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`, { replace: true });
-    };
+        name: '',
+        studentId: '',
+        className: resolveClassNameForIdCard(previewStudent, apiClasses) || cls?.name || '',
+        schoolName: school?.name || '',
+        dateOfBirth: '',
+        address: school?.address || '',
+        extraFields: {},
+      };
     const canEditBack = templateUploadMode === 'both' && Boolean(uploadedTemplate?.backImage);
     const activeTemplateImage =
       arrangeEditSide === 'back' && canEditBack
         ? uploadedTemplate.backImage
         : uploadedTemplate.frontImage;
     const activeInitialElements =
-      arrangeEditSide === 'back' ? arrangeBackElements ?? [] : frontLayoutElementsForArrange;
+      arrangeEditSide === 'back'
+        ? arrangeBackElementsRef.current ?? uploadedTemplate?.backElements ?? []
+        : frontLayoutElementsForArrange;
     return (
       <>
         <Header
           title={`Arrange elements – ${normalizeClassNameForDisplay(cls.name)}`}
           showBack
           backTo={`${basePath}/template/${effectiveSchoolId}/${effectiveClassId}`}
-          onBackClick={backFromArrange}
+          onBackClick={exitArrangeEditorToTemplateSelect}
         />
         <p className="text-muted" style={{ marginBottom: 24 }}>
           Drag elements to position, resize photo from corner, and change font size in the sidebar. Then click
@@ -1781,12 +1782,17 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           </div>
         ) : null}
         <IdCardCanvasEditor
-          key={`class-idcards-arrange-${arrangeEditSide}-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(layoutDraftSubKey(uploadedTemplate) || 'draft')}`}
+          key={`class-idcards-arrange-${arrangeEditSide}-${effectiveSchoolId}-${effectiveClassId}-${encodeURIComponent(arrangeEditorSessionKeyRef.current)}`}
           activeEditSide={arrangeEditSide}
-          initialSelectedId={arrangeEditSide === 'front' ? arrangeSelectedIdFront : arrangeSelectedIdBack}
-          onSelectedIdChange={(id) =>
-            arrangeEditSide === 'front' ? setArrangeSelectedIdFront(id) : setArrangeSelectedIdBack(id)
+          initialSelectedId={
+            arrangeEditSide === 'front'
+              ? arrangeSelectedIdFrontRef.current
+              : arrangeSelectedIdBackRef.current
           }
+          onSelectedIdChange={(id) => {
+            if (arrangeEditSide === 'front') arrangeSelectedIdFrontRef.current = id;
+            else arrangeSelectedIdBackRef.current = id;
+          }}
           templateImage={activeTemplateImage}
           previewSecondaryTemplateImage={
             templateUploadMode === 'both'
@@ -1796,14 +1802,14 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           previewSecondaryElements={
             canEditBack
               ? arrangeEditSide === 'front'
-                ? arrangeBackElements ?? []
+                ? arrangeBackElementsRef.current ?? uploadedTemplate?.backElements ?? []
                 : frontLayoutElementsForArrange
               : null
           }
           otherSideElements={
             canEditBack
               ? arrangeEditSide === 'front'
-                ? arrangeBackElements ?? []
+                ? arrangeBackElementsRef.current ?? uploadedTemplate?.backElements ?? []
                 : frontLayoutElementsForArrange
               : null
           }
@@ -1813,7 +1819,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           initialElements={activeInitialElements}
           initialData={initialData}
           onElementsChange={
-            arrangeEditSide === 'back' ? setArrangeBackElements : handleArrangeElementsPersist
+            arrangeEditSide === 'back' ? handleArrangeBackElementsPersist : handleArrangeElementsPersist
           }
           dimension={previewStudent?.dimension}
           dimensionUnit={previewStudent?.dimensionUnit}
@@ -1830,10 +1836,10 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
             );
           }}
           onSave={handleUseUploadedTemplate}
-          onCancel={handleCancelUploadedTemplate}
+          onCancel={exitArrangeEditorToTemplateSelect}
           saveLabel={savingAll ? 'Saving…' : 'Save all ID cards'}
           saveDisabled={savingAll}
-          cancelLabel="Cancel"
+          cancelLabel="Change Template"
         />
       </>
     );
@@ -1941,9 +1947,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
                     className="btn btn-primary"
                     onClick={() => {
                       setArrangeEditSide('front');
-                      setArrangeBackElements(null);
-                      setArrangeSelectedIdFront(null);
-                      setArrangeSelectedIdBack(null);
+                      arrangeFrontElementsRef.current = uploadedTemplate?.elements ?? null;
+                      arrangeBackElementsRef.current = uploadedTemplate?.backElements ?? null;
+                      arrangeSelectedIdFrontRef.current = null;
+                      arrangeSelectedIdBackRef.current = null;
+                      arrangeEditorSessionKeyRef.current =
+                        layoutDraftSubKey(uploadedTemplate) || 'draft';
                       setArrangingUploaded(true);
                     }}
                   >
@@ -2029,7 +2038,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
               );
             })} */}
 
-            
+
           </div>
         )}
         <style>{`
