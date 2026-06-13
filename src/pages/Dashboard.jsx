@@ -24,6 +24,7 @@ import {
   uploadStudentColorCodeImage,
   deletePhotographerSchool as deleteOfflineSchool,
 } from '../api/dashboard';
+import { isSchoolPendingSync } from '../utils/syncManager';
 
 import {
   getDashboard as getOnlineDashboard,
@@ -49,11 +50,13 @@ function toDashboardSchoolSummary(school) {
     schoolName: school.schoolName || '',
     address: school.address || '',
     schoolCode: school.schoolCode || '',
+    syncStatus: school.syncStatus,
+    mongoId: school.mongoId,
   };
 }
 
 export default function Dashboard() {
-  const { user, isSyncing, startGlobalSync } = useApp();
+  const { user, isSyncing, syncingSchoolId, startGlobalSync, startSingleProjectSync } = useApp();
   const navigate = useNavigate();
   const DASH_CACHE_VERSION = 2;
   const makeCacheKey = (mode) => `dashboard_cache_v${DASH_CACHE_VERSION}:${mode}`;
@@ -297,6 +300,43 @@ export default function Dashboard() {
     setDeleteConfirmTargetId(null);
   };
 
+  const refreshDashboardData = async (mode = viewMode) => {
+    const fetchDash = mode === 'online' ? getOnlineDashboard() : getOfflineDashboard();
+    const fetchSchools = mode === 'online' ? getOnlineSchools() : getOfflineSchools();
+    const [dashboardRes, schoolsRes] = await Promise.all([fetchDash, fetchSchools]);
+    const nextStats = {
+      assignedSchools: dashboardRes.assignedSchools ?? 0,
+      totalStudents: dashboardRes.totalStudents ?? 0,
+      photoPending: dashboardRes.photoPending ?? 0,
+      photoUploaded: dashboardRes.photoUploaded ?? 0,
+      correctionRequired: dashboardRes.correctionsFromSchool ?? 0,
+      deliveryPending: dashboardRes.deliveryPending ?? 0,
+    };
+    const nextSchools = (schoolsRes.schools ?? [])
+      .map(toDashboardSchoolSummary)
+      .filter(Boolean);
+    setStats(nextStats);
+    setSchools(nextSchools);
+    writeCache(mode, { stats: nextStats, schools: nextSchools, cachedAt: Date.now() });
+    return { nextStats, nextSchools };
+  };
+
+  const handleSyncSchool = async (id, e) => {
+    if (e) e.stopPropagation();
+    if (!id || isSyncing) return;
+    setError('');
+    try {
+      const result = await startSingleProjectSync(id);
+      if (result?.success) {
+        await refreshDashboardData('offline');
+      } else if (result?.error) {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err?.message || 'Failed to sync project');
+    }
+  };
+
   const confirmDeleteSchool = async () => {
     const id = deleteConfirmTargetId;
     if (!id) return;
@@ -351,7 +391,7 @@ export default function Dashboard() {
               onClick={startGlobalSync}
               disabled={isSyncing}
             >
-              {isSyncing ? "Syncing in Background..." : "Sync Data"}
+              {isSyncing ? 'Syncing in Background...' : 'Sync All'}
             </button>
           )}
           <button
@@ -415,15 +455,32 @@ export default function Dashboard() {
                         {school.schoolCode && ` · ${school.schoolCode}`}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm school-delete-btn"
-                      disabled={deletingSchoolId === (school._id || school.id)}
-                      onClick={(e) => handleDeleteSchool(school._id || school.id, e)}
-                      title="Delete School"
-                    >
-                      {deletingSchoolId === (school._id || school.id) ? 'Deleting...' : 'Delete'}
-                    </button>
+                    <div className="school-item-actions">
+                      {viewMode === 'offline' && user?.id !== 'offline-user' && (
+                        isSchoolPendingSync(school) ? (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm school-sync-btn"
+                            disabled={isSyncing}
+                            onClick={(e) => handleSyncSchool(school._id || school.id, e)}
+                            title="Sync this project to server"
+                          >
+                            {syncingSchoolId === (school._id || school.id) ? 'Syncing...' : 'Sync Data'}
+                          </button>
+                        ) : (
+                          <span className="school-synced-label" title="Already synced to server">Synced</span>
+                        )
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm school-delete-btn"
+                        disabled={deletingSchoolId === (school._id || school.id) || isSyncing}
+                        onClick={(e) => handleDeleteSchool(school._id || school.id, e)}
+                        title="Delete School"
+                      >
+                        {deletingSchoolId === (school._id || school.id) ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -525,8 +582,33 @@ export default function Dashboard() {
         .school-list { display: flex; flex-direction: column; gap: 0; }
         .school-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: default; }
         .school-item:last-child { border-bottom: none; }
-        .school-delete-btn {
+        .school-item-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
           margin-left: 12px;
+        }
+        .school-sync-btn {
+          color: #b8e0ff;
+          border-color: rgba(52, 152, 219, 0.55);
+          background: rgba(52, 152, 219, 0.14);
+        }
+        .school-sync-btn:hover:not(:disabled) {
+          color: #fff;
+          background: rgba(52, 152, 219, 0.25);
+          border-color: rgba(52, 152, 219, 0.8);
+        }
+        .school-synced-label {
+          font-size: 0.8rem;
+          color: #7dcea0;
+          padding: 6px 10px;
+          border-radius: 6px;
+          border: 1px solid rgba(46, 204, 113, 0.35);
+          background: rgba(46, 204, 113, 0.12);
+          white-space: nowrap;
+        }
+        .school-delete-btn {
           color: #ffb3b3;
           border-color: rgba(231, 76, 60, 0.55);
           background: rgba(231, 76, 60, 0.14);

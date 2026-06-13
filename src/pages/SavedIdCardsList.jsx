@@ -6697,7 +6697,11 @@ export default function SavedIdCardsList({
               <button
                 type="button"
                 className="saved-idcard-item saved-idcard-class-item"
-                onClick={() => navigate(`${basePath}/school/${school._id}`)}
+                onClick={() =>
+                  navigate(`${basePath}/school/${school._id}`, {
+                    state: { preferredOfflineMode: viewMode !== "online" },
+                  })
+                }
               >
                 <span className="saved-idcard-name">
                   {school.schoolName || school.schoolCode || school._id}
@@ -6821,19 +6825,21 @@ export default function SavedIdCardsList({
           </button>
           {isViewTemplateFlow && (
             <>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() =>
-                  // Skip wizard "Students & photos" — go straight to template selection.
-                  navigate(`/view-template/wizard/template/${schoolId}/all`, {
-                    state: { preferredOfflineMode: viewMode !== "online" },
-                  })
-                }
-                style={{ padding: "10px 16px" }}
-              >
-                Create Template
-              </button>
+              {!isOnlineMode && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() =>
+                    // Skip wizard "Students & photos" — go straight to template selection.
+                    navigate(`/view-template/wizard/template/${schoolId}/all`, {
+                      state: { preferredOfflineMode: viewMode !== "online" },
+                    })
+                  }
+                  style={{ padding: "10px 16px" }}
+                >
+                  Create Template
+                </button>
+              )}
               {showEditTemplateButton ? (
                 <button
                   type="button"

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import Header from '../components/Header';
+import BatchCropIcon from '../components/BatchCropIcon';
 
 const STEPS = {
 SELECT_FOLDER: 1,
@@ -1082,7 +1083,9 @@ return (
 {/* Step 1: Select Folder */}
 {step === STEPS.SELECT_FOLDER && (
 <div className="card" style={{ padding: 48, textAlign: 'center' }}>
-<div style={{ fontSize: '4rem', marginBottom: 24 }}>✂️</div>
+<div style={{ marginBottom: 24, display: 'flex', justifyContent: 'center' }}>
+<BatchCropIcon size="5rem" style={{ color: 'var(--accent, #60a5fa)' }} />
+</div>
 <h2 style={{ marginBottom: 16 }}>Batch Image Crop</h2>
 <p className="text-muted" style={{ marginBottom: 32, fontSize: '1.1rem' }}>
 Select a folder containing images to crop them all at once with the same crop frame.
