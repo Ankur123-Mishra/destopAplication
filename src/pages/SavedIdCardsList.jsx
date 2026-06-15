@@ -1928,15 +1928,14 @@ async function buildPreviewFrontAndBackJpegFiles(
   }
   for (let i = 0; i < cards.length; i++) {
     files.push({
-      // 01/02 so default name-sorted folder views list front before back (…_back… sorts before …_front…)
-      filename: `${bases[i]}_01_front.jpg`,
+      filename: `${bases[i]}_front.jpg`,
       ...frontPayloads[i],
     });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_02_back.jpg`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_back.jpg`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -2326,12 +2325,12 @@ async function buildPreviewFrontAndBackPngFiles(
     );
   }
   for (let i = 0; i < cards.length; i++) {
-    files.push({ filename: `${bases[i]}_01_front.png`, ...frontPayloads[i] });
+    files.push({ filename: `${bases[i]}_front.png`, ...frontPayloads[i] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_02_back.png`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_back.png`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
