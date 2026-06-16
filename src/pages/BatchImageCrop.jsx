@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import Header from '../components/Header';
+import BatchCropIcon from '../components/BatchCropIcon';
 
 const STEPS = {
     SELECT_FOLDER: 1,
@@ -763,9 +764,10 @@ export default function BatchImageCrop() {
             y: completedCrop.y
         };
 
-        const allCropped = images.map((imagePath) => ({ imagePath, crop: cropSnapshot }));
-        setCroppedImages(allCropped);
+        setCroppedImages([]);
         setProcessing(true);
+        setProgress(0);
+        setProcessedCount(0);
 
         (async () => {
             try {
@@ -773,29 +775,31 @@ export default function BatchImageCrop() {
                     window.clearTimeout(saveDrainTimeoutRef.current);
                     saveDrainTimeoutRef.current = null;
                 }
-                // Visually step through images while we queue all saves.
+                saveBufferRef.current.clear();
+
+                // Crop one image at a time so UI progress stays in sync with actual work.
                 for (let i = 0; i < images.length; i += 1) {
                     if (autoCropCancelledRef.current) return;
 
-                    // Update UI to show current image.
                     setCurrentImageIndex(i);
                     const imagePath = images[i];
                     if (imagePath) {
                         setPreviewImage(`file://${imagePath}`);
                     }
 
-                    // Queue save for this image.
-                    scheduleImageSave(i, cropSnapshot);
-
-                    // Small delay so the user can see images change.
                     // eslint-disable-next-line no-await-in-loop
-                    await new Promise((resolve) => setTimeout(resolve, 80));
+                    await saveCroppedImageAtIndex(i, cropSnapshot);
+
+                    setCroppedImages((prev) => {
+                        const next = [...prev];
+                        next[i] = { imagePath: images[i], crop: cropSnapshot };
+                        return next;
+                    });
+                    const doneCount = i + 1;
+                    setProcessedCount(doneCount);
+                    setProgress(Math.round((doneCount / images.length) * 100));
                 }
-                runSaveDrain();
-                await waitForAllSaves();
                 if (autoCropCancelledRef.current) return;
-                setProcessedCount(images.length);
-                setProgress(100);
                 setStep(STEPS.COMPLETE);
             } catch (err) {
                 console.error('Auto batch crop failed:', err);
@@ -1082,7 +1086,9 @@ export default function BatchImageCrop() {
                 {/* Step 1: Select Folder */}
                 {step === STEPS.SELECT_FOLDER && (
                     <div className="card" style={{ padding: 48, textAlign: 'center' }}>
-                        <div style={{ fontSize: '4rem', marginBottom: 24 }}>✂️</div>
+                        <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'center' }}>
+                            <BatchCropIcon size="5rem" style={{ color: 'var(--accent, #60a5fa)' }} />
+                        </div>
                         <h2 style={{ marginBottom: 16 }}>Batch Image Crop</h2>
                         <p className="text-muted" style={{ marginBottom: 32, fontSize: '1.1rem' }}>
                             Select a folder containing images to crop them all at once with the same crop frame.
@@ -1251,21 +1257,47 @@ export default function BatchImageCrop() {
                             </label>
                         </div>
                         {cropMode === 'auto' && (
-                            <p
-                                className="text-muted"
-                                style={{
-                                    marginBottom: 16,
-                                    padding: '12px 14px',
-                                    borderRadius: 8,
-                                    background: 'rgba(46, 204, 113, 0.08)',
-                                    border: '1px solid rgba(46, 204, 113, 0.25)',
-                                    fontSize: '0.95rem'
-                                }}
-                            >
-                                {processing
-                                    ? 'Cropping and saving all images…'
-                                    : 'Loading the first image, then all images will be cropped with the same area automatically.'}
-                            </p>
+                            <div style={{ marginBottom: 16 }}>
+                                <p
+                                    className="text-muted"
+                                    style={{
+                                        margin: 0,
+                                        padding: '12px 14px',
+                                        borderRadius: 8,
+                                        background: 'rgba(46, 204, 113, 0.08)',
+                                        border: '1px solid rgba(46, 204, 113, 0.25)',
+                                        fontSize: '0.95rem'
+                                    }}
+                                >
+                                    {processing
+                                        ? `Cropping image ${currentImageIndex + 1} of ${images.length}…`
+                                        : 'Loading the first image, then all images will be cropped with the same area automatically.'}
+                                </p>
+                                {processing && (
+                                    <div style={{ marginTop: 12 }}>
+                                        <div style={{
+                                            width: '100%',
+                                            height: 10,
+                                            background: 'rgba(255,255,255,0.1)',
+                                            borderRadius: 5,
+                                            overflow: 'hidden'
+                                        }}>
+                                            <div
+                                                style={{
+                                                    width: `${progress}%`,
+                                                    height: '100%',
+                                                    background: 'linear-gradient(90deg, #3498db, #2ecc71)',
+                                                    transition: 'width 0.2s ease',
+                                                    borderRadius: 5
+                                                }}
+                                            />
+                                        </div>
+                                        <p className="text-muted" style={{ margin: '8px 0 0', fontSize: '0.85rem' }}>
+                                            {processedCount} of {images.length} cropped ({progress}%)
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
                         )}
                         <div
                             style={{
@@ -1575,9 +1607,16 @@ export default function BatchImageCrop() {
                                         Image {currentImageIndex + 1} of {images.length}
                                     </p>
                                     <p style={{ margin: 0, fontSize: '0.8rem', color: '#d1d5db' }}>
-                                        {croppedImages.filter(img => img).length} image{croppedImages.filter(img => img).length !== 1 ? 's' : ''} cropped
+                                        {cropMode === 'auto' && processing
+                                            ? `${processedCount} of ${images.length} cropped`
+                                            : `${croppedImages.filter(img => img).length} image${croppedImages.filter(img => img).length !== 1 ? 's' : ''} cropped`}
                                     </p>
-                                    {pendingSaveCount > 0 && (
+                                    {cropMode === 'auto' && processing && (
+                                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af' }}>
+                                            Cropping…
+                                        </p>
+                                    )}
+                                    {cropMode !== 'auto' && pendingSaveCount > 0 && (
                                         <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af' }}>
                                             Saving ({pendingSaveCount})
                                         </p>

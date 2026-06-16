@@ -18,6 +18,7 @@ export const ID_CARD_FONT_FAMILY_OPTIONS = [
   { value: 'arial', label: 'Arial' },
   { value: 'arial-black', label: 'Arial Black' },
   { value: 'arial-rounded', label: 'Arial Rounded MT Bold' },
+  { value: 'helvetica', label: 'Helvetica' },
   { value: 'helvetica-neue', label: 'Helvetica Neue' },
   { value: 'segoe', label: 'Segoe UI' },
   { value: 'calibri', label: 'Calibri' },
@@ -69,12 +70,48 @@ export const ID_CARD_FONT_FAMILY_OPTIONS = [
   { value: 'ubuntu-italic', label: 'Ubuntu Italic' },
 ];
 
+/** Legacy / label values saved on older templates → canonical dropdown keys */
+const FONT_FAMILY_ALIASES = {
+  Helvetica: 'helvetica',
+  'Helvetica Neue': 'helvetica-neue',
+  'Agency FB': 'agency-fb',
+  'Agency FB Bold': 'agency-fb-bold',
+  'Avant Garde': 'avant-garde',
+  Ubuntu: 'ubuntu-regular',
+  'Ubuntu Regular': 'ubuntu-regular',
+  'Ubuntu Bold': 'ubuntu-bold',
+  'Ubuntu Condensed': 'ubuntu-condensed',
+  'Ubuntu Light': 'ubuntu-light',
+  'Ubuntu Light Italic': 'ubuntu-light-italic',
+  'Ubuntu Medium': 'ubuntu-medium',
+  'Ubuntu Medium Italic': 'ubuntu-medium-italic',
+  'Ubuntu Italic': 'ubuntu-italic',
+};
+
+/** Weight/style tied to a font key (CSS uses one family + weight, not fake family names). */
+const FONT_FAMILY_VARIANT = {
+  'agency-fb-bold': { fontWeight: '700' },
+  'avant-garde-medium': { fontWeight: '500' },
+  'avant-garde-medium-italic': { fontWeight: '500', fontStyle: 'italic' },
+  'avant-garde-demi': { fontWeight: '600' },
+  'avant-garde-demi-italic': { fontWeight: '600', fontStyle: 'italic' },
+  'ubuntu-regular': { fontWeight: '400' },
+  'ubuntu-bold': { fontWeight: '700' },
+  'ubuntu-condensed': { fontWeight: '400' },
+  'ubuntu-light': { fontWeight: '300' },
+  'ubuntu-light-italic': { fontWeight: '300', fontStyle: 'italic' },
+  'ubuntu-medium': { fontWeight: '500' },
+  'ubuntu-medium-italic': { fontWeight: '500', fontStyle: 'italic' },
+  'ubuntu-italic': { fontWeight: '400', fontStyle: 'italic' },
+};
+
 const FONT_FAMILY_STACKS = {
   'system-ui':
     'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   arial: 'Arial, Helvetica, sans-serif',
   'arial-black': '"Arial Black", Arial, Helvetica, sans-serif',
   'arial-rounded': '"Arial Rounded MT Bold", "Helvetica Rounded", Arial, sans-serif',
+  helvetica: 'Helvetica, "Helvetica Neue", Arial, sans-serif',
   'helvetica-neue': '"Helvetica Neue", Helvetica, Arial, sans-serif',
   segoe: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
   calibri: 'Calibri, "Segoe UI", Candara, Verdana, sans-serif',
@@ -90,19 +127,20 @@ const FONT_FAMILY_STACKS = {
   courier: '"Courier New", Courier, monospace',
   comic: '"Comic Sans MS", "Comic Sans", cursive',
   impact: 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
-  'agency-fb': '"Agency FB", "AgencyFB", "Arial Narrow", sans-serif',
-  'agency-fb-bold': '"Agency FB Bold", "Agency FB", "Arial Narrow", sans-serif',
+  'agency-fb': '"Agency FB", AgencyFB, "Arial Narrow", sans-serif',
+  'agency-fb-bold': '"Agency FB", AgencyFB, "Arial Narrow", sans-serif',
   algerian: 'Algerian, "Times New Roman", serif',
   arlrdbd: '"Arial Rounded MT Bold", "Helvetica Rounded", Arial, sans-serif',
-  'avant-garde': '"ITC Avant Garde Gothic", "Avant Garde", CenturyGothic, "Arial Rounded MT Bold", sans-serif',
+  'avant-garde':
+    '"ITC Avant Garde Gothic", "Avant Garde Gothic", "Avant Garde", CenturyGothic, sans-serif',
   'avant-garde-medium':
-    '"ITC Avant Garde Gothic", "ITC Avant Garde Gothic Medium", "Avant Garde", CenturyGothic, sans-serif',
+    '"ITC Avant Garde Gothic Medium", "ITC Avant Garde Gothic", "Avant Garde", CenturyGothic, sans-serif',
   'avant-garde-medium-italic':
-    '"ITC Avant Garde Gothic", "ITC Avant Garde Gothic Medium", "Avant Garde", CenturyGothic, sans-serif',
+    '"ITC Avant Garde Gothic Medium", "ITC Avant Garde Gothic", "Avant Garde", CenturyGothic, sans-serif',
   'avant-garde-demi':
-    '"ITC Avant Garde Gothic", "ITC Avant Garde Gothic Demi", "Avant Garde", CenturyGothic, sans-serif',
+    '"ITC Avant Garde Gothic Demi", "ITC Avant Garde Gothic", "Avant Garde", CenturyGothic, sans-serif',
   'avant-garde-demi-italic':
-    '"ITC Avant Garde Gothic", "ITC Avant Garde Gothic Demi", "Avant Garde", CenturyGothic, sans-serif',
+    '"ITC Avant Garde Gothic Demi", "ITC Avant Garde Gothic", "Avant Garde", CenturyGothic, sans-serif',
   bahnschrift: 'Bahnschrift, "Segoe UI", Arial, sans-serif',
   'raj-07-4': '"RAJ 07_4", "RAJ 07 4", serif',
   'raj-47-2': '"RAJ 47_2", "RAJ 47 2", serif',
@@ -120,21 +158,54 @@ const FONT_FAMILY_STACKS = {
   souveni3: '"SOUVENI3", "Souvenir", serif',
   souvenir: '"SOUVENIR", "Souvenir", serif',
   souvenirlctteedem: '"SouvenirlctTEEdem", "Souvenir LT", "Souvenir", serif',
-  'ubuntu-regular': '"Ubuntu", "Ubuntu Regular", sans-serif',
-  'ubuntu-bold': '"Ubuntu Bold", "Ubuntu", sans-serif',
+  'ubuntu-regular': '"Ubuntu", sans-serif',
+  'ubuntu-bold': '"Ubuntu", sans-serif',
   'ubuntu-condensed': '"Ubuntu Condensed", "Ubuntu", sans-serif',
-  'ubuntu-light': '"Ubuntu Light", "Ubuntu", sans-serif',
-  'ubuntu-light-italic': '"Ubuntu Light Italic", "Ubuntu Light", "Ubuntu", sans-serif',
-  'ubuntu-medium': '"Ubuntu Medium", "Ubuntu", sans-serif',
-  'ubuntu-medium-italic': '"Ubuntu Medium Italic", "Ubuntu Medium", "Ubuntu", sans-serif',
-  'ubuntu-italic': '"Ubuntu Italic", "Ubuntu", sans-serif',
+  'ubuntu-light': '"Ubuntu", sans-serif',
+  'ubuntu-light-italic': '"Ubuntu", sans-serif',
+  'ubuntu-medium': '"Ubuntu", sans-serif',
+  'ubuntu-medium-italic': '"Ubuntu", sans-serif',
+  'ubuntu-italic': '"Ubuntu", sans-serif',
 };
+
+export function normalizeFontFamilyKey(raw) {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  if (FONT_FAMILY_STACKS[s]) return s;
+  if (FONT_FAMILY_ALIASES[s]) return FONT_FAMILY_ALIASES[s];
+  return s;
+}
 
 export function fontFamilyCssForElement(el) {
   if (el?.type !== 'text') return undefined;
-  const key = el.fontFamily;
-  if (key == null || key === '') return undefined;
+  const key = normalizeFontFamilyKey(el.fontFamily);
+  if (!key) return undefined;
   return FONT_FAMILY_STACKS[key];
+}
+
+function resolveTypographyWeight(el, variant) {
+  const bold = isTextElementBold(el);
+  if (variant?.fontWeight != null) {
+    const base = variant.fontWeight;
+    if (bold && (base === '400' || base === 400 || base === 'normal')) return '700';
+    return String(base);
+  }
+  if (bold) return el.fontWeight || '700';
+  return el.fontWeight || '400';
+}
+
+function resolveTypographyStyle(el, variant) {
+  if (el.fontStyle === 'italic') return 'italic';
+  if (variant?.fontStyle === 'italic') return 'italic';
+  return 'normal';
+}
+
+/** True when the chosen font family key carries its own weight (do not override with auto-fit bold tweak). */
+export function fontFamilySpecifiesWeight(el) {
+  if (el?.type !== 'text') return false;
+  const key = normalizeFontFamilyKey(el.fontFamily);
+  return Boolean(key && FONT_FAMILY_VARIANT[key]?.fontWeight != null);
 }
 
 /** Default text box width % when an element omits width */
@@ -154,11 +225,12 @@ export function getCanvasTextEffectiveFontSizePx(el, _widthPercent) {
 /** CSS object for text elements — editor canvas and IdCardRenderer must match */
 export function getTextTypographyStyle(el) {
   if (el.type !== 'text') return {};
-  const bold = isTextElementBold(el);
+  const key = normalizeFontFamilyKey(el.fontFamily);
+  const variant = key ? FONT_FAMILY_VARIANT[key] : undefined;
   const fontFamily = fontFamilyCssForElement(el);
   return {
-    fontWeight: bold ? el.fontWeight || '700' : el.fontWeight || '400',
-    fontStyle: el.fontStyle === 'italic' ? 'italic' : 'normal',
+    fontWeight: resolveTypographyWeight(el, variant),
+    fontStyle: resolveTypographyStyle(el, variant),
     textDecoration: el.textDecoration === 'underline' ? 'underline' : 'none',
     ...(fontFamily ? { fontFamily } : {}),
   };

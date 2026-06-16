@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { clearAuth, getToken, getStoredUser } from '../api/authStorage';
-import { syncAllBackgroundData } from '../utils/syncManager';
+import { syncAllBackgroundData, syncSingleSchool } from '../utils/syncManager';
 
 const AppContext = createContext(null);
 
@@ -67,10 +67,20 @@ export function AppProvider({ children }) {
   // Global Sync Tracker
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [syncingSchoolId, setSyncingSchoolId] = useState(null);
+
+  const finishSyncUi = () => {
+    setTimeout(() => {
+      setIsSyncing(false);
+      setSyncingSchoolId(null);
+      setSyncMessage("");
+    }, 4000);
+  };
 
   const startGlobalSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
+    setSyncingSchoolId(null);
     setSyncMessage("Initializing sync...");
     try {
       await syncAllBackgroundData((msg) => {
@@ -79,10 +89,24 @@ export function AppProvider({ children }) {
     } catch (err) {
       setSyncMessage("Sync completed with errors");
     } finally {
-      setTimeout(() => {
-        setIsSyncing(false);
-        setSyncMessage("");
-      }, 4000);
+      finishSyncUi();
+    }
+  };
+
+  const startSingleProjectSync = async (localSchoolId) => {
+    if (isSyncing) return { success: false, error: 'Sync already in progress' };
+    setIsSyncing(true);
+    setSyncingSchoolId(localSchoolId);
+    setSyncMessage('Initializing sync...');
+    try {
+      return await syncSingleSchool(localSchoolId, (msg) => {
+        setSyncMessage(msg);
+      });
+    } catch (err) {
+      setSyncMessage(err?.message || 'Sync failed');
+      return { success: false, error: err?.message || 'Sync failed' };
+    } finally {
+      finishSyncUi();
     }
   };
 
@@ -197,7 +221,9 @@ export function AppProvider({ children }) {
     getAllSavedIdCards,
     isSyncing,
     syncMessage,
+    syncingSchoolId,
     startGlobalSync,
+    startSingleProjectSync,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

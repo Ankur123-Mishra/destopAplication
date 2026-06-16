@@ -269,6 +269,7 @@ function mergeExtraFieldsFromStudent(student) {
   fill("gender", student.gender);
   fill("bloodGroup", student.bloodGroup);
   fill("house", student.house);
+  fill("bus", student.bus);
   fill("marking", student.marking);
   fill("status", student.status);
   fill("fatherPrimaryContact", student.fatherPrimaryContact);
@@ -326,6 +327,7 @@ function buildEditStudentDraft(student) {
       extraFields.motherPrimaryContact,
       extraFields.motherMobile,
     ),
+    bus: firstNonEmptyValue(student.bus, extraFields.bus),
   };
 }
 
@@ -360,6 +362,7 @@ const STUDENT_SAVE_EXTRA_SYNC_KEYS = [
   "motherMobile",
   "uniqueCode",
   "house",
+  "bus",
   "marking",
   "className",
   "section",
@@ -1928,15 +1931,14 @@ async function buildPreviewFrontAndBackJpegFiles(
   }
   for (let i = 0; i < cards.length; i++) {
     files.push({
-      // 01/02 so default name-sorted folder views list front before back (…_back… sorts before …_front…)
-      filename: `${bases[i]}_01_front.jpg`,
+      filename: `${bases[i]}_front.jpg`,
       ...frontPayloads[i],
     });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_02_back.jpg`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_back.jpg`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -2326,12 +2328,12 @@ async function buildPreviewFrontAndBackPngFiles(
     );
   }
   for (let i = 0; i < cards.length; i++) {
-    files.push({ filename: `${bases[i]}_01_front.png`, ...frontPayloads[i] });
+    files.push({ filename: `${bases[i]}_front.png`, ...frontPayloads[i] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   for (let t = 0; t < backTasks.length; t++) {
     const { i } = backTasks[t];
-    files.push({ filename: `${bases[i]}_02_back.png`, ...backPayloads[t] });
+    files.push({ filename: `${bases[i]}_back.png`, ...backPayloads[t] });
   }
   if (shouldAbort()) throw new ExportCancelledError();
   return files;
@@ -3592,6 +3594,7 @@ export default function SavedIdCardsList({
       "photoNo",
       "fatherPrimaryContact",
       "motherPrimaryContact",
+      "bus",
     ]);
     const skipKeys = new Set([
       "id",
@@ -3851,6 +3854,7 @@ export default function SavedIdCardsList({
             photoNo: cleanData.photoNo || "",
             uniqueCode: cleanData.uniqueCode || "",
             house: cleanData.house || "",
+            bus: cleanData.bus || "",
             marking: cleanData.marking || "",
             extraFields:
               cleanData.extraFields && typeof cleanData.extraFields === "object"
@@ -3965,6 +3969,7 @@ export default function SavedIdCardsList({
       dateOfBirth: "",
       photoNo: "",
       house: "",
+      bus: "",
     });
     setAddStudentOverlayOpen(true);
   }, [isAllSchoolStudents, classId, clearNewStudentPhotoSelection]);
@@ -4007,6 +4012,7 @@ export default function SavedIdCardsList({
           photoNo: newStudentDraft.photoNo,
           uniqueCode: "",
           house: newStudentDraft.house,
+          bus: newStudentDraft.bus,
           marking: "",
           extraFields: {},
         });
@@ -4028,6 +4034,7 @@ export default function SavedIdCardsList({
           photoNo: newStudentDraft.photoNo || "",
           uniqueCode: "",
           house: newStudentDraft.house || "",
+          bus: newStudentDraft.bus || "",
           marking: "",
           extraFields: {},
           address: newStudentDraft.address || "",
@@ -6697,7 +6704,11 @@ export default function SavedIdCardsList({
               <button
                 type="button"
                 className="saved-idcard-item saved-idcard-class-item"
-                onClick={() => navigate(`${basePath}/school/${school._id}`)}
+                onClick={() =>
+                  navigate(`${basePath}/school/${school._id}`, {
+                    state: { preferredOfflineMode: viewMode !== "online" },
+                  })
+                }
               >
                 <span className="saved-idcard-name">
                   {school.schoolName || school.schoolCode || school._id}
@@ -6821,19 +6832,21 @@ export default function SavedIdCardsList({
           </button>
           {isViewTemplateFlow && (
             <>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() =>
-                  // Skip wizard "Students & photos" — go straight to template selection.
-                  navigate(`/view-template/wizard/template/${schoolId}/all`, {
-                    state: { preferredOfflineMode: viewMode !== "online" },
-                  })
-                }
-                style={{ padding: "10px 16px" }}
-              >
-                Create Template
-              </button>
+              {!isOnlineMode && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() =>
+                    // Skip wizard "Students & photos" — go straight to template selection.
+                    navigate(`/view-template/wizard/template/${schoolId}/all`, {
+                      state: { preferredOfflineMode: viewMode !== "online" },
+                    })
+                  }
+                  style={{ padding: "10px 16px" }}
+                >
+                  Create Template
+                </button>
+              )}
               {showEditTemplateButton ? (
                 <button
                   type="button"
@@ -8131,6 +8144,35 @@ export default function SavedIdCardsList({
                       </div>
                     </div>
                     <div>
+                      <label style={lab}>Bus</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Bus No. 13, Self"
+                        value={
+                          editStudentData.bus ||
+                          editStudentData.extraFields?.bus ||
+                          ""
+                        }
+                        onChange={(e) =>
+                          setEditStudentData((prev) => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              bus: e.target.value,
+                              extraFields: {
+                                ...(prev.extraFields && typeof prev.extraFields === "object"
+                                  ? prev.extraFields
+                                  : {}),
+                                bus: e.target.value,
+                              },
+                            };
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
                       <label style={lab}>Email</label>
                       <input
                         type="email"
@@ -8620,6 +8662,22 @@ export default function SavedIdCardsList({
                           style={inp}
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label style={lab}>Bus</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Bus No. 13, Self"
+                        value={d.bus || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            bus: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
                     </div>
                     <div>
                       <label style={lab}>Email</label>

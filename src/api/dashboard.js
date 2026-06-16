@@ -49,23 +49,23 @@ function mapStudentRowForApi(s, schoolRef, retainPhotos = true) {
   const row = retainPhotos
     ? { ...source, _id: source.id, school: schoolRef, schoolId: schoolRef }
     : (() => {
-        const {
-          photoUrl,
-          colorCodeImageUrl,
-          colorCodePhotoUrl,
-          template,
-          ...rest
-        } = source;
-        return {
-          ...rest,
-          _id: source.id,
-          school: schoolRef,
-          schoolId: schoolRef,
-          hasPhoto: typeof photoUrl === 'string' && photoUrl.trim() !== '',
-          hasColorCodeImage: Boolean(getStudentColorCodeImageUrl(source)),
-          ...(template ? { template } : {}),
-        };
-      })();
+      const {
+        photoUrl,
+        colorCodeImageUrl,
+        colorCodePhotoUrl,
+        template,
+        ...rest
+      } = source;
+      return {
+        ...rest,
+        _id: source.id,
+        school: schoolRef,
+        schoolId: schoolRef,
+        hasPhoto: typeof photoUrl === 'string' && photoUrl.trim() !== '',
+        hasColorCodeImage: Boolean(getStudentColorCodeImageUrl(source)),
+        ...(template ? { template } : {}),
+      };
+    })();
   if (row.template) {
     row.template = slimStudentTemplateField(row.template);
   }
@@ -274,11 +274,11 @@ export async function getTemplatesStatus(schoolId, classId, options = {}) {
   const studentsList = await getStudentsForSchoolClassInOrder(schoolId, classId).toArray();
   const withTemplates = studentsList.filter(s => s.hasTemplate).length;
   const withoutTemplates = studentsList.length - withTemplates;
-  return { 
-    message: "Offline statistics", 
-    total: studentsList.length, 
-    withTemplates, 
-    withoutTemplates, 
+  return {
+    message: "Offline statistics",
+    total: studentsList.length,
+    withTemplates,
+    withoutTemplates,
     students: studentsList.map((s) =>
       finalizeListStudentRow(mapStudentRowForApi(s, schoolRef, retainPhotos), retainPhotos),
     ),
@@ -344,6 +344,7 @@ export async function createStudent(payload) {
     photoNo,
     uniqueCode,
     house,
+    bus,
     marking,
     extraFields,
     studentId: explicitStudentIdIn,
@@ -407,6 +408,7 @@ export async function createStudent(payload) {
     fatherName: String(fatherName ?? "").trim(),
     motherName: String(motherName ?? "").trim(),
     house: String(house ?? "").trim(),
+    bus: String(bus ?? "").trim(),
     marking: String(marking ?? "").trim(),
     extraFields:
       extraFields && typeof extraFields === "object" ? extraFields : {},
@@ -415,12 +417,12 @@ export async function createStudent(payload) {
     hasTemplate: Boolean(sharedTpl),
     ...(sharedTpl
       ? {
-          template: {
-            templateId: sharedTpl.templateId,
-            name: sharedTpl.name,
-            status: sharedTpl.name,
-          },
-        }
+        template: {
+          templateId: sharedTpl.templateId,
+          name: sharedTpl.name,
+          status: sharedTpl.name,
+        },
+      }
       : {}),
   };
 
@@ -596,7 +598,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
     const rest = parts.slice(1).map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
     return `${first}${rest.join('')}`;
   };
-  
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -607,7 +609,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-        
+
         if (typeof onUploadProgress === 'function') onUploadProgress(60);
 
         // Map parsed rows to classes and students
@@ -688,6 +690,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             'mothermobile',
             'motherphone',
             'house',
+            'bus',
+            'busno',
+            'busnumber',
             'marking',
             /* Badge-style sheets: role/title column (common spelling in school exports) */
             'monitar',
@@ -706,9 +711,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
           const row = json[sheetRowIndex];
           const clsStr = String(getCol(row, "Class Name", "ClassName", "Class", "STD", "Course", "Course Name", "Program", "Program Name", "Stream")).trim();
           const divStr = String(getCol(row, "Division", "Section")).trim();
-          
+
           if (!clsStr && !divStr && !getCol(row, "Student Name")) continue; // Skip empty rows
-          
+
           const className = clsStr ? titleCaseWords(clsStr) : "Class";
           const section = divStr ? titleCaseWords(divStr) : "";
 
@@ -857,14 +862,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'Mother Mobile',
               'Mother Phone',
             ),
-            house: (() => {
-              const t = String(getCol(row, 'House')).trim();
-              return t ? titleCaseWords(t) : '';
-            })(),
-            marking: (() => {
-              const t = String(getCol(row, 'Marking')).trim();
-              return t ? titleCaseWords(t) : '';
-            })(),
+            house: getCol(row, 'House'),
+            bus: getCol(row, 'Bus', 'Bus No', 'BusNo', 'Bus Number', 'BusNumber'),
+            marking: getCol(row, 'Marking'),
             ...(colorCodeRaw ? { colorCodeKey: normalizeColorCodeBasename(colorCodeRaw) } : {}),
             extraFields,
             status: 'Active',

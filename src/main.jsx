@@ -4,6 +4,7 @@ import { HashRouter } from 'react-router-dom';
 import App from './App';
 import { ensureUploadedTemplatesReady } from './data/uploadedTemplatesStorage';
 import './index.css';
+import './styles/idCardFonts.css';
 
 const rootEl = document.getElementById('root');
 

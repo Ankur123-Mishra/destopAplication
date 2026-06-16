@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { getParentCollectionEnabled } from '../api/parentCollection';
+import BatchCropIcon from './BatchCropIcon';
 
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -10,7 +11,7 @@ const links = [
   // { to: '/class-id-cards', label: 'Class-wise ID Cards', icon: '🪪' },
   // { to: '/saved-id-cards', label: 'Saved ID Cards', icon: '🪪' },
   { to: '/view-template', label: 'View Template', icon: '🧩' },
-  { to: '/batch-image-crop', label: 'Batch Image Crop', icon: '✂️' },
+  { to: '/batch-image-crop', label: 'Batch Image Crop', icon: <BatchCropIcon size="1.4rem" /> },
 
   // { to: '/corrections', label: 'Corrections', icon: '✏️' },
 
