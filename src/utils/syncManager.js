@@ -82,6 +82,7 @@ const SYNC_STUDENT_ROOT_KEYS_IN_BASE_COLUMNS = new Set([
   'motherPrimaryContact',
   'motherPhone',
   'house',
+  'bus',
   'marking',
   'colorCodeKey',
 ]);
@@ -184,6 +185,7 @@ export async function syncSingleSchool(localSchoolId, onProgress) {
         'Mother Name': student.motherName || '',
         'Mother Primary Contact': motherContact,
         House: student.house || '',
+        Bus: student.bus || '',
         Marking: student.marking || '',
         UniqueCode: student.uniqueCode || '',
         ...(colorKey ? { 'Color Code': colorKey } : {}),

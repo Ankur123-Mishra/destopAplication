@@ -5,6 +5,7 @@ import {
   getCanvasTextEffectiveFontSizePx,
   getTextTypographyStyle,
   getTextBoxLayoutStyles,
+  fontFamilySpecifiesWeight,
 } from '../utils/idCardTextTypography';
 
 /** Empty string / null — try next alias (API + template dataField names differ). */
@@ -90,6 +91,7 @@ function resolveCanvasDataField(data, fieldKey, label) {
     fatherName: ['fatherName', 'fathersName'],
     motherName: ['motherName', 'mothersName'],
     house: ['house', 'houseName', 'transport', 'route'],
+    bus: ['bus', 'busNo', 'busNumber', 'busRoute'],
     fatherPrimaryContact: [
       'fatherPrimaryContact',
       'fatherMobile',
@@ -216,7 +218,9 @@ function CanvasTemplateTextElement({ el, textContent, wrapMultiline, textBoxWCla
   }, [applyAutoFit]);
 
   const scaleOrigin = getAutoFitScaleOrigin(textBoxLayout.content.textAlign);
-  const safeFontWeight = getSingleLineSafeFontWeight(el, wrapMultiline);
+  const safeFontWeight = fontFamilySpecifiesWeight(el)
+    ? undefined
+    : getSingleLineSafeFontWeight(el, wrapMultiline);
   const safeFontSizePx = wrapMultiline ? fitState.fontSizePx : Math.max(3, fitState.fontSizePx - 0.5);
   const safeTop = wrapMultiline ? `${el.y}%` : `calc(${el.y}% + 0.8px)`;
 

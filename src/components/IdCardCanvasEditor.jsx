@@ -9,6 +9,7 @@ import {
   TEXT_IN_BOX_ALIGN_OPTIONS,
   ID_CARD_FONT_FAMILY_OPTIONS,
   isTextElementBold,
+  normalizeFontFamilyKey,
 } from '../utils/idCardTextTypography';
 import './IdCardCanvasEditor.css';
 
@@ -32,6 +33,7 @@ const FIELD_DEFS = [
   { key: 'gender', label: 'Gender' },
   { key: 'bloodGroup', label: 'Blood Group' },
   { key: 'house', label: 'House' },
+  { key: 'bus', label: 'Bus' },
   { key: 'marking', label: 'Marking' },
   { key: 'photoNo', label: 'Photo No' },
 ];
@@ -1117,6 +1119,7 @@ export default function IdCardCanvasEditor({
       gender: getFieldValue('gender') || '',
       bloodGroup: getFieldValue('bloodGroup') || '',
       house: getFieldValue('house') || '',
+      bus: getFieldValue('bus') || '',
       marking: getFieldValue('marking') || '',
       photoNo: getFieldValue('photoNo') || '',
       extraFields,
@@ -1596,7 +1599,7 @@ export default function IdCardCanvasEditor({
                     <select
                       id="idcard-font-family-select"
                       className="input-field"
-                      value={selectedEl.fontFamily ?? ''}
+                      value={normalizeFontFamilyKey(selectedEl.fontFamily)}
                       onChange={(e) => {
                         const v = e.target.value;
                         setElements((prev) =>
@@ -1607,7 +1610,7 @@ export default function IdCardCanvasEditor({
                               delete next.fontFamily;
                               return next;
                             }
-                            return { ...x, fontFamily: v };
+                            return { ...x, fontFamily: normalizeFontFamilyKey(v) || v };
                           })
                         );
                       }}

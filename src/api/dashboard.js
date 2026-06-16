@@ -332,6 +332,7 @@ export async function createStudent(payload) {
     photoNo,
     uniqueCode,
     house,
+    bus,
     marking,
     extraFields,
     studentId: explicitStudentIdIn,
@@ -395,6 +396,7 @@ export async function createStudent(payload) {
     fatherName: String(fatherName ?? "").trim(),
     motherName: String(motherName ?? "").trim(),
     house: String(house ?? "").trim(),
+    bus: String(bus ?? "").trim(),
     marking: String(marking ?? "").trim(),
     extraFields:
       extraFields && typeof extraFields === "object" ? extraFields : {},
@@ -675,6 +677,9 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             'mothermobile',
             'motherphone',
             'house',
+            'bus',
+            'busno',
+            'busnumber',
             'marking',
             /* Badge-style sheets: role/title column (common spelling in school exports) */
             'monitar',
@@ -858,6 +863,7 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
               'Mother Phone',
             ),
             house: getCol(row, 'House'),
+            bus: getCol(row, 'Bus', 'Bus No', 'BusNo', 'Bus Number', 'BusNumber'),
             marking: getCol(row, 'Marking'),
             ...(colorCodeRaw ? { colorCodeKey: normalizeColorCodeBasename(colorCodeRaw) } : {}),
             extraFields,

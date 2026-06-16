@@ -269,6 +269,7 @@ function mergeExtraFieldsFromStudent(student) {
   fill("gender", student.gender);
   fill("bloodGroup", student.bloodGroup);
   fill("house", student.house);
+  fill("bus", student.bus);
   fill("marking", student.marking);
   fill("status", student.status);
   fill("fatherPrimaryContact", student.fatherPrimaryContact);
@@ -326,6 +327,7 @@ function buildEditStudentDraft(student) {
       extraFields.motherPrimaryContact,
       extraFields.motherMobile,
     ),
+    bus: firstNonEmptyValue(student.bus, extraFields.bus),
   };
 }
 
@@ -360,6 +362,7 @@ const STUDENT_SAVE_EXTRA_SYNC_KEYS = [
   "motherMobile",
   "uniqueCode",
   "house",
+  "bus",
   "marking",
   "className",
   "section",
@@ -3591,6 +3594,7 @@ export default function SavedIdCardsList({
       "photoNo",
       "fatherPrimaryContact",
       "motherPrimaryContact",
+      "bus",
     ]);
     const skipKeys = new Set([
       "id",
@@ -3850,6 +3854,7 @@ export default function SavedIdCardsList({
             photoNo: cleanData.photoNo || "",
             uniqueCode: cleanData.uniqueCode || "",
             house: cleanData.house || "",
+            bus: cleanData.bus || "",
             marking: cleanData.marking || "",
             extraFields:
               cleanData.extraFields && typeof cleanData.extraFields === "object"
@@ -3964,6 +3969,7 @@ export default function SavedIdCardsList({
       dateOfBirth: "",
       photoNo: "",
       house: "",
+      bus: "",
     });
     setAddStudentOverlayOpen(true);
   }, [isAllSchoolStudents, classId, clearNewStudentPhotoSelection]);
@@ -4006,6 +4012,7 @@ export default function SavedIdCardsList({
           photoNo: newStudentDraft.photoNo,
           uniqueCode: "",
           house: newStudentDraft.house,
+          bus: newStudentDraft.bus,
           marking: "",
           extraFields: {},
         });
@@ -4027,6 +4034,7 @@ export default function SavedIdCardsList({
           photoNo: newStudentDraft.photoNo || "",
           uniqueCode: "",
           house: newStudentDraft.house || "",
+          bus: newStudentDraft.bus || "",
           marking: "",
           extraFields: {},
           address: newStudentDraft.address || "",
@@ -8136,6 +8144,35 @@ export default function SavedIdCardsList({
                       </div>
                     </div>
                     <div>
+                      <label style={lab}>Bus</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Bus No. 13, Self"
+                        value={
+                          editStudentData.bus ||
+                          editStudentData.extraFields?.bus ||
+                          ""
+                        }
+                        onChange={(e) =>
+                          setEditStudentData((prev) => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              bus: e.target.value,
+                              extraFields: {
+                                ...(prev.extraFields && typeof prev.extraFields === "object"
+                                  ? prev.extraFields
+                                  : {}),
+                                bus: e.target.value,
+                              },
+                            };
+                          })
+                        }
+                        style={inp}
+                      />
+                    </div>
+                    <div>
                       <label style={lab}>Email</label>
                       <input
                         type="email"
@@ -8625,6 +8662,22 @@ export default function SavedIdCardsList({
                           style={inp}
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label style={lab}>Bus</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Bus No. 13, Self"
+                        value={d.bus || ""}
+                        onChange={(e) =>
+                          setNewStudentDraft({
+                            ...d,
+                            bus: e.target.value,
+                          })
+                        }
+                        style={inp}
+                      />
                     </div>
                     <div>
                       <label style={lab}>Email</label>

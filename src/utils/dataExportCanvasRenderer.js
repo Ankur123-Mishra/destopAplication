@@ -10,7 +10,6 @@ import { getUploadedTemplateById } from "../data/uploadedTemplatesStorage";
 import {
   getCanvasTextEffectiveFontSizePx,
   getTextTypographyStyle,
-  isTextElementBold,
   fontFamilyCssForElement,
 } from "./idCardTextTypography";
 
@@ -158,6 +157,7 @@ export function resolveCanvasDataFieldForExport(data, fieldKey, label) {
     fatherName: ["fatherName", "fathersName"],
     motherName: ["motherName", "mothersName"],
     house: ["house", "houseName", "transport", "route"],
+    bus: ["bus", "busNo", "busNumber", "busRoute"],
     fatherPrimaryContact: [
       "fatherPrimaryContact",
       "fatherMobile",
@@ -419,7 +419,7 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
 
   const typo = getTextTypographyStyle(el);
   const family = fontFamilyCssForElement(el) || "sans-serif";
-  const weight = isTextElementBold(el) ? "bold" : typo.fontWeight || "400";
+  const weight = typo.fontWeight || "400";
   const italic = typo.fontStyle === "italic" ? "italic " : "";
 
   ctx.save();
