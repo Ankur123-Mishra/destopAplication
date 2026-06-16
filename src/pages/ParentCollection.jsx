@@ -357,7 +357,7 @@ export default function ParentCollection() {
 
   async function handleDeleteLink(token) {
     const approved = window.confirm(
-      'PERMANENTLY DELETE this project and all its submitted data? This cannot be undone.'
+      'PERMANENTLY DELETE this school and all its submitted data? This cannot be undone.'
     );
     if (!approved) return;
 
@@ -365,12 +365,12 @@ export default function ParentCollection() {
     setDeletingToken(token);
     try {
       await deleteCollectionLink(token);
-      setFeedback({ type: 'success', message: 'Project and submissions deleted successfully.' });
+      setFeedback({ type: 'success', message: 'School and submissions deleted successfully.' });
       await loadLinks();
       // Also refresh submissions if any were deleted
       await loadSubmissions();
     } catch (err) {
-      setFeedback({ type: 'error', message: err?.message || 'Failed to delete project' });
+      setFeedback({ type: 'error', message: err?.message || 'Failed to delete school' });
     } finally {
       setDeletingToken('');
     }
@@ -500,7 +500,7 @@ export default function ParentCollection() {
               <div className="step-number">1</div>
               <div className="step-content">
                 <strong>Setup Form</strong>
-                <span>Enter project details and select fields you want to collect.</span>
+                <span>Enter school details and select fields you want to collect.</span>
               </div>
             </div>
             <div className="step">
@@ -533,18 +533,19 @@ export default function ParentCollection() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: 16 }}>1. Project Details</h3>
+          <h3 style={{ marginBottom: 16 }}>1. School Details</h3>
           <div className="parent-collection-grid two">
             <label className="parent-collection-field">
-              <span className="input-label">Project Name (for your reference)</span>
+              <span className="input-label">School Name (for your reference)</span>
               <input
                 type="text"
                 className="input-field"
-                placeholder="e.g. Satish Project 1"
+                placeholder="e.g. Delhi Public School"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
                 onBlur={() => setProjectName(toTitleCaseLabel(projectName))}
                 style={{ textTransform: 'capitalize' }}
+                autoComplete="off"
               />
             </label>
             <label className="parent-collection-field">
@@ -557,6 +558,7 @@ export default function ParentCollection() {
                 onChange={(e) => setCollectionSchoolLabel(e.target.value)}
                 onBlur={() => setCollectionSchoolLabel(toTitleCaseLabel(collectionSchoolLabel))}
                 style={{ textTransform: 'capitalize' }}
+                autoComplete="off"
               />
             </label>
           </div>
@@ -642,6 +644,7 @@ export default function ParentCollection() {
                             }
                             className="config-input"
                             style={{ textTransform: 'capitalize' }}
+                            autoComplete="off"
                           />
                         </div>
                         <div className="config-input-group">
@@ -705,7 +708,7 @@ export default function ParentCollection() {
             )}
             {lastCreatedTemplateInfo && (
               <button type="button" className="btn btn-secondary" onClick={() => handleDownloadTemplate(lastCreatedTemplateInfo.fields, lastCreatedTemplateInfo.projectName)}>
-                Download Template
+                Download Excel Format
               </button>
             )}
           </div>
@@ -739,7 +742,7 @@ export default function ParentCollection() {
               <table>
                 <thead>
                   <tr>
-                    <th>Project / Scope</th>
+                    <th>School Name / Scope</th>
                     <th>Details</th>
                     <th>Status</th>
                     <th>Created</th>
@@ -750,7 +753,7 @@ export default function ParentCollection() {
                   {links.map((link) => (
                     <tr key={link._id}>
                       <td>
-                        <div style={{ fontWeight: '500' }}>{link.projectName || 'Unnamed Project'}</div>
+                        <div style={{ fontWeight: '500' }}>{link.projectName || 'Unnamed School'}</div>
                         <div className="text-muted" style={{ fontSize: '11px' }}>{formatLinkScope(link)}</div>
                       </td>
                       <td>{formatFieldsSummary(link.fields)}</td>
@@ -790,9 +793,9 @@ export default function ParentCollection() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => handleDownloadTemplate(link.fields, link.projectName || link.collectionSchoolLabel)}
+                            onClick={() => handleDownloadTemplate(link.fields, link.projectName)}
                           >
-                            Template
+                            Download Excel Format
                           </button>
                           <button
                             type="button"

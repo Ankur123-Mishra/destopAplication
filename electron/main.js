@@ -226,6 +226,20 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.on('close', (e) => {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'question',
+      buttons: ['Yes', 'No'],
+      title: 'Confirm Exit',
+      message: 'Are you sure you want to exit?',
+      defaultId: 1,
+      cancelId: 1,
+    });
+    if (choice === 1) {
+      e.preventDefault();
+    }
+  });
 }
 
 /**
