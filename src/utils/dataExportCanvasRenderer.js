@@ -5,6 +5,7 @@
  * Fabric templates and non-canvas layouts fall back to capture in SavedIdCardsList.
  */
 
+import { API_BASE_URL } from "../api/config";
 import { getTemplateById, getInternalTemplateId } from "../data/idCardTemplates";
 import { getUploadedTemplateById } from "../data/uploadedTemplatesStorage";
 import {
@@ -83,6 +84,40 @@ function getUploadedOrStoredTemplate(card) {
       ? getUploadedTemplateById(card.templateId)
       : null)
   );
+}
+
+function normalizeTemplateImageRef(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") return undefined;
+  return trimmed;
+}
+
+function resolveImageUrl(url) {
+  const normalized = normalizeTemplateImageRef(url);
+  if (!normalized) return undefined;
+  if (
+    normalized.startsWith("http") ||
+    normalized.startsWith("data:") ||
+    normalized.startsWith("blob:")
+  ) {
+    return normalized;
+  }
+  const base = API_BASE_URL.replace(/\/$/, "");
+  return normalized.startsWith("/")
+    ? `${base}${normalized}`
+    : `${base}/${normalized}`;
+}
+
+/** Custom back art only (skip legacy back === front duplicates). */
+function resolveUploadedBackImage(uploadedT) {
+  const front = normalizeTemplateImageRef(uploadedT?.frontImage);
+  const back = normalizeTemplateImageRef(uploadedT?.backImage);
+  if (!back) return undefined;
+  if (front && back === front) return undefined;
+  return resolveImageUrl(back);
 }
 
 function isMissing(v) {
@@ -179,13 +214,24 @@ export function resolveCanvasDataFieldForExport(data, fieldKey, label) {
 }
 
 function formatDateDMY(input) {
-  if (input == null || input === "") return "";
-  const d = input instanceof Date ? input : new Date(input);
-  if (Number.isNaN(d.getTime())) return String(input);
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+  if (!input) return "";
+  if (input instanceof Date && !Number.isNaN(input.getTime())) {
+    const dd = String(input.getDate()).padStart(2, "0");
+    const mm = String(input.getMonth() + 1).padStart(2, "0");
+    const yy = String(input.getFullYear());
+    return `${dd}/${mm}/${yy}`;
+  }
+  const s = String(input).trim();
+  if (!s) return "";
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  const dmy = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (dmy) {
+    const dd = String(dmy[1]).padStart(2, "0");
+    const mm = String(dmy[2]).padStart(2, "0");
+    return `${dd}/${mm}/${dmy[3]}`;
+  }
+  return s;
 }
 
 function buildRendererData(card) {
@@ -237,41 +283,47 @@ export function cardSupportsDataExportRenderer(card) {
 export function cardSupportsDataExportBack(card) {
   if (!card || String(card.templateId || "").startsWith("fabric-")) return false;
   const uploadedT = getUploadedOrStoredTemplate(card);
-  const backImage = uploadedT?.backImage;
-  const backEls = uploadedT?.backElements;
-  return Boolean(
-    backImage && Array.isArray(backEls) && backEls.length > 0,
-  );
+  return Boolean(resolveUploadedBackImage(uploadedT));
 }
 
 function resolveTemplateForSide(card, side) {
   const uploadedT = getUploadedOrStoredTemplate(card);
   if (side === "back") {
-    if (!uploadedT?.backImage || !Array.isArray(uploadedT.backElements)) return null;
-    return {
-      image: uploadedT.backImage,
-      elements: uploadedT.backElements,
-    };
+    const backImage = resolveUploadedBackImage(uploadedT);
+    if (!backImage) return null;
+    const elements = Array.isArray(uploadedT?.backElements)
+      ? uploadedT.backElements
+      : [];
+    return { image: backImage, elements };
   }
   if (
     uploadedT?.frontImage &&
     Array.isArray(uploadedT.elements) &&
     uploadedT.elements.length > 0
   ) {
-    return { image: uploadedT.frontImage, elements: uploadedT.elements };
+    return {
+      image: resolveImageUrl(uploadedT.frontImage) || uploadedT.frontImage,
+      elements: uploadedT.elements,
+    };
   }
   const internalId = getInternalTemplateId(card.templateId);
   const t = getTemplateById(internalId || card.templateId);
-  if (t?.image && t.elements?.length) return { image: t.image, elements: t.elements };
+  if (t?.image && t.elements?.length) {
+    return {
+      image: resolveImageUrl(t.image) || t.image,
+      elements: t.elements,
+    };
+  }
   return null;
 }
 
 function loadImageCached(src) {
-  if (!src) return Promise.reject(new Error("Missing image URL"));
-  const hit = imageCache.get(src);
+  const resolved = resolveImageUrl(src) || src;
+  if (!resolved) return Promise.reject(new Error("Missing image URL"));
+  const hit = imageCache.get(resolved);
   if (hit) return hit;
-  const p = loadImageUncached(src);
-  imageCache.set(src, p);
+  const p = loadImageUncached(resolved);
+  imageCache.set(resolved, p);
   return p;
 }
 
@@ -342,7 +394,17 @@ function drawImageSource(ctx, source, dx, dy, dw, dh, fit = "fill") {
 function canvasToBlob(canvas, mime, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+      (b) => {
+        if (!b || b.size === 0) {
+          reject(
+            new Error(
+              "toBlob failed or produced empty output (tainted canvas?)",
+            ),
+          );
+          return;
+        }
+        resolve(b);
+      },
       mime,
       quality,
     );
@@ -476,9 +538,10 @@ function drawTextElement(ctx, el, textContent, canvasW, canvasH, pixelScale) {
  */
 export async function renderCardSideToCanvas(card, side, options = {}) {
   const tpl = resolveTemplateForSide(card, side);
-  if (!tpl?.image || !tpl.elements?.length) {
+  if (!tpl?.image) {
     throw new Error("No canvas template for side");
   }
+  const elements = Array.isArray(tpl.elements) ? tpl.elements : [];
   const pixelScale = typeof options.pixelScale === "number" ? options.pixelScale : 2;
   const { wMm, hMm } = getCardSizeMm(card);
   const wPx = Math.max(2, Math.round(wMm * MM_TO_CSS_PX * pixelScale));
@@ -501,7 +564,7 @@ export async function renderCardSideToCanvas(card, side, options = {}) {
     const portraits = [];
     const badges = [];
     const rest = [];
-    for (const el of tpl.elements) {
+    for (const el of elements) {
       if (el?.type === "photo") portraits.push(el);
       else if (el?.type === "colorCode") badges.push(el);
       else rest.push(el);
