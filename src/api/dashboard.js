@@ -746,24 +746,10 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             ),
           ).trim();
           const admissionNoVal = String(
-            getCol(row, 'RegNo', 'Admission No', 'AdmissionNo', 'Admission Number', 'Sr.No', 'Sr No'),
+            getCol(row, 'RegNo', 'Admission No', 'AdmissionNo', 'Admission Number'),
           ).trim();
           const rollNoVal = String(
-            getCol(
-              row,
-              'Roll No',
-              'RollNo',
-              'S. No.',
-              'S.No.',
-              'S No',
-              'Sr. No.',
-              'Sr No',
-              'SrNo',
-              'Sirial',
-              'Serial',
-              'Serial No',
-              'SerialNo',
-            ),
+            getCol(row, 'Roll No', 'RollNo', 'Roll Number', 'RollNumber','Roll No.'),
           ).trim();
           const uniqueCodeVal = String(
             getCol(row, 'Unique Code', 'UniqueCode', 'Unique ID', 'UniqueId', 'Barcode', 'UID'),
@@ -818,8 +804,8 @@ export async function bulkUploadStudentsXls(schoolId, file, options = {}) {
             studentName: resolvedStudentName || getCol(row, 'Student Name', 'StudentName', 'Name'),
             admissionNo: admissionNoVal,
             rollNo: rollNoVal,
-            /** ID-card “Student ID” text — never the photo number; photo file match uses `photoNo`. */
-            studentId: explicitStudentId || admissionNoVal || rollNoVal || uniqueCodeVal || '',
+            /** ID-card “Student ID” — only when the sheet has a Student Id column (not S.No / Roll / Reg). */
+            studentId: explicitStudentId || '',
             photoNo,
             dateOfBirth: getCol(row, 'DOB', 'Dob', 'BirthDate', 'Birth Date', 'Date of Birth'),
             phone: getCol(

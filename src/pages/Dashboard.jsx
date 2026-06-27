@@ -55,6 +55,12 @@ function toDashboardSchoolSummary(school) {
   };
 }
 
+function sortSchoolsAlphabetically(schools) {
+  return [...schools].sort((a, b) =>
+    (a.schoolName || '').localeCompare(b.schoolName || '', undefined, { sensitivity: 'base' }),
+  );
+}
+
 export default function Dashboard() {
   const { user, isSyncing, syncingSchoolId, startGlobalSync, startSingleProjectSync } = useApp();
   const navigate = useNavigate();
@@ -83,7 +89,7 @@ export default function Dashboard() {
   const [viewMode, setViewMode] = useState('offline'); // online | offline
   const initialCache = readCache('offline');
   const [stats, setStats] = useState(initialCache?.stats ?? defaultStats);
-  const [schools, setSchools] = useState(initialCache?.schools ?? []);
+  const [schools, setSchools] = useState(() => sortSchoolsAlphabetically(initialCache?.schools ?? []));
   const [loading, setLoading] = useState(!initialCache);
   const [error, setError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -111,7 +117,7 @@ export default function Dashboard() {
       const cached = readCache(viewMode);
       if (cached) {
         setStats(cached.stats);
-        setSchools(cached.schools);
+        setSchools(sortSchoolsAlphabetically(cached.schools));
       }
       setLoading(!cached);
       setError('');
@@ -133,9 +139,11 @@ export default function Dashboard() {
           correctionRequired: dashboardRes.correctionsFromSchool ?? 0,
           deliveryPending: dashboardRes.deliveryPending ?? 0,
         };
-        const nextSchools = (schoolsRes.schools ?? [])
-          .map(toDashboardSchoolSummary)
-          .filter(Boolean);
+        const nextSchools = sortSchoolsAlphabetically(
+          (schoolsRes.schools ?? [])
+            .map(toDashboardSchoolSummary)
+            .filter(Boolean),
+        );
         setStats(nextStats);
         setSchools(nextSchools);
         writeCache(viewMode, { stats: nextStats, schools: nextSchools, cachedAt: Date.now() });
@@ -312,9 +320,11 @@ export default function Dashboard() {
       correctionRequired: dashboardRes.correctionsFromSchool ?? 0,
       deliveryPending: dashboardRes.deliveryPending ?? 0,
     };
-    const nextSchools = (schoolsRes.schools ?? [])
-      .map(toDashboardSchoolSummary)
-      .filter(Boolean);
+    const nextSchools = sortSchoolsAlphabetically(
+      (schoolsRes.schools ?? [])
+        .map(toDashboardSchoolSummary)
+        .filter(Boolean),
+    );
     setStats(nextStats);
     setSchools(nextSchools);
     writeCache(mode, { stats: nextStats, schools: nextSchools, cachedAt: Date.now() });

@@ -441,6 +441,14 @@ function sortClassesForDisplay(list) {
   return [...list].sort(compareClassForDisplay);
 }
 
+function sortSchoolsForDisplay(list) {
+  return [...list].sort((a, b) =>
+    (a.schoolName || "").localeCompare(b.schoolName || "", undefined, {
+      sensitivity: "base",
+    }),
+  );
+}
+
 function safeClassFolderName(cls) {
   const label =
     formatStudentClassForIdCard(cls) ||
@@ -4445,7 +4453,7 @@ export default function SavedIdCardsList({
       .then((res) => {
         if (!cancelled) {
           console.log("res schools", res.schools);
-          setSchools(res.schools ?? []);
+          setSchools(sortSchoolsForDisplay(res.schools ?? []));
           setLoadingSchools(false);
         }
       })
@@ -7757,11 +7765,13 @@ export default function SavedIdCardsList({
           style={{
             display: "flex",
             flexDirection: "column",
-            height: "100vh",
-            overflow: "hidden",
+            height: "calc(100vh - 48px)",
+            minHeight: 0,
           }}
         >
-          <Header title={title} showBack backTo={backTo} />
+          <div style={{ flexShrink: 0 }}>
+            <Header title={title} showBack backTo={backTo} />
+          </div>
           <div
             className="card"
             style={{

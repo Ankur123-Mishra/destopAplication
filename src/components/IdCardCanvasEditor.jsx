@@ -68,6 +68,13 @@ const NON_IMPORT_FIELD_KEYS = new Set([
   'photoFormat',
   'photoFormate',
   'photoFormet',
+  /** Excel row index columns — not printable student fields */
+  'sNo',
+  'sno',
+  'srNo',
+  'srno',
+  'serialNo',
+  'serial',
 ]);
 
 const HIDDEN_TEMPLATE_FIELD_KEYS = new Set(['uniqueCode']);
@@ -1544,7 +1551,7 @@ export default function IdCardCanvasEditor({
                     <input
                       type="range"
                       min="4"
-                      max="24"
+                      max="70"
                       value={selectedEl.fontSize || 10}
                       onChange={(e) =>
                         setElements((prev) =>
