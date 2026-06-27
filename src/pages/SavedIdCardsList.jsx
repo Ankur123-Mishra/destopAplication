@@ -7336,7 +7336,7 @@ export default function SavedIdCardsList({
         <input
           type="search"
           className="form-control"
-          placeholder="Name, mobile number, or photo number"
+          placeholder="Name or mobile number"
           value={classListSearchQuery}
           onChange={(e) => setClassListSearchQuery(e.target.value)}
           autoComplete="off"
@@ -7601,7 +7601,7 @@ export default function SavedIdCardsList({
           <input
             type="search"
             className="form-control"
-            placeholder="Name, mobile number, or photo number"
+            placeholder="Name or mobile number"
             value={studentSearchQuery}
             onChange={(e) => setStudentSearchQuery(e.target.value)}
             autoComplete="off"
