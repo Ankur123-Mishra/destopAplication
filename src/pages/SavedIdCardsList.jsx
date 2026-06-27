@@ -103,6 +103,29 @@ async function uint8FromBlob(blob) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/** True when JPEG/PNG export payload has no image bytes (e.g. tainted canvas → empty blob). */
+function exportPayloadHasData(payload) {
+  if (!payload) return false;
+  if (payload.blob instanceof Blob) return payload.blob.size > 0;
+  if (payload.dataBytes instanceof Uint8Array) return payload.dataBytes.length > 0;
+  const s = String(payload.dataUrl || "");
+  if (!s) return false;
+  const comma = s.indexOf(",");
+  const base64 = comma >= 0 ? s.slice(comma + 1) : s;
+  return base64.length > 0;
+}
+
+async function dataBytesFromExportBlob(blob) {
+  if (!(blob instanceof Blob) || blob.size === 0) {
+    throw new Error("Export produced empty image data.");
+  }
+  const dataBytes = await uint8FromBlob(blob);
+  if (dataBytes.length === 0) {
+    throw new Error("Export produced empty image data.");
+  }
+  return dataBytes;
+}
+
 function fullPhotoUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (url.startsWith("http")) return url;
@@ -416,6 +439,14 @@ function compareClassForDisplay(a, b) {
 
 function sortClassesForDisplay(list) {
   return [...list].sort(compareClassForDisplay);
+}
+
+function sortSchoolsForDisplay(list) {
+  return [...list].sort((a, b) =>
+    (a.schoolName || "").localeCompare(b.schoolName || "", undefined, {
+      sensitivity: "base",
+    }),
+  );
 }
 
 function safeClassFolderName(cls) {
@@ -1460,6 +1491,83 @@ async function saveJpegsToFolderWithFilePicker(
   }
 }
 
+/** Write JPEGs directly into an existing folder (Electron path or DirectoryHandle). */
+async function writeJpegFilesToDirectory(
+  directoryTarget,
+  files,
+  onProgress,
+  shouldAbort = null,
+) {
+  const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
+  if (!directoryTarget || !Array.isArray(files)) {
+    throw new Error("Invalid JPEG save target.");
+  }
+
+  if (
+    typeof directoryTarget === "string" &&
+    typeof window !== "undefined" &&
+    window.electron?.writeJpegFile
+  ) {
+    for (let i = 0; i < files.length; i++) {
+      if (abortFn()) throw new ExportCancelledError();
+      const f = files[i];
+      onProgress?.({
+        label: "Writing JPEG pages…",
+        current: i + 1,
+        total: files.length,
+      });
+      const payload = {
+        directoryPath: directoryTarget,
+        filename: f.filename,
+      };
+      if (f.dataBytes instanceof Uint8Array) {
+        payload.dataBytes = f.dataBytes;
+      } else if (f.blob instanceof Blob) {
+        payload.dataBytes = await uint8FromBlob(f.blob);
+      } else {
+        payload.dataUrl = f.dataUrl;
+      }
+      const wr = await window.electron.writeJpegFile(payload);
+      if (!wr.success) {
+        throw new Error(wr.error || `Failed to write ${f.filename}`);
+      }
+    }
+    return;
+  }
+
+  if (typeof directoryTarget.getFileHandle === "function") {
+    for (let i = 0; i < files.length; i++) {
+      if (abortFn()) throw new ExportCancelledError();
+      const f = files[i];
+      onProgress?.({
+        label: "Writing JPEG pages…",
+        current: i + 1,
+        total: files.length,
+      });
+      const safe = String(f.filename || "page.jpg").replace(
+        /[<>:"/\\|?*\x00-\x1f]/g,
+        "_",
+      );
+      const fh = await directoryTarget.getFileHandle(safe, { create: true });
+      const w = await fh.createWritable();
+      if (f.blob instanceof Blob) {
+        await w.write(f.blob);
+      } else if (f.dataBytes instanceof Uint8Array) {
+        await w.write(f.dataBytes);
+      } else {
+        const blob = await (await fetch(f.dataUrl)).blob();
+        await w.write(blob);
+      }
+      await w.close();
+    }
+    return;
+  }
+
+  throw new Error(
+    "Saving page JPEGs into class folders is not available in this environment. Use the desktop app.",
+  );
+}
+
 function makeHtml2CanvasOpts(pageBackgroundColor) {
   const bg = normalizeHexColor(pageBackgroundColor);
   return {
@@ -1768,7 +1876,7 @@ async function buildPreviewFrontAndBackJpegFiles(
               quality: q,
               pixelScale: preset.pixelScale,
             });
-            payload = { dataBytes: await uint8FromBlob(blob) };
+            payload = { dataBytes: await dataBytesFromExportBlob(blob) };
           } catch (dataErr) {
             console.warn(
               "[export] Data canvas JPEG failed, using capture fallback.",
@@ -1782,6 +1890,9 @@ async function buildPreviewFrontAndBackJpegFiles(
                 "jpeg",
               ),
             };
+            if (!exportPayloadHasData(payload)) {
+              throw new Error(`Empty ${side} capture after data canvas fallback.`);
+            }
           }
         } else {
           payload = {
@@ -1792,6 +1903,12 @@ async function buildPreviewFrontAndBackJpegFiles(
               "jpeg",
             ),
           };
+          if (!exportPayloadHasData(payload)) {
+            throw new Error(`Empty ${side} capture.`);
+          }
+        }
+        if (!exportPayloadHasData(payload)) {
+          throw new Error(`Empty ${side} capture.`);
         }
         lastErr = undefined;
         break;
@@ -2172,7 +2289,7 @@ async function buildPreviewFrontAndBackPngFiles(
               mime: "image/png",
               pixelScale: preset.pixelScale,
             });
-            payload = { dataBytes: await uint8FromBlob(blob) };
+            payload = { dataBytes: await dataBytesFromExportBlob(blob) };
           } catch (dataErr) {
             console.warn(
               "[export] Data canvas PNG failed, using capture fallback.",
@@ -2186,6 +2303,9 @@ async function buildPreviewFrontAndBackPngFiles(
                 "png",
               ),
             };
+            if (!exportPayloadHasData(payload)) {
+              throw new Error(`Empty ${side} capture after data canvas fallback.`);
+            }
           }
         } else {
           payload = {
@@ -2196,6 +2316,12 @@ async function buildPreviewFrontAndBackPngFiles(
               "png",
             ),
           };
+          if (!exportPayloadHasData(payload)) {
+            throw new Error(`Empty ${side} capture.`);
+          }
+        }
+        if (!exportPayloadHasData(payload)) {
+          throw new Error(`Empty ${side} capture.`);
         }
         lastErr = undefined;
         break;
@@ -2471,11 +2597,12 @@ async function downloadJpegsAsZipFolder(
   files,
   onProgress,
   shouldAbort = null,
+  { flat = false } = {},
 ) {
   const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
-  const root = zip.folder(safeSub);
+  const root = flat ? zip : zip.folder(safeSub);
   if (!root) throw new Error("Could not build ZIP.");
   for (let i = 0; i < files.length; i++) {
     if (abortFn()) throw new ExportCancelledError();
@@ -2489,6 +2616,9 @@ async function downloadJpegsAsZipFolder(
       /[<>:"/\\|?*\x00-\x1f]/g,
       "_",
     );
+    if (!exportPayloadHasData(f)) {
+      throw new Error(`Empty image data for ${safeName}. Export aborted.`);
+    }
     if (f.blob instanceof Blob) {
       root.file(safeName, f.blob);
     } else if (f.dataBytes instanceof Uint8Array) {
@@ -2527,6 +2657,115 @@ async function downloadJpegsAsZipFolder(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** Browser download for one JPEG, or a ZIP when front + back (browsers block multiple `<a download>` clicks). */
+async function triggerBrowserDownloadExportFiles(files) {
+  if (!files?.length) throw new Error("No files to download.");
+  if (files.length > 1) {
+    const first = String(files[0].filename || "id-card.jpg");
+    const zipBase =
+      first
+        .replace(/\.(jpe?g|png)$/i, "")
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+        .trim() || "id-card";
+    await downloadJpegsAsZipFolder(zipBase, files, null, null, { flat: true });
+    return;
+  }
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    let blob;
+    if (f.blob instanceof Blob) {
+      blob = f.blob;
+    } else if (f.dataBytes instanceof Uint8Array) {
+      blob = new Blob([f.dataBytes], { type: "image/jpeg" });
+    } else {
+      blob = await (await fetch(f.dataUrl)).blob();
+    }
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = String(f.filename || "id-card.jpg").replace(
+      /[<>:"/\\|?*\x00-\x1f]/g,
+      "_",
+    );
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    if (i < files.length - 1) {
+      await delay(300);
+    }
+  }
+}
+
+/** Capture front (+ optional back) JPEGs from the single-student preview modal. */
+async function captureSingleCardPreviewJpegFiles(
+  card,
+  wrap,
+  pageBackgroundColor,
+) {
+  const used = new Set();
+  const base = jpegBaseNameForCard(card, 0, used);
+  const captureFlags = { bulk: false };
+  const q = PREVIEW_EXPORT_JPEG_QUALITY;
+
+  async function captureSide(side, el) {
+    if (USE_DATA_EXPORT_RENDERER_PRIMARY) {
+      const supports =
+        side === "front"
+          ? cardSupportsDataExportRenderer(card)
+          : cardSupportsDataExportBack(card);
+      if (supports) {
+        try {
+          const preset = getCardExportPreset({ bulk: false });
+          const blob = await renderCardSideToBlob(card, side, {
+            mime: "image/jpeg",
+            quality: q,
+            pixelScale: preset.pixelScale,
+          });
+          return { dataBytes: await dataBytesFromExportBlob(blob) };
+        } catch (dataErr) {
+          console.warn(
+            "[export] Single card data canvas failed, using DOM capture.",
+            dataErr,
+          );
+        }
+      }
+    }
+    if (!el) {
+      throw new Error(`Preview not ready (${side}). Wait and try again.`);
+    }
+    const dataUrl = await rasterizeElementForExport(
+      el,
+      pageBackgroundColor,
+      captureFlags,
+      "jpeg",
+    );
+    if (!exportPayloadHasData({ dataUrl })) {
+      throw new Error(`Empty ${side} capture. Wait and try again.`);
+    }
+    return { dataUrl };
+  }
+
+  const frontEl =
+    wrap?.querySelector?.(".preview-card-front .print-card-cell") ||
+    wrap?.querySelector?.(".preview-card-front");
+  const frontPayload = await captureSide("front", frontEl);
+  const files = [{ filename: `${base}.jpg`, ...frontPayload }];
+
+  if (cardExportsBackJpeg(card)) {
+    const backEl =
+      wrap?.querySelector?.(".preview-card-back .print-card-cell") ||
+      wrap?.querySelector?.(".preview-card-back");
+    const backPayload = await captureSide("back", backEl);
+    if (!exportPayloadHasData(backPayload)) {
+      throw new Error("Back image export failed. Wait and try again.");
+    }
+    files.push({ filename: `${base}_back.jpg`, ...backPayload });
+  }
+
+  return files;
 }
 
 /**
@@ -3311,9 +3550,11 @@ export default function SavedIdCardsList({
   const [showPrintView, setShowPrintView] = useState(false);
   const [showPreviewView, setShowPreviewView] = useState(false);
   const [singleCardPreview, setSingleCardPreview] = useState(null); // card object when viewing one student's card
+  const [singleCardDownloading, setSingleCardDownloading] = useState(false);
   const printContentRef = useRef(null);
   const previewScrollRef = useRef(null);
   const previewPagesWrapRef = useRef(null);
+  const singleCardPreviewWrapRef = useRef(null);
   /** Refs for react-window FixedSizeList container and list component. */
   const savedIdStudentListWrapRef = useRef(null);
   const savedIdStudentListRef = useRef(null);
@@ -3540,6 +3781,11 @@ export default function SavedIdCardsList({
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [errorClasses, setErrorClasses] = useState("");
   const [creatingClassFolders, setCreatingClassFolders] = useState(false);
+  /** Bulk export: create class folders + page JPEGs for every class (classes list screen). */
+  const [bulkClassFolderPagesExport, setBulkClassFolderPagesExport] =
+    useState(null);
+  const bulkClassFolderPagesExportRef = useRef(null);
+  const [bulkExportClassPayload, setBulkExportClassPayload] = useState(null);
   const [selectedSchool, setSelectedSchool] = useState(null);
 
   // Level 3: Students (with saved ID cards)
@@ -4207,7 +4453,7 @@ export default function SavedIdCardsList({
       .then((res) => {
         if (!cancelled) {
           console.log("res schools", res.schools);
-          setSchools(res.schools ?? []);
+          setSchools(sortSchoolsForDisplay(res.schools ?? []));
           setLoadingSchools(false);
         }
       })
@@ -4460,7 +4706,13 @@ export default function SavedIdCardsList({
 
   const allSchoolStudentsRaw =
     schoolAllStudentsData?.students ?? EMPTY_STUDENTS;
-  const classStudentsRaw = templateStatus?.students ?? EMPTY_STUDENTS;
+  const effectiveTemplateStatus =
+    bulkExportClassPayload?.templateStatus ?? templateStatus;
+  const classStudentsRaw = effectiveTemplateStatus?.students ?? EMPTY_STUDENTS;
+
+  useEffect(() => {
+    bulkClassFolderPagesExportRef.current = bulkClassFolderPagesExport;
+  }, [bulkClassFolderPagesExport]);
 
   const studentsForList = isAllSchoolStudents
     ? allSchoolStudentsRaw
@@ -4704,19 +4956,22 @@ export default function SavedIdCardsList({
         )
       : studentsRawForPreviewPipeline.filter((s) =>
           (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
-          studentHasRenderableSavedCard(s, templateStatus),
+          studentHasRenderableSavedCard(s, effectiveTemplateStatus),
         );
   }, [
     isAllSchoolStudents,
     studentsRawForPreviewPipeline,
     schoolAllStudentsData,
-    templateStatus,
+    effectiveTemplateStatus,
     allowPreviewWithoutPhoto,
     allowRootTemplateFallbackForAllStudents,
   ]);
 
   const needPreviewPrintSortedOrder =
-    showPreviewView || showPrintView || pendingExportFormat != null;
+    showPreviewView ||
+    showPrintView ||
+    pendingExportFormat != null ||
+    bulkClassFolderPagesExport != null;
 
   const studentsForPreviewPrint = React.useMemo(() => {
     const filtered = studentsFilteredForPreviewPrint;
@@ -4807,7 +5062,7 @@ export default function SavedIdCardsList({
   const sharedUploadedCanvasTemplate = React.useMemo(() => {
     const root = isAllSchoolStudents
       ? schoolAllStudentsData?.template
-      : templateStatus?.template;
+      : effectiveTemplateStatus?.template;
     if (!isFullApiCanvasTemplate(root)) return null;
     return {
       name: root.name || "Uploaded Template",
@@ -4816,7 +5071,7 @@ export default function SavedIdCardsList({
       elements: root.elements,
       ...(root.backElements != null ? { backElements: root.backElements } : {}),
     };
-  }, [isAllSchoolStudents, schoolAllStudentsData?.template, templateStatus?.template]);
+  }, [isAllSchoolStudents, schoolAllStudentsData?.template, effectiveTemplateStatus?.template]);
 
   const getTemplateName = React.useCallback((templateId, card = null) => {
     if (templateId === "uploaded-custom" && card?.uploadedTemplate?.name)
@@ -4847,7 +5102,7 @@ export default function SavedIdCardsList({
       )
       : mergeSchoolRootTemplateIntoStudent(
         student,
-        templateStatus?.template,
+        effectiveTemplateStatus?.template,
       );
     const isApiTemplateRenderable = isFullApiCanvasTemplate(apiTemplate);
 
@@ -4931,7 +5186,7 @@ export default function SavedIdCardsList({
     [
       isAllSchoolStudents,
       schoolAllStudentsData?.template,
-      templateStatus?.template,
+      effectiveTemplateStatus?.template,
       sharedUploadedCanvasTemplate,
       classes,
     ],
@@ -5086,7 +5341,8 @@ export default function SavedIdCardsList({
   };
 
   /** Building thousands of card objects on the main list screen freezes the UI; build only for preview/print. */
-  const needCardsForPrintLayout = showPreviewView || showPrintView;
+  const needCardsForPrintLayout =
+    showPreviewView || showPrintView || bulkClassFolderPagesExport != null;
   const [cardsToPrint, setCardsToPrint] = useState([]);
   const previewWaitingForBulkPhotos =
     needCardsForPrintLayout &&
@@ -5234,7 +5490,8 @@ export default function SavedIdCardsList({
     exporting ||
     pendingExportFormat !== null ||
     seeAllJpegDialogOpen ||
-    showPrintView;
+    showPrintView ||
+    bulkClassFolderPagesExport != null;
   const effectiveVisiblePreviewSpreadPagesCount =
     shouldRenderAllPreviewSpreadPages
       ? spreadPagesCount
@@ -5954,6 +6211,39 @@ export default function SavedIdCardsList({
               continue;
             }
 
+            const bulkFolderExport = bulkClassFolderPagesExportRef.current;
+            if (bulkFolderExport) {
+              const bulkItem = bulkFolderExport.items[bulkFolderExport.currentIndex];
+              if (bulkFolderExport.parentFolderPath && bulkItem?.folderName) {
+                const classDirPath = `${bulkFolderExport.parentFolderPath.replace(/[/\\]+$/, "")}/${bulkItem.folderName}`;
+                await writeJpegFilesToDirectory(
+                  classDirPath,
+                  files,
+                  onProg,
+                  isAborted,
+                );
+              } else if (
+                bulkFolderExport.webParentDirHandle &&
+                bulkItem?.folderName
+              ) {
+                const classDir =
+                  await bulkFolderExport.webParentDirHandle.getDirectoryHandle(
+                    bulkItem.folderName,
+                  );
+                await writeJpegFilesToDirectory(
+                  classDir,
+                  files,
+                  onProg,
+                  isAborted,
+                );
+              } else {
+                throw new Error("Could not resolve class folder for page export.");
+              }
+              progressThrottle?.flush();
+              captured = true;
+              break;
+            }
+
             const saveResult = await saveJpegExportToFolder(
               subfolderName,
               files,
@@ -6074,7 +6364,8 @@ export default function SavedIdCardsList({
         if (
           !captured &&
           !cancelled &&
-          !exportCancelRequestedRef.current
+          !exportCancelRequestedRef.current &&
+          !bulkClassFolderPagesExportRef.current
         ) {
           window.alert(
             "Could not capture the preview. Open Preview, wait for cards to load, then try Download again.",
@@ -6083,13 +6374,60 @@ export default function SavedIdCardsList({
       } catch (err) {
         if (!isExportCancelledError(err) && !cancelled) {
           console.error(err);
-          window.alert(
-            (typeof err?.message === "string" && err.message.trim()) ||
-            "Download failed. Wait for the preview to finish loading, then try again.",
-          );
+          if (!bulkClassFolderPagesExportRef.current) {
+            window.alert(
+              (typeof err?.message === "string" && err.message.trim()) ||
+              "Download failed. Wait for the preview to finish loading, then try again.",
+            );
+          }
         }
       } finally {
         if (!cancelled) {
+          const bulkFolderExport = bulkClassFolderPagesExportRef.current;
+          let bulkExportContinues = false;
+          if (bulkFolderExport) {
+            if (exportCancelRequestedRef.current) {
+              setBulkClassFolderPagesExport(null);
+              bulkClassFolderPagesExportRef.current = null;
+              setBulkExportClassPayload(null);
+              setCreatingClassFolders(false);
+              setShowPreviewView(false);
+            } else {
+              const nextExported = bulkFolderExport.exported + (captured ? 1 : 0);
+              const nextSkipped = bulkFolderExport.skipped + (captured ? 0 : 1);
+              const nextIndex = bulkFolderExport.currentIndex + 1;
+              if (nextIndex >= bulkFolderExport.items.length) {
+                setBulkExportClassPayload(null);
+                setBulkPhotoDetailPayload(null);
+                setBulkPhotoHydrationStatus("idle");
+                setBulkClassFolderPagesExport(null);
+                bulkClassFolderPagesExportRef.current = null;
+                setCreatingClassFolders(false);
+                setShowPreviewView(false);
+                const openPath = bulkFolderExport.parentFolderPath;
+                if (openPath && window.electron?.openFolder) {
+                  void window.electron.openFolder(openPath);
+                }
+                window.alert(
+                  `Created ${bulkFolderExport.items.length} class folder(s) and exported page JPEGs for ${nextExported} class(es).${
+                    nextSkipped > 0
+                      ? ` Skipped ${nextSkipped} class(es) with no exportable ID cards.`
+                      : ""
+                  }`,
+                );
+              } else {
+                const nextState = {
+                  ...bulkFolderExport,
+                  currentIndex: nextIndex,
+                  exported: nextExported,
+                  skipped: nextSkipped,
+                };
+                setBulkClassFolderPagesExport(nextState);
+                bulkClassFolderPagesExportRef.current = nextState;
+                bulkExportContinues = true;
+              }
+            }
+          }
           // Do not clear exportCancelRequestedRef here: in-flight html2canvas/PDF work can
           // finish after this finally runs; clearing the ref would let late onProgress calls
           // think the export is still active and show "Downloading…" again. The next run()
@@ -6097,7 +6435,9 @@ export default function SavedIdCardsList({
           setExporting(false);
           setPendingExportFormat(null);
           setJpegExportMode(null);
-          setExportProgress(null);
+          if (!bulkExportContinues) {
+            setExportProgress(null);
+          }
           jpegWebParentDirHandleRef.current = null;
         }
       }
@@ -6133,6 +6473,7 @@ export default function SavedIdCardsList({
   ]);
 
   const ensureViewTemplateDownloadCharge = async () => {
+    if (bulkClassFolderPagesExportRef.current) return true;
     if (!isViewTemplateFlow) return true;
     const studentIds = studentsForPreviewPrint
       .map((student) => student?._id)
@@ -6168,6 +6509,84 @@ export default function SavedIdCardsList({
     return true;
   };
 
+  const handleDownloadSingleCardPreview = async () => {
+    if (
+      !canDownloadIdCards ||
+      !singleCardPreview ||
+      singleCardDownloading ||
+      chargingDownloadPoints
+    ) {
+      return;
+    }
+
+    const studentId = singleCardPreview._id || singleCardPreview.id;
+    setSingleCardDownloading(true);
+    try {
+      if (isViewTemplateFlow) {
+        if (!studentId) {
+          window.alert("No student found for download.");
+          return;
+        }
+        try {
+          setChargingDownloadPoints(true);
+          const chargeResult = await deductTemplateDownloadPoints([studentId]);
+          if (typeof chargeResult?.balanceAfter === "number") {
+            window.dispatchEvent(
+              new CustomEvent("photographer-points-updated", {
+                detail: {
+                  pointsBalance: chargeResult.balanceAfter,
+                  perStudentTemplateCost: chargeResult.rateApplied,
+                },
+              }),
+            );
+          }
+        } catch (err) {
+          console.error(err);
+          window.alert(
+            err?.message || "Unable to deduct points. Please try again.",
+          );
+          return;
+        } finally {
+          setChargingDownloadPoints(false);
+        }
+      }
+
+      let files = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await delay(attempt === 0 ? 350 : 400);
+        const wrap = singleCardPreviewWrapRef.current;
+        if (!wrap) continue;
+        try {
+          files = await captureSingleCardPreviewJpegFiles(
+            singleCardPreview,
+            wrap,
+            previewPageBackgroundColor,
+          );
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+        }
+      }
+
+      if (!files?.length) {
+        window.alert(
+          "Could not capture the card. Wait for the preview to load, then try again.",
+        );
+        return;
+      }
+
+      await triggerBrowserDownloadExportFiles(files);
+    } catch (err) {
+      console.error(err);
+      window.alert(
+        (typeof err?.message === "string" && err.message.trim()) ||
+          "Download failed. Wait for the preview to finish loading, then try again.",
+      );
+    } finally {
+      setSingleCardDownloading(false);
+    }
+  };
+
   const handleCreateClassFolders = async () => {
     if (creatingClassFolders || loadingClasses || classes.length === 0) return;
 
@@ -6177,13 +6596,23 @@ export default function SavedIdCardsList({
       return;
     }
 
+    const bulkItems = classes.map((cls, index) => ({
+      classId: cls._id || cls.id,
+      folderName: folderNames[index],
+      classObj: cls,
+    }));
+
     setCreatingClassFolders(true);
     try {
       if (typeof window !== "undefined" && window.electron?.selectOutputFolder) {
         const pick = await window.electron.selectOutputFolder();
-        if (!pick.success) return;
+        if (!pick.success) {
+          setCreatingClassFolders(false);
+          return;
+        }
 
         if (!window.electron.createClassFolders) {
+          setCreatingClassFolders(false);
           window.alert(
             "Create folders is not available. Fully quit the app and start it again so Electron loads the latest code.",
           );
@@ -6197,12 +6626,16 @@ export default function SavedIdCardsList({
         if (!result.success) {
           throw new Error(result.error || "Could not create class folders.");
         }
-        if (window.electron.openFolder) {
-          await window.electron.openFolder(pick.folderPath);
-        }
-        window.alert(
-          `${result.created ?? folderNames.length} class folder(s) created.`,
-        );
+
+        const bulkState = {
+          parentFolderPath: pick.folderPath,
+          items: bulkItems,
+          currentIndex: 0,
+          exported: 0,
+          skipped: 0,
+        };
+        setBulkClassFolderPagesExport(bulkState);
+        bulkClassFolderPagesExportRef.current = bulkState;
         return;
       }
 
@@ -6214,21 +6647,146 @@ export default function SavedIdCardsList({
         for (const name of folderNames) {
           await parentHandle.getDirectoryHandle(name, { create: true });
         }
-        window.alert(`${folderNames.length} class folder(s) created.`);
+        const bulkState = {
+          parentFolderPath: null,
+          webParentDirHandle: parentHandle,
+          items: bulkItems,
+          currentIndex: 0,
+          exported: 0,
+          skipped: 0,
+        };
+        setBulkClassFolderPagesExport(bulkState);
+        bulkClassFolderPagesExportRef.current = bulkState;
         return;
       }
 
+      setCreatingClassFolders(false);
       window.alert(
         "Folder picker is not available in this environment. Use the desktop app to create class folders.",
       );
     } catch (e) {
-      if (e?.name === "AbortError") return;
+      if (e?.name === "AbortError") {
+        setCreatingClassFolders(false);
+        return;
+      }
       console.error(e);
-      window.alert(e?.message || "Could not create class folders.");
-    } finally {
       setCreatingClassFolders(false);
+      setBulkClassFolderPagesExport(null);
+      bulkClassFolderPagesExportRef.current = null;
+      window.alert(e?.message || "Could not create class folders.");
     }
   };
+
+  useEffect(() => {
+    const bulk = bulkClassFolderPagesExport;
+    if (!bulk || !schoolId) return;
+    if (exporting || pendingExportFormat) return;
+    if (bulk.currentIndex >= bulk.items.length) return;
+
+    let cancelled = false;
+    const item = bulk.items[bulk.currentIndex];
+
+    (async () => {
+      setExportProgress({
+        label: `Loading ${item.folderName} (${bulk.currentIndex + 1}/${bulk.items.length})…`,
+        current: bulk.currentIndex,
+        total: bulk.items.length,
+      });
+
+      try {
+        let data;
+        if (typeof activeApi.getTemplatesStatus === "function") {
+          data = await activeApi.getTemplatesStatus(schoolId, item.classId, {
+            retainPhotos: true,
+          });
+        } else {
+          data = await activeApi.getStudentsBySchoolAndClass(
+            schoolId,
+            item.classId,
+            { retainPhotos: true },
+          );
+        }
+        if (cancelled) return;
+
+        const exportStudents = (data?.students ?? []).filter(
+          (s) =>
+            (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
+            studentHasRenderableSavedCard(s, data),
+        );
+
+        if (exportStudents.length === 0) {
+          const nextState = {
+            ...bulk,
+            currentIndex: bulk.currentIndex + 1,
+            skipped: bulk.skipped + 1,
+          };
+          if (nextState.currentIndex >= nextState.items.length) {
+            setBulkClassFolderPagesExport(null);
+            bulkClassFolderPagesExportRef.current = null;
+            setCreatingClassFolders(false);
+            setExportProgress(null);
+            window.alert(
+              `Created ${bulk.items.length} class folder(s). No exportable ID cards were found in any class.`,
+            );
+          } else {
+            setBulkClassFolderPagesExport(nextState);
+            bulkClassFolderPagesExportRef.current = nextState;
+          }
+          return;
+        }
+
+        const payload = { ...data, students: exportStudents };
+        setBulkExportClassPayload({
+          templateStatus: payload,
+          classObj: item.classObj,
+        });
+        setBulkPhotoDetailPayload({ kind: "class", data: payload });
+        setBulkPhotoHydrationStatus("ready");
+        setSelectedClass(item.classObj);
+        setCardsToPrint([]);
+        setShowPreviewView(true);
+        setJpegExportMode("pages");
+        setExportProgress({
+          label: `Exporting ${item.folderName} (${bulk.currentIndex + 1}/${bulk.items.length})…`,
+          current: bulk.currentIndex,
+          total: bulk.items.length,
+        });
+        setPendingExportFormat("jpg");
+      } catch (e) {
+        if (cancelled) return;
+        console.error(e);
+        const nextState = {
+          ...bulk,
+          currentIndex: bulk.currentIndex + 1,
+          skipped: bulk.skipped + 1,
+        };
+        if (nextState.currentIndex >= nextState.items.length) {
+          setBulkClassFolderPagesExport(null);
+          bulkClassFolderPagesExportRef.current = null;
+          setCreatingClassFolders(false);
+          setExportProgress(null);
+          window.alert(
+            e?.message ||
+              "Could not export all class page JPEGs. Some classes may be missing files.",
+          );
+        } else {
+          setBulkClassFolderPagesExport(nextState);
+          bulkClassFolderPagesExportRef.current = nextState;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bulkClassFolderPagesExport,
+    schoolId,
+    exporting,
+    pendingExportFormat,
+    activeApi,
+    allowPreviewWithoutPhoto,
+  ]);
 
   /** Browser: folder picker here (must run in click handler). Then starts JPEG export. */
   const prepareAndStartJpegExport = async (mode) => {
@@ -6778,7 +7336,7 @@ export default function SavedIdCardsList({
         <input
           type="search"
           className="form-control"
-          placeholder="Name, mobile number, or photo number"
+          placeholder="Name or mobile number"
           value={classListSearchQuery}
           onChange={(e) => setClassListSearchQuery(e.target.value)}
           autoComplete="off"
@@ -6872,11 +7430,21 @@ export default function SavedIdCardsList({
           className="btn btn-primary"
           onClick={handleCreateClassFolders}
           disabled={
-            creatingClassFolders || loadingClasses || classes.length === 0
+            creatingClassFolders ||
+            loadingClasses ||
+            classes.length === 0 ||
+            exporting
           }
           style={{ padding: "10px 16px" }}
         >
-          {creatingClassFolders ? "Creating folders…" : "Create class folders"}
+          {creatingClassFolders
+            ? bulkClassFolderPagesExport
+              ? `Exporting pages (${Math.min(
+                  bulkClassFolderPagesExport.currentIndex + 1,
+                  bulkClassFolderPagesExport.items.length,
+                )}/${bulkClassFolderPagesExport.items.length})…`
+              : "Creating folders…"
+            : "Create class folders"}
         </button>
       </div>
       {deferredClassListSearchQuery.trim() ? (
@@ -7033,7 +7601,7 @@ export default function SavedIdCardsList({
           <input
             type="search"
             className="form-control"
-            placeholder="Name, mobile number, or photo number"
+            placeholder="Name or mobile number"
             value={studentSearchQuery}
             onChange={(e) => setStudentSearchQuery(e.target.value)}
             autoComplete="off"
@@ -7197,11 +7765,13 @@ export default function SavedIdCardsList({
           style={{
             display: "flex",
             flexDirection: "column",
-            height: "100vh",
-            overflow: "hidden",
+            height: "calc(100vh - 48px)",
+            minHeight: 0,
           }}
         >
-          <Header title={title} showBack backTo={backTo} />
+          <div style={{ flexShrink: 0 }}>
+            <Header title={title} showBack backTo={backTo} />
+          </div>
           <div
             className="card"
             style={{
@@ -7716,6 +8286,13 @@ export default function SavedIdCardsList({
                     e.preventDefault();
                     e.stopPropagation();
                     exportCancelRequestedRef.current = true;
+                    if (bulkClassFolderPagesExportRef.current) {
+                      setBulkClassFolderPagesExport(null);
+                      bulkClassFolderPagesExportRef.current = null;
+                      setBulkExportClassPayload(null);
+                      setCreatingClassFolders(false);
+                      setShowPreviewView(false);
+                    }
                     setExporting(false);
                     setExportProgress(null);
                   }}
@@ -7727,6 +8304,93 @@ export default function SavedIdCardsList({
           )}
         </div>
       )}
+
+      {bulkClassFolderPagesExport &&
+        exportProgress &&
+        showClasses &&
+        !showPreviewView && (
+          <div
+            className="export-progress-overlay"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10070,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "auto",
+            }}
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div
+              style={{
+                background: "#2a2a2a",
+                padding: "20px 24px",
+                borderRadius: 12,
+                minWidth: 300,
+                maxWidth: "min(420px, 92vw)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+              }}
+            >
+              <div
+                style={{
+                  color: "#fff",
+                  marginBottom: 12,
+                  fontSize: 15,
+                  fontWeight: 600,
+                }}
+              >
+                {exportProgress.label}
+              </div>
+              <div
+                style={{
+                  height: 10,
+                  background: "rgba(255,255,255,0.12)",
+                  borderRadius: 5,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.min(
+                      100,
+                      (exportProgress.current /
+                        Math.max(exportProgress.total, 1)) *
+                        100,
+                    )}%`,
+                    background: "#3b82f6",
+                    transition: "width 0.2s ease-out",
+                    borderRadius: 5,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{
+                  marginTop: 16,
+                  width: "100%",
+                  padding: "10px 14px",
+                  fontSize: 14,
+                }}
+                onClick={() => {
+                  exportCancelRequestedRef.current = true;
+                  setBulkClassFolderPagesExport(null);
+                  bulkClassFolderPagesExportRef.current = null;
+                  setBulkExportClassPayload(null);
+                  setCreatingClassFolders(false);
+                  setExportProgress(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
       {editStudentData && (
         <div
@@ -8857,15 +9521,41 @@ export default function SavedIdCardsList({
               <h3 style={{ margin: 0 }}>
                 {singleCardPreview.name} – ID Card Preview
               </h3>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setSingleCardPreview(null)}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexShrink: 0,
+                }}
               >
-                Close
-              </button>
+                {canDownloadIdCards && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={singleCardDownloading || chargingDownloadPoints}
+                    onClick={() => void handleDownloadSingleCardPreview()}
+                  >
+                    {chargingDownloadPoints
+                      ? "Checking balance…"
+                      : singleCardDownloading
+                        ? "Downloading…"
+                        : "⬇ Download"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setSingleCardPreview(null)}
+                >
+                  Close
+                </button>
+              </div>
             </div>
-            <div className="single-card-preview-card-wrap">
+            <div
+              ref={singleCardPreviewWrapRef}
+              className="single-card-preview-card-wrap"
+            >
               {renderCardWithBackForPreview(singleCardPreview)}
             </div>
           </div>

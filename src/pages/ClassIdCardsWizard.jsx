@@ -365,6 +365,12 @@ function mapApiStudent(s) {
     'createdAt',
     'updatedAt',
     'excelRowOrder',
+    'sNo',
+    'sno',
+    'srNo',
+    'srno',
+    'serialNo',
+    'serial',
   ]);
   Object.entries(s || {}).forEach(([key, value]) => {
     if (reservedKeys.has(key)) return;
@@ -377,19 +383,9 @@ function mapApiStudent(s) {
   return {
     id: s._id,
     name: s.studentName,
-    studentId: s.studentId || s.admissionNo || s.rollNo || s.uniqueCode || '',
+    studentId: s.studentId || '',
     admissionNo: s.admissionNo || '',
-    rollNo:
-      s.rollNo ||
-      s.sNo ||
-      s.sno ||
-      s.srNo ||
-      s.srno ||
-      s.serialNo ||
-      s.serial ||
-      s.admissionNo ||
-      s.uniqueCode ||
-      '',
+    rollNo: s.rollNo || '',
     uniqueCode: s.uniqueCode || '',
     dateOfBirth: s.dateOfBirth || s.dob || '',
     phone: s.phone || s.mobile || s.contactNo || '',
@@ -1688,6 +1684,12 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         'updatedAt',
         'template',
         'extraFields',
+        'sNo',
+        'sno',
+        'srNo',
+        'srno',
+        'serialNo',
+        'serial',
       ]);
       Object.entries(previewStudent).forEach(([key, value]) => {
         if (reserved.has(key)) return;
@@ -1704,7 +1706,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       : null;
     const initialData = previewStudent
       ? {
-        name: previewStudent.name || '',
+        name: previewStudent.name || previewStudent.studentName || '',
         studentId: previewStudent.studentId || '',
         admissionNo: previewStudent.admissionNo || '',
         rollNo: previewStudent.rollNo || '',
