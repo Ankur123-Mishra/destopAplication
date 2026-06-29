@@ -4136,15 +4136,25 @@ export default function SavedIdCardsList({
     }
   };
 
-  const handleDeleteStudent = React.useCallback(
-    async (student) => {
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
+
+  const requestDeleteStudent = React.useCallback((student) => {
+    setDeleteConfirmTarget(student);
+  }, []);
+
+  const cancelDeleteStudent = React.useCallback(() => {
+    setDeleteConfirmTarget(null);
+  }, []);
+
+  const confirmDeleteStudent = React.useCallback(
+    async () => {
+      const student = deleteConfirmTarget;
+      if (!student) return;
+      
       const studentId = student?._id || student?.id;
       if (!studentId) return;
-      const studentName = String(student?.studentName || student?.name || "").trim();
-      const shouldDelete = window.confirm(
-        `Delete ${studentName || "this student"}? This action cannot be undone.`,
-      );
-      if (!shouldDelete) return;
+      
+      setDeleteConfirmTarget(null);
       setDeletingStudentId(studentId);
       try {
         if (isOnlineMode) {
@@ -4190,7 +4200,7 @@ export default function SavedIdCardsList({
         setDeletingStudentId((prev) => (prev === studentId ? null : prev));
       }
     },
-    [isAllSchoolStudents, isOnlineMode],
+    [isAllSchoolStudents, isOnlineMode, deleteConfirmTarget],
   );
 
   const openAddStudentOverlay = React.useCallback(() => {
@@ -5306,7 +5316,7 @@ export default function SavedIdCardsList({
       formatStudentClassForIdCard,
       requestOpenCardPreview,
       setEditStudentData,
-      onDeleteStudent: handleDeleteStudent,
+      onDeleteStudent: requestDeleteStudent,
       deletingStudentId,
       formatToDDMMYYYYDot,
       allowPreviewWithoutPhoto,
@@ -5321,7 +5331,7 @@ export default function SavedIdCardsList({
       isViewTemplateFlow,
       getTemplateName,
       requestOpenCardPreview,
-      handleDeleteStudent,
+      requestDeleteStudent,
       deletingStudentId,
       allowPreviewWithoutPhoto,
       allowRootTemplateFallbackForAllStudents,
@@ -7735,6 +7745,63 @@ export default function SavedIdCardsList({
               maxWidth: "100%",
             }}
           />
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmTarget && (
+        <div 
+          className="delete-confirm-overlay" 
+          role="presentation" 
+          onClick={cancelDeleteStudent}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100000
+          }}
+        >
+          <div 
+            className="delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-student-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#2A303C',
+              padding: '24px',
+              borderRadius: '8px',
+              maxWidth: '400px',
+              width: '100%',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+            }}
+          >
+            <h3 id="delete-student-title" style={{ margin: 0, marginBottom: 10, color: '#fff' }}>Delete Student</h3>
+            <p style={{ margin: 0, marginBottom: 20, color: '#ccc' }}>
+              Are you sure you want to delete {String(deleteConfirmTarget?.studentName || deleteConfirmTarget?.name || "this student").trim()}? This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                onClick={cancelDeleteStudent}
+                style={{ padding: '8px 16px' }}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-primary" 
+                onClick={confirmDeleteStudent}
+                style={{ padding: '8px 16px', backgroundColor: '#e74c3c', borderColor: '#e74c3c' }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -62,7 +62,15 @@ async function copyText(text) {
 function formatDateTime(value) {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleString();
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    const day = String(parsed.getDate()).padStart(2, "0");
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const year = String(parsed.getFullYear());
+    const h = String(parsed.getHours()).padStart(2, "0");
+    const m = String(parsed.getMinutes()).padStart(2, "0");
+    const sec = String(parsed.getSeconds()).padStart(2, "0");
+    return `${day}-${month}-${year} ${h}:${m}:${sec}`;
   } catch {
     return value;
   }
@@ -123,13 +131,14 @@ export default function ParentCollection() {
   const [exporting, setExporting] = useState(false);
   const [expandedSchool, setExpandedSchool] = useState(null);
   const [exportingSchool, setExportingSchool] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [activeFields, setActiveFields] = useState(
     PARENT_FORM_OPTIONAL_FIELDS.map(f => ({
       key: f.key,
       label: f.label,
       isRequired: false,
-      fieldType: f.key === 'dob' ? 'date' : 'text',
+      fieldType: f.key === 'dob' ? 'date' : (['mobile', 'photoNo', 'admissionNo', 'rollNo'].includes(f.key) ? 'number' : 'text'),
       enabled: false
     }))
   );
@@ -184,6 +193,16 @@ export default function ParentCollection() {
 
   const formDisabled = !standaloneReady;
 
+  const showAdminNotice = () => {
+    setConfirmDialog({
+      title: 'Action Not Allowed',
+      message: 'Please contact admin to allow this button.',
+      hideCancel: true,
+      confirmLabel: 'OK',
+      onConfirm: () => { },
+    });
+  };
+
   async function loadLinks() {
     setLinksLoading(true);
     try {
@@ -216,12 +235,6 @@ export default function ParentCollection() {
 
         const enabled = Boolean(enabledRes?.enabled);
         setFeatureEnabled(enabled);
-
-        if (!enabled) {
-          setLinks([]);
-          setSubmissions([]);
-          return;
-        }
 
         const [linksRes, submissionsRes] = await Promise.all([
           listCollectionLinks(),
@@ -296,84 +309,92 @@ export default function ParentCollection() {
     });
   }
 
-  async function handleRevokeLink(token) {
-    const approved = window.confirm(
-      'Deactivate this parent form link? Parents will no longer be able to submit.'
-    );
-    if (!approved) return;
-
-    setFeedback(null);
-    setRevokingToken(token);
-    try {
-      await revokeCollectionLink(token);
-      setFeedback({ type: 'success', message: 'Link deactivated successfully.' });
-      await loadLinks();
-    } catch (err) {
-      setFeedback({ type: 'error', message: err?.message || 'Failed to deactivate link' });
-    } finally {
-      setRevokingToken('');
-    }
+  function handleRevokeLink(token) {
+    setConfirmDialog({
+      title: 'Deactivate Link',
+      message: 'Deactivate this parent form link? Parents will no longer be able to submit.',
+      onConfirm: async () => {
+        setFeedback(null);
+        setRevokingToken(token);
+        try {
+          await revokeCollectionLink(token);
+          setFeedback({ type: 'success', message: 'Link deactivated successfully.' });
+          await loadLinks();
+        } catch (err) {
+          setFeedback({ type: 'error', message: err?.message || 'Failed to deactivate link' });
+        } finally {
+          setRevokingToken('');
+        }
+      }
+    });
   }
 
-  async function handleToggleLinkStatus(link) {
+  function handleToggleLinkStatus(link) {
     if (!link?.token) return;
     const willActivate = !link.isActive;
 
-    if (!willActivate) {
-      const approved = window.confirm(
-        'Deactivate this parent form link? Parents will no longer be able to submit.'
-      );
-      if (!approved) return;
-    }
+    const proceed = async () => {
+      setFeedback(null);
+      setTogglingToken(link.token);
 
-    setFeedback(null);
-    setTogglingToken(link.token);
-
-    setLinks((prev) =>
-      prev.map((l) => (l.token === link.token ? { ...l, isActive: willActivate } : l))
-    );
-
-    try {
-      if (willActivate) {
-        await activateCollectionLink(link.token);
-        setFeedback({ type: 'success', message: 'Link activated. Parents can submit again.' });
-      } else {
-        await revokeCollectionLink(link.token);
-        setFeedback({ type: 'success', message: 'Link deactivated successfully.' });
-      }
-      await loadLinks();
-    } catch (err) {
       setLinks((prev) =>
-        prev.map((l) => (l.token === link.token ? { ...l, isActive: !willActivate } : l))
+        prev.map((l) => (l.token === link.token ? { ...l, isActive: willActivate } : l))
       );
-      setFeedback({
-        type: 'error',
-        message: err?.message || (willActivate ? 'Failed to activate link' : 'Failed to deactivate link'),
+
+      try {
+        if (willActivate) {
+          await activateCollectionLink(link.token);
+          setFeedback({ type: 'success', message: 'Link activated. Parents can submit again.' });
+        } else {
+          await revokeCollectionLink(link.token);
+          setFeedback({ type: 'success', message: 'Link deactivated successfully.' });
+        }
+        await loadLinks();
+      } catch (err) {
+        setLinks((prev) =>
+          prev.map((l) => (l.token === link.token ? { ...l, isActive: !willActivate } : l))
+        );
+        setFeedback({
+          type: 'error',
+          message: err?.message || (willActivate ? 'Failed to activate link' : 'Failed to deactivate link'),
+        });
+      } finally {
+        setTogglingToken('');
+      }
+    };
+
+    if (!willActivate) {
+      setConfirmDialog({
+        title: 'Deactivate Link',
+        message: 'Deactivate this parent form link? Parents will no longer be able to submit.',
+        onConfirm: proceed
       });
-    } finally {
-      setTogglingToken('');
+      return;
     }
+
+    proceed();
   }
 
-  async function handleDeleteLink(token) {
-    const approved = window.confirm(
-      'PERMANENTLY DELETE this school and all its submitted data? This cannot be undone.'
-    );
-    if (!approved) return;
-
-    setFeedback(null);
-    setDeletingToken(token);
-    try {
-      await deleteCollectionLink(token);
-      setFeedback({ type: 'success', message: 'School and submissions deleted successfully.' });
-      await loadLinks();
-      // Also refresh submissions if any were deleted
-      await loadSubmissions();
-    } catch (err) {
-      setFeedback({ type: 'error', message: err?.message || 'Failed to delete school' });
-    } finally {
-      setDeletingToken('');
-    }
+  function handleDeleteLink(token) {
+    setConfirmDialog({
+      title: 'Delete Project',
+      message: 'PERMANENTLY DELETE this school and all its submitted data? This cannot be undone.',
+      onConfirm: async () => {
+        setFeedback(null);
+        setDeletingToken(token);
+        try {
+          await deleteCollectionLink(token);
+          setFeedback({ type: 'success', message: 'School and submissions deleted successfully.' });
+          await loadLinks();
+          // Also refresh submissions if any were deleted
+          await loadSubmissions();
+        } catch (err) {
+          setFeedback({ type: 'error', message: err?.message || 'Failed to delete school' });
+        } finally {
+          setDeletingToken('');
+        }
+      }
+    });
   }
 
   async function handleRefreshSubmissions() {
@@ -470,19 +491,6 @@ export default function ParentCollection() {
     );
   }
 
-  if (!featureEnabled) {
-    return (
-      <>
-        <Header title="Parent Forms" />
-        <div className="card">
-          <h2 style={{ marginBottom: 8 }}>Feature disabled by admin</h2>
-          <p className="text-muted">
-            The admin app-wide switch is off, so photographers cannot create parent data collection links right now.
-          </p>
-        </div>
-      </>
-    );
-  }
 
   return (
     <>
@@ -707,7 +715,13 @@ export default function ParentCollection() {
               </button>
             )}
             {lastCreatedTemplateInfo && (
-              <button type="button" className="btn btn-secondary" onClick={() => handleDownloadTemplate(lastCreatedTemplateInfo.fields, lastCreatedTemplateInfo.projectName)}>
+              <button type="button" className="btn btn-secondary" onClick={() => {
+                if (!featureEnabled) {
+                  showAdminNotice();
+                  return;
+                }
+                handleDownloadTemplate(lastCreatedTemplateInfo.fields, lastCreatedTemplateInfo.projectName);
+              }}>
                 Download Excel Format
               </button>
             )}
@@ -793,7 +807,13 @@ export default function ParentCollection() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => handleDownloadTemplate(link.fields, link.projectName)}
+                            onClick={() => {
+                              if (!featureEnabled) {
+                                showAdminNotice();
+                                return;
+                              }
+                              handleDownloadTemplate(link.fields, link.projectName);
+                            }}
                           >
                             Download Excel Format
                           </button>
@@ -831,7 +851,7 @@ export default function ParentCollection() {
             <button type="button" className="btn btn-secondary" onClick={handleRefreshSubmissions} disabled={submissionsLoading}>
               {submissionsLoading ? 'Refreshing...' : 'Apply filters'}
             </button>
-            <button type="button" className="btn btn-primary" onClick={handleExport} disabled={exporting}>
+            <button type="button" className="btn btn-primary" onClick={handleExport} disabled={exporting || !featureEnabled}>
               {exporting ? 'Exporting...' : 'Export All Excel'}
             </button>
           </div> */}
@@ -858,7 +878,14 @@ export default function ParentCollection() {
                       <button
                         type="button"
                         className="btn btn-primary btn-sm"
-                        onClick={(e) => { e.stopPropagation(); handleExportSchool(schoolGroup, groupedSubmissions[schoolGroup]); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!featureEnabled) {
+                            showAdminNotice();
+                            return;
+                          }
+                          handleExportSchool(schoolGroup, groupedSubmissions[schoolGroup]);
+                        }}
                         disabled={exportingSchool === schoolGroup}
                       >
                         {exportingSchool === schoolGroup ? 'Exporting...' : 'Export Excel'}
@@ -907,7 +934,58 @@ export default function ParentCollection() {
         </div>
       </div>
 
+      {confirmDialog && (
+        <div className="delete-confirm-overlay" role="presentation" onClick={() => setConfirmDialog(null)}>
+          <div
+            className="delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="confirm-dialog-title" style={{ margin: 0, marginBottom: 10 }}>{confirmDialog.title}</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              {confirmDialog.message}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              {!confirmDialog.hideCancel && (
+                <button type="button" className="btn btn-secondary" onClick={() => setConfirmDialog(null)}>
+                  Cancel
+                </button>
+              )}
+              <button type="button" className="btn btn-primary" onClick={() => {
+                const action = confirmDialog.onConfirm;
+                setConfirmDialog(null);
+                if (action) action();
+              }}>
+                {confirmDialog.confirmLabel || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
+        .delete-confirm-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10060;
+          padding: 24px;
+          box-sizing: border-box;
+        }
+        .delete-confirm-modal {
+          width: 100%;
+          max-width: 420px;
+          background: var(--card-bg, #1e1e2e);
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,0.08);
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+          padding: 18px;
+        }
         .parent-collection-page {
           display: grid;
           gap: 20px;
