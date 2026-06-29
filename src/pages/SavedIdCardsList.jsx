@@ -228,6 +228,43 @@ function pickSchoolLevelTemplate(studentsRes, schoolId, schoolsList, _isOnlineMo
   return fallbackOfflineTemplate;
 }
 
+/** Class-wise students + school canvas template for preview/export (getTemplatesStatus omits template). */
+async function fetchClassStudentsPayloadForExport(
+  schoolId,
+  classId,
+  activeApi,
+  isOnlineMode,
+) {
+  const data = await activeApi.getStudentsBySchoolAndClass(schoolId, classId, {
+    retainPhotos: true,
+  });
+  let payload = data;
+  if (!isFullApiCanvasTemplate(data?.template)) {
+    try {
+      const [schoolsRes, schoolStudentsRes] = await Promise.all([
+        activeApi.getAssignedSchools().catch(() => ({ schools: [] })),
+        activeApi
+          .getStudentsBySchool(schoolId, { retainPhotos: false })
+          .catch(() => null),
+      ]);
+      if (schoolStudentsRes) {
+        const schoolLevelTemplate = pickSchoolLevelTemplate(
+          schoolStudentsRes,
+          schoolId,
+          schoolsRes?.schools ?? [],
+          isOnlineMode,
+        );
+        if (isFullApiCanvasTemplate(schoolLevelTemplate)) {
+          payload = { ...data, template: schoolLevelTemplate };
+        }
+      }
+    } catch {
+      /* keep class payload */
+    }
+  }
+  return payload;
+}
+
 /**
  * GET /schools/:id/students often puts canvas layout on response.template; each student.template
  * may only hold templateId/status. Merge so preview uses the same art + elements as class-wise APIs.
@@ -3786,6 +3823,9 @@ export default function SavedIdCardsList({
     useState(null);
   const bulkClassFolderPagesExportRef = useRef(null);
   const [bulkExportClassPayload, setBulkExportClassPayload] = useState(null);
+  const bulkExportClassPayloadRef = useRef(null);
+  /** Bumped when each class folder export starts — stale capture runs must not write JPEGs. */
+  const bulkClassExportSessionRef = useRef(0);
   const [selectedSchool, setSelectedSchool] = useState(null);
 
   // Level 3: Students (with saved ID cards)
@@ -4714,6 +4754,10 @@ export default function SavedIdCardsList({
     bulkClassFolderPagesExportRef.current = bulkClassFolderPagesExport;
   }, [bulkClassFolderPagesExport]);
 
+  useEffect(() => {
+    bulkExportClassPayloadRef.current = bulkExportClassPayload;
+  }, [bulkExportClassPayload]);
+
   const studentsForList = isAllSchoolStudents
     ? allSchoolStudentsRaw
     : classStudentsRaw;
@@ -5566,6 +5610,12 @@ export default function SavedIdCardsList({
     studentsForPreviewPrint.length > 0 &&
     (previewWaitingForBulkPhotos ||
       cardsToPrint.length < studentsForPreviewPrint.length);
+  const spreadPagesCountRef = useRef(spreadPagesCount);
+  spreadPagesCountRef.current = spreadPagesCount;
+  const studentsForPreviewPrintLengthRef = useRef(studentsForPreviewPrint.length);
+  studentsForPreviewPrintLengthRef.current = studentsForPreviewPrint.length;
+  const previewPrintCardsStillLoadingRef = useRef(previewPrintCardsStillLoading);
+  previewPrintCardsStillLoadingRef.current = previewPrintCardsStillLoading;
 
   useEffect(() => {
     if (!showPreviewView) return;
@@ -6052,6 +6102,15 @@ export default function SavedIdCardsList({
           if (!wrap) continue;
           const nodes = wrap.querySelectorAll(".print-page.preview-page");
           const cards = cardsToPrintRef.current;
+          const expectedSpreadPages = spreadPagesCountRef.current;
+          const expectedCardCount = studentsForPreviewPrintLengthRef.current;
+          if (previewPrintCardsStillLoadingRef.current) continue;
+          if (
+            expectedCardCount > 0 &&
+            cards.length !== expectedCardCount
+          ) {
+            continue;
+          }
           const pageExportContext = {
             cards,
             cardsPerPage,
@@ -6069,8 +6128,8 @@ export default function SavedIdCardsList({
           };
           if (
             nodes.length <= 0 ||
-            spreadPagesCount <= 0 ||
-            nodes.length !== spreadPagesCount
+            expectedSpreadPages <= 0 ||
+            nodes.length !== expectedSpreadPages
           ) {
             continue;
           }
@@ -6122,7 +6181,10 @@ export default function SavedIdCardsList({
                 continue;
               }
             } else if (includePages) {
-              if (nodes.length !== spreadPagesCount || spreadPagesCount <= 0) {
+              if (
+                nodes.length !== expectedSpreadPages ||
+                expectedSpreadPages <= 0
+              ) {
                 continue;
               }
             } else {
@@ -6213,7 +6275,18 @@ export default function SavedIdCardsList({
 
             const bulkFolderExport = bulkClassFolderPagesExportRef.current;
             if (bulkFolderExport) {
+              const bulkPayload = bulkExportClassPayloadRef.current;
               const bulkItem = bulkFolderExport.items[bulkFolderExport.currentIndex];
+              const payloadClassId =
+                bulkPayload?.classObj?._id ?? bulkPayload?.classObj?.id;
+              if (
+                bulkPayload?.exportSession !==
+                  bulkClassExportSessionRef.current ||
+                !bulkItem ||
+                String(bulkItem.classId ?? "") !== String(payloadClassId ?? "")
+              ) {
+                continue;
+              }
               if (bulkFolderExport.parentFolderPath && bulkItem?.folderName) {
                 const classDirPath = `${bulkFolderExport.parentFolderPath.replace(/[/\\]+$/, "")}/${bulkItem.folderName}`;
                 await writeJpegFilesToDirectory(
@@ -6272,14 +6345,14 @@ export default function SavedIdCardsList({
                 frontCells.length !== cards.length ||
                 backCells.length !== expectedBackCells ||
                 cards.length === 0 ||
-                nodes.length !== spreadPagesCount ||
-                spreadPagesCount <= 0
+                nodes.length !== expectedSpreadPages ||
+                expectedSpreadPages <= 0
               ) {
                 continue;
               }
             } else if (
-              nodes.length !== spreadPagesCount ||
-              spreadPagesCount <= 0
+              nodes.length !== expectedSpreadPages ||
+              expectedSpreadPages <= 0
             ) {
               continue;
             }
@@ -6450,8 +6523,6 @@ export default function SavedIdCardsList({
     pendingExportFormat,
     jpegExportMode,
     showPreviewView,
-    spreadPagesCount,
-    studentsForPreviewPrint.length,
     cardsPerPage,
     pageWidthMm,
     pageHeightMm,
@@ -6694,18 +6765,12 @@ export default function SavedIdCardsList({
       });
 
       try {
-        let data;
-        if (typeof activeApi.getTemplatesStatus === "function") {
-          data = await activeApi.getTemplatesStatus(schoolId, item.classId, {
-            retainPhotos: true,
-          });
-        } else {
-          data = await activeApi.getStudentsBySchoolAndClass(
-            schoolId,
-            item.classId,
-            { retainPhotos: true },
-          );
-        }
+        const data = await fetchClassStudentsPayloadForExport(
+          schoolId,
+          item.classId,
+          activeApi,
+          isOnlineMode,
+        );
         if (cancelled) return;
 
         const exportStudents = (data?.students ?? []).filter(
@@ -6736,9 +6801,12 @@ export default function SavedIdCardsList({
         }
 
         const payload = { ...data, students: exportStudents };
+        bulkClassExportSessionRef.current += 1;
+        const exportSession = bulkClassExportSessionRef.current;
         setBulkExportClassPayload({
           templateStatus: payload,
           classObj: item.classObj,
+          exportSession,
         });
         setBulkPhotoDetailPayload({ kind: "class", data: payload });
         setBulkPhotoHydrationStatus("ready");
@@ -6785,6 +6853,7 @@ export default function SavedIdCardsList({
     exporting,
     pendingExportFormat,
     activeApi,
+    isOnlineMode,
     allowPreviewWithoutPhoto,
   ]);
 
@@ -8199,6 +8268,7 @@ export default function SavedIdCardsList({
               </div>
             </div>
           )}
+          
           {exportProgress && (
             <div
               className="export-progress-overlay"
@@ -9518,13 +9588,14 @@ export default function SavedIdCardsList({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="single-card-preview-header">
-              <h3 style={{ margin: 0 }}>
-                {singleCardPreview.name} – ID Card Preview
-              </h3>
+              {/* <h3 style={{ margin: 0 }}>
+                {singleCardPreview.name}     
+              </h3> */}
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
+                  // justifyContent: "space-between",
                   gap: 10,
                   flexShrink: 0,
                 }}
