@@ -340,10 +340,10 @@ function mergeExtraFieldsFromStudent(student) {
   fill(
     "program",
     student.program ??
-      student.programName ??
-      student.course ??
-      student.courseName ??
-      student.stream,
+    student.programName ??
+    student.course ??
+    student.courseName ??
+    student.stream,
   );
   return ex;
 }
@@ -802,9 +802,9 @@ const VirtualizedSavedIdStudentRow = React.memo(function VirtualizedSavedIdStude
             ...(hasUploadedPhoto
               ? {}
               : {
-                  backgroundColor: "rgba(255,255,255,0.08)",
-                  borderColor: "rgba(255,255,255,0.2)",
-                }),
+                backgroundColor: "rgba(255,255,255,0.08)",
+                borderColor: "rgba(255,255,255,0.2)",
+              }),
             ...(!canOpenPreview ? { opacity: 0.55, cursor: "not-allowed" } : {}),
           }}
           onClick={() => {
@@ -1879,13 +1879,13 @@ async function buildPreviewFrontAndBackJpegFiles(
       ? bulk
         ? Math.min(16, Math.max(8, Math.ceil(cards.length / 80)))
         : 6
-    : bulk
-      ? cards.length > 200
-        ? 8
-        : cards.length > 60
-          ? 6
-          : 5
-      : 2;
+      : bulk
+        ? cards.length > 200
+          ? 8
+          : cards.length > 60
+            ? 6
+            : 5
+        : 2;
 
   async function captureCell(el, label, index1, card, side) {
     let payload;
@@ -2300,13 +2300,13 @@ async function buildPreviewFrontAndBackPngFiles(
       ? bulk
         ? Math.min(14, Math.max(6, Math.ceil(cards.length / 80)))
         : 5
-    : bulk
-      ? cards.length > 200
-        ? 8
-        : cards.length > 60
-          ? 6
-          : 5
-      : 2;
+      : bulk
+        ? cards.length > 200
+          ? 8
+          : cards.length > 60
+            ? 6
+            : 5
+        : 2;
 
   async function captureCell(el, label, index1, card, side) {
     let payload;
@@ -3324,7 +3324,7 @@ async function exportPreviewPdfFromPreview(
 ) {
   if (!pageElements?.length) return;
   const abortFn = typeof shouldAbort === "function" ? shouldAbort : () => false;
-  const rawEmit = typeof onProgress === "function" ? onProgress : () => {};
+  const rawEmit = typeof onProgress === "function" ? onProgress : () => { };
   const emitProgress = (p) => {
     if (abortFn()) return;
     rawEmit(p);
@@ -4022,9 +4022,8 @@ export default function SavedIdCardsList({
           photoUrl.startsWith("data:") ||
           photoUrl.startsWith("blob:")
           ? photoUrl
-          : `${API_BASE_URL.replace(/\/$/, "")}${
-              photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
-            }`
+          : `${API_BASE_URL.replace(/\/$/, "")}${photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
+          }`
         : URL.createObjectURL(fileToUpload);
       const basename = (file.name || "").replace(/\.[^/.]+$/, "").trim();
       const fromApi =
@@ -4078,11 +4077,11 @@ export default function SavedIdCardsList({
         const students = prev.data.students.map((s) =>
           (s._id || s.id) === studentId
             ? {
-                ...s,
-                photoUrl: fullUrl,
-                hasPhoto: true,
-                ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
-              }
+              ...s,
+              photoUrl: fullUrl,
+              hasPhoto: true,
+              ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
+            }
             : s,
         );
         return { ...prev, data: { ...prev.data, students } };
@@ -4113,7 +4112,7 @@ export default function SavedIdCardsList({
       if (typeof cleanData.classId === 'object') {
         cleanData.classId = cleanData.classId.id || cleanData.classId._id;
       }
-      
+
       if (viewMode === "offline") {
         await offlineApi.updateStudent(studentId, cleanData);
       } else {
@@ -4165,9 +4164,9 @@ export default function SavedIdCardsList({
       };
 
       if (isAllSchoolStudents) {
-         setSchoolAllStudentsData((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
+        setSchoolAllStudentsData((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
       } else {
-         setTemplateStatus((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
+        setTemplateStatus((prev) => prev ? { ...prev, students: updater(prev.students) } : prev);
       }
       setEditStudentData(null);
     } catch (err) {
@@ -4191,10 +4190,10 @@ export default function SavedIdCardsList({
     async () => {
       const student = deleteConfirmTarget;
       if (!student) return;
-      
+
       const studentId = student?._id || student?.id;
       if (!studentId) return;
-      
+
       setDeleteConfirmTarget(null);
       setDeletingStudentId(studentId);
       try {
@@ -4350,7 +4349,7 @@ export default function SavedIdCardsList({
         ) {
           throw new Error(
             data?.message ||
-              "Server did not return the new student. If create is not supported online, use offline mode.",
+            "Server did not return the new student. If create is not supported online, use offline mode.",
           );
         }
       } else {
@@ -4375,9 +4374,8 @@ export default function SavedIdCardsList({
               photoUrl.startsWith("data:") ||
               photoUrl.startsWith("blob:")
               ? photoUrl
-              : `${API_BASE_URL.replace(/\/$/, "")}${
-                  photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
-                }`
+              : `${API_BASE_URL.replace(/\/$/, "")}${photoUrl.startsWith("/") ? photoUrl : "/" + photoUrl
+              }`
             : URL.createObjectURL(fileToUpload);
           const basename = (pendingPhoto.name || "")
             .replace(/\.[^/.]+$/, "")
@@ -4404,7 +4402,7 @@ export default function SavedIdCardsList({
         } catch (uploadErr) {
           setGlobalErrorDialog(
             (uploadErr?.message || "Photo upload failed.") +
-              " Student was created; you can add a photo from Edit.",
+            " Student was created; you can add a photo from Edit.",
           );
         }
       }
@@ -4453,18 +4451,18 @@ export default function SavedIdCardsList({
         setSchoolAllStudentsData((prev) =>
           prev
             ? {
-                ...prev,
-                students: [...(prev.students || []), rowForList],
-              }
+              ...prev,
+              students: [...(prev.students || []), rowForList],
+            }
             : prev,
         );
       } else {
         setTemplateStatus((prev) =>
           prev
             ? {
-                ...prev,
-                students: [...(prev.students || []), rowForList],
-              }
+              ...prev,
+              students: [...(prev.students || []), rowForList],
+            }
             : prev,
         );
       }
@@ -4603,8 +4601,8 @@ export default function SavedIdCardsList({
           schoolHasSaved &&
           Boolean(
             apiTemplate?.frontImage &&
-              Array.isArray(apiTemplate.elements) &&
-              apiTemplate.elements.length > 0,
+            Array.isArray(apiTemplate.elements) &&
+            apiTemplate.elements.length > 0,
           );
         if (show) writeSavedIdCardsFlagForSchool(schoolId);
         setViewTemplateEditProbe({ done: true, show });
@@ -4884,17 +4882,17 @@ export default function SavedIdCardsList({
   useLayoutEffect(() => {
     const el = savedIdStudentListWrapRef.current;
     if (!el) return;
-    
+
     let timeoutId = null;
-    
+
     const calculateHeight = () => {
       if (showStudentsView) {
         // Get the available height by checking the parent container
         const rect = el.getBoundingClientRect();
-        
+
         // Calculate available height more accurately
         let availableHeight = rect.height;
-        
+
         // If height is too small, use a more dynamic calculation
         if (availableHeight < 500) {
           // Use viewport height minus header and other elements
@@ -4904,30 +4902,30 @@ export default function SavedIdCardsList({
           const margins = 60; // Margins, padding, and card spacing
           availableHeight = Math.max(500, viewportHeight - headerHeight - buttonsHeight - margins);
         }
-        
+
         setSavedIdStudentListViewportHeight((prev) => {
           const next = Math.max(500, Math.floor(availableHeight));
           return prev === next ? prev : next;
         });
       }
     };
-    
+
     const debouncedCalculateHeight = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(calculateHeight, 50); // 50ms debounce
     };
-    
+
     const ro = new ResizeObserver(debouncedCalculateHeight);
-    
+
     ro.observe(el);
     calculateHeight(); // Initial calculation without debounce
-    
+
     // Also recalculate on window resize with debouncing
     const handleResize = () => {
       debouncedCalculateHeight();
     };
     window.addEventListener('resize', handleResize);
-    
+
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
       ro.disconnect();
@@ -5004,15 +5002,15 @@ export default function SavedIdCardsList({
   const studentsFilteredForPreviewPrint = React.useMemo(() => {
     return isAllSchoolStudents
       ? studentsRawForPreviewPipeline.filter((s) =>
-          (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
-          studentHasRenderableSavedCard(s, schoolAllStudentsData, {
-            allowRootTemplateFallback: allowRootTemplateFallbackForAllStudents,
-          }),
-        )
+        (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
+        studentHasRenderableSavedCard(s, schoolAllStudentsData, {
+          allowRootTemplateFallback: allowRootTemplateFallbackForAllStudents,
+        }),
+      )
       : studentsRawForPreviewPipeline.filter((s) =>
-          (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
-          studentHasRenderableSavedCard(s, effectiveTemplateStatus),
-        );
+        (studentHasUploadedPhoto(s) || allowPreviewWithoutPhoto) &&
+        studentHasRenderableSavedCard(s, effectiveTemplateStatus),
+      );
   }, [
     isAllSchoolStudents,
     studentsRawForPreviewPipeline,
@@ -5150,94 +5148,94 @@ export default function SavedIdCardsList({
   // Include address, name, photoUrl, studentId, dimension (from school) so ID card preview shows full data and size
   const studentToCard = React.useCallback(
     (student) => {
-    const apiTemplate = isAllSchoolStudents
-      ? mergeSchoolRootTemplateIntoStudent(
-        student,
-        schoolAllStudentsData?.template,
-      )
-      : mergeSchoolRootTemplateIntoStudent(
-        student,
-        effectiveTemplateStatus?.template,
-      );
-    const isApiTemplateRenderable = isFullApiCanvasTemplate(apiTemplate);
+      const apiTemplate = isAllSchoolStudents
+        ? mergeSchoolRootTemplateIntoStudent(
+          student,
+          schoolAllStudentsData?.template,
+        )
+        : mergeSchoolRootTemplateIntoStudent(
+          student,
+          effectiveTemplateStatus?.template,
+        );
+      const isApiTemplateRenderable = isFullApiCanvasTemplate(apiTemplate);
 
-    // API canvas templates must use uploadedTemplate override (same as View Template); DB templateIds are not in idCardTemplates.js.
-    const templateId = isApiTemplateRenderable
-      ? "uploaded-custom"
-      : apiTemplate?.templateId;
+      // API canvas templates must use uploadedTemplate override (same as View Template); DB templateIds are not in idCardTemplates.js.
+      const templateId = isApiTemplateRenderable
+        ? "uploaded-custom"
+        : apiTemplate?.templateId;
 
-    const extraFields = mergeExtraFieldsFromStudent(student);
-    const resolvedRollNo =
-      student.rollNo ??
-      student.sNo ??
-      student.sno ??
-      student.srNo ??
-      student.srno ??
-      student.serialNo ??
-      student.serial ??
-      student.admissionNo ??
-      student.uniqueCode ??
-      "";
-
-    const uploadedTemplateForCard =
-      isApiTemplateRenderable &&
-      (sharedUploadedCanvasTemplate
-        ? sharedUploadedCanvasTemplate
-        : {
-          name: apiTemplate?.name || "Uploaded Template",
-          frontImage: fullPhotoUrl(apiTemplate.frontImage),
-          backImage: fullPhotoUrl(apiTemplate.backImage),
-          elements: apiTemplate.elements,
-          ...(apiTemplate.backElements != null
-            ? { backElements: apiTemplate.backElements }
-            : {}),
-        });
-
-    return {
-      _id: student._id,
-      id: apiTemplate?.templateId || student._id,
-      studentId:
-        student.studentId ??
+      const extraFields = mergeExtraFieldsFromStudent(student);
+      const resolvedRollNo =
+        student.rollNo ??
+        student.sNo ??
+        student.sno ??
+        student.srNo ??
+        student.srno ??
+        student.serialNo ??
+        student.serial ??
         student.admissionNo ??
         student.uniqueCode ??
-        student.rollNo ??
-        "",
-      name: student.studentName ?? "",
-      rollNo: resolvedRollNo,
-      templateId,
-      uploadedTemplate: isApiTemplateRenderable ? uploadedTemplateForCard : null,
-      studentImage: fullPhotoUrl(student.photoUrl),
-      ...(function resolveColorCodeForCard() {
-        const cc = getStudentColorCodeImageUrl(student);
-        return cc ? { colorCodeImage: fullPhotoUrl(cc) } : {};
-      })(),
-      className: resolveClassNameForIdCard(student, classes),
-      schoolName:
-        student.school?.schoolName ||
-        (typeof student.schoolId === "object" && student.schoolId?.schoolName
-          ? student.schoolId.schoolName
-          : "") ||
-        "",
-      address: student.address ?? "",
-      dateOfBirth:
-        student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
-      phone: student.mobile ?? student.phone ?? undefined,
-      email: student.email ?? undefined,
-      extraFields,
-      dimension:
-        student.school?.dimension ??
-        (typeof student.schoolId === "object"
-          ? student.schoolId.dimension
-          : null) ??
-        null,
-      dimensionUnit:
-        student.school?.dimensionUnit ??
-        (typeof student.schoolId === "object"
-          ? student.schoolId.dimensionUnit
-          : null) ??
-        "mm",
-    };
-  },
+        "";
+
+      const uploadedTemplateForCard =
+        isApiTemplateRenderable &&
+        (sharedUploadedCanvasTemplate
+          ? sharedUploadedCanvasTemplate
+          : {
+            name: apiTemplate?.name || "Uploaded Template",
+            frontImage: fullPhotoUrl(apiTemplate.frontImage),
+            backImage: fullPhotoUrl(apiTemplate.backImage),
+            elements: apiTemplate.elements,
+            ...(apiTemplate.backElements != null
+              ? { backElements: apiTemplate.backElements }
+              : {}),
+          });
+
+      return {
+        _id: student._id,
+        id: apiTemplate?.templateId || student._id,
+        studentId:
+          student.studentId ??
+          student.admissionNo ??
+          student.uniqueCode ??
+          student.rollNo ??
+          "",
+        name: student.studentName ?? "",
+        rollNo: resolvedRollNo,
+        templateId,
+        uploadedTemplate: isApiTemplateRenderable ? uploadedTemplateForCard : null,
+        studentImage: fullPhotoUrl(student.photoUrl),
+        ...(function resolveColorCodeForCard() {
+          const cc = getStudentColorCodeImageUrl(student);
+          return cc ? { colorCodeImage: fullPhotoUrl(cc) } : {};
+        })(),
+        className: resolveClassNameForIdCard(student, classes),
+        schoolName:
+          student.school?.schoolName ||
+          (typeof student.schoolId === "object" && student.schoolId?.schoolName
+            ? student.schoolId.schoolName
+            : "") ||
+          "",
+        address: student.address ?? "",
+        dateOfBirth:
+          student.dateOfBirth ?? student.birthDate ?? student.dob ?? undefined,
+        phone: student.mobile ?? student.phone ?? undefined,
+        email: student.email ?? undefined,
+        extraFields,
+        dimension:
+          student.school?.dimension ??
+          (typeof student.schoolId === "object"
+            ? student.schoolId.dimension
+            : null) ??
+          null,
+        dimensionUnit:
+          student.school?.dimensionUnit ??
+          (typeof student.schoolId === "object"
+            ? student.schoolId.dimensionUnit
+            : null) ??
+          "mm",
+      };
+    },
     [
       isAllSchoolStudents,
       schoolAllStudentsData?.template,
@@ -6087,15 +6085,15 @@ export default function SavedIdCardsList({
             : 100;
       const progressThrottle = useExportProgressThrottle
         ? createProgressThrottle(
-            Math.max(
-              50,
-              Math.round(1000 / FAST_EXPORT_PROGRESS_UPDATES_PER_SEC),
-            ),
-            (p) => {
-              if (isAborted()) return;
-              flushSync(() => setExportProgress(p));
-            },
-          )
+          Math.max(
+            50,
+            Math.round(1000 / FAST_EXPORT_PROGRESS_UPDATES_PER_SEC),
+          ),
+          (p) => {
+            if (isAborted()) return;
+            flushSync(() => setExportProgress(p));
+          },
+        )
         : null;
       const onProg = (p) => {
         if (isAborted()) return;
@@ -6292,7 +6290,7 @@ export default function SavedIdCardsList({
                 bulkPayload?.classObj?._id ?? bulkPayload?.classObj?.id;
               if (
                 bulkPayload?.exportSession !==
-                  bulkClassExportSessionRef.current ||
+                bulkClassExportSessionRef.current ||
                 !bulkItem ||
                 String(bulkItem.classId ?? "") !== String(payloadClassId ?? "")
               ) {
@@ -6493,10 +6491,9 @@ export default function SavedIdCardsList({
                   void window.electron.openFolder(openPath);
                 }
                 setGlobalErrorDialog(
-                  `Created ${bulkFolderExport.items.length} class folder(s) and exported page JPEGs for ${nextExported} class(es).${
-                    nextSkipped > 0
-                      ? ` Skipped ${nextSkipped} class(es) with no exportable ID cards.`
-                      : ""
+                  `Created ${bulkFolderExport.items.length} class folder(s) and exported page JPEGs for ${nextExported} class(es).${nextSkipped > 0
+                    ? ` Skipped ${nextSkipped} class(es) with no exportable ID cards.`
+                    : ""
                   }`,
                 );
               } else {
@@ -6662,7 +6659,7 @@ export default function SavedIdCardsList({
       console.error(err);
       setGlobalErrorDialog(
         (typeof err?.message === "string" && err.message.trim()) ||
-          "Download failed. Wait for the preview to finish loading, then try again.",
+        "Download failed. Wait for the preview to finish loading, then try again.",
       );
     } finally {
       setSingleCardDownloading(false);
@@ -6846,7 +6843,7 @@ export default function SavedIdCardsList({
           setExportProgress(null);
           setGlobalErrorDialog(
             e?.message ||
-              "Could not export all class page JPEGs. Some classes may be missing files.",
+            "Could not export all class page JPEGs. Some classes may be missing files.",
           );
         } else {
           setBulkClassFolderPagesExport(nextState);
@@ -7379,11 +7376,11 @@ export default function SavedIdCardsList({
           onClick={() => navigate(basePath)}
           style={{ padding: "6px 12px" }}
         >
-          ← Back to schools
+          ← Back to Schools
         </button>
         <h3 style={{ margin: 0, flex: 1 }}>
           {selectedSchool?.schoolName || selectedSchool?.schoolCode || schoolId}{" "}
-          – Select class
+          – Select Class
         </h3>
         <span
           style={{
@@ -7403,7 +7400,7 @@ export default function SavedIdCardsList({
                 : "Searching…"
             : loadingClasses
               ? "Loading…"
-              : `Total classes: ${classes.length}`}
+              : `Total Classes: ${classes.length}`}
         </span>
       </div>
       <div style={{ marginBottom: 16, width: "100%" }}>
@@ -7411,7 +7408,7 @@ export default function SavedIdCardsList({
           className="text-muted"
           style={{ display: "block", marginBottom: 6, fontSize: "0.85rem" }}
         >
-          Search students
+          Search Students
         </label>
         <input
           type="search"
@@ -7466,7 +7463,7 @@ export default function SavedIdCardsList({
             }
             style={{ padding: "10px 16px" }}
           >
-            See all students
+            See All Students
           </button>
           {isViewTemplateFlow && (
             <>
@@ -7499,7 +7496,7 @@ export default function SavedIdCardsList({
                   }
                   style={{ padding: "10px 16px" }}
                 >
-                  Edit template
+                  Edit Template
                 </button>
               ) : null}
             </>
@@ -7520,11 +7517,11 @@ export default function SavedIdCardsList({
           {creatingClassFolders
             ? bulkClassFolderPagesExport
               ? `Exporting pages (${Math.min(
-                  bulkClassFolderPagesExport.currentIndex + 1,
-                  bulkClassFolderPagesExport.items.length,
-                )}/${bulkClassFolderPagesExport.items.length})…`
-              : "Creating folders…"
-            : "Create class folders"}
+                bulkClassFolderPagesExport.currentIndex + 1,
+                bulkClassFolderPagesExport.items.length,
+              )}/${bulkClassFolderPagesExport.items.length})…`
+              : "Creating Folders…"
+            : "Create Class Folders"}
         </button>
       </div>
       {deferredClassListSearchQuery.trim() ? (
@@ -7532,10 +7529,10 @@ export default function SavedIdCardsList({
           {(loadingClassListSearchRoster ||
             !classListSearchRosterReady) &&
             !errorClassListSearchRoster && (
-            <p className="text-muted" style={{ marginBottom: 16 }}>
-              Loading students…
-            </p>
-          )}
+              <p className="text-muted" style={{ marginBottom: 16 }}>
+                Loading students…
+              </p>
+            )}
           {errorClassListSearchRoster && (
             <p className="text-danger" style={{ marginBottom: 16 }}>
               {errorClassListSearchRoster}
@@ -7593,31 +7590,31 @@ export default function SavedIdCardsList({
         </>
       ) : (
         <>
-      {loadingClasses && <p className="text-muted">Loading classes…</p>}
-      {errorClasses && <p className="text-danger">{errorClasses}</p>}
-      {!loadingClasses && !errorClasses && classes.length === 0 && (
-        <p className="text-muted">No classes found.</p>
-      )}
-      {!loadingClasses && !errorClasses && classes.length > 0 && (
-        <ul className="saved-idcards-list">
-          {classes.map((cls) => (
-            <li key={cls._id}>
-              <button
-                type="button"
-                className="saved-idcard-item saved-idcard-class-item"
-                onClick={() =>
-                  navigate(`${basePath}/school/${schoolId}/class/${cls._id}`)
-                }
-              >
-                <span className="saved-idcard-name">
-                  {cls.className}
-                  {cls.section ? ` ` : ""}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+          {loadingClasses && <p className="text-muted">Loading classes…</p>}
+          {errorClasses && <p className="text-danger">{errorClasses}</p>}
+          {!loadingClasses && !errorClasses && classes.length === 0 && (
+            <p className="text-muted">No classes found.</p>
+          )}
+          {!loadingClasses && !errorClasses && classes.length > 0 && (
+            <ul className="saved-idcards-list">
+              {classes.map((cls) => (
+                <li key={cls._id}>
+                  <button
+                    type="button"
+                    className="saved-idcard-item saved-idcard-class-item"
+                    onClick={() =>
+                      navigate(`${basePath}/school/${schoolId}/class/${cls._id}`)
+                    }
+                  >
+                    <span className="saved-idcard-name">
+                      {cls.className}
+                      {cls.section ? ` ` : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
     </>
@@ -7676,7 +7673,7 @@ export default function SavedIdCardsList({
       {!loadingStudents && !errorStudents && studentsForList.length > 0 && (
         <div style={{ marginBottom: 16, width: "100%" }}>
           <label className="text-muted" style={{ display: "block", marginBottom: 6, fontSize: "0.85rem" }}>
-            Search students
+            Search Students
           </label>
           <input
             type="search"
@@ -7787,42 +7784,42 @@ export default function SavedIdCardsList({
         !errorStudents &&
         studentsForList.length > 0 &&
         filteredStudentsForList.length > 0 && (
-        <div
-          ref={savedIdStudentListWrapRef}
-          className="saved-idcards-list saved-idcards-list--virtual"
-          style={{
-            flex: 1,
-            minHeight: 0,
-            width: "100%",
-            overflow: "hidden",
-            height: "100%",
-            position: "relative",
-          }}
-        >
-          <List
-            key={`${schoolId}-${classId}-${isAllSchoolStudents}`}
-            className="saved-idcards-virtual-scroller"
-            listRef={savedIdStudentListRef}
-            rowCount={filteredStudentsForList.length}
-            rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
-            rowComponent={VirtualizedSavedIdStudentRow}
-            rowProps={savedIdStudentListItemData}
-            overscanCount={6}
+          <div
+            ref={savedIdStudentListWrapRef}
+            className="saved-idcards-list saved-idcards-list--virtual"
             style={{
-              height: savedIdStudentListViewportHeight,
+              flex: 1,
+              minHeight: 0,
               width: "100%",
-              minWidth: 0,
-              maxWidth: "100%",
+              overflow: "hidden",
+              height: "100%",
+              position: "relative",
             }}
-          />
-        </div>
-      )}
+          >
+            <List
+              key={`${schoolId}-${classId}-${isAllSchoolStudents}`}
+              className="saved-idcards-virtual-scroller"
+              listRef={savedIdStudentListRef}
+              rowCount={filteredStudentsForList.length}
+              rowHeight={SAVED_ID_STUDENT_ROW_HEIGHT}
+              rowComponent={VirtualizedSavedIdStudentRow}
+              rowProps={savedIdStudentListItemData}
+              overscanCount={6}
+              style={{
+                height: savedIdStudentListViewportHeight,
+                width: "100%",
+                minWidth: 0,
+                maxWidth: "100%",
+              }}
+            />
+          </div>
+        )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmTarget && (
-        <div 
-          className="delete-confirm-overlay" 
-          role="presentation" 
+        <div
+          className="delete-confirm-overlay"
+          role="presentation"
           onClick={cancelDeleteStudent}
           style={{
             position: 'fixed',
@@ -7834,7 +7831,7 @@ export default function SavedIdCardsList({
             zIndex: 100000
           }}
         >
-          <div 
+          <div
             className="delete-confirm-modal"
             role="dialog"
             aria-modal="true"
@@ -7854,17 +7851,17 @@ export default function SavedIdCardsList({
               Are you sure you want to delete {String(deleteConfirmTarget?.studentName || deleteConfirmTarget?.name || "this student").trim()}? This action cannot be undone.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
+              <button
+                type="button"
+                className="btn btn-secondary"
                 onClick={cancelDeleteStudent}
                 style={{ padding: '8px 16px' }}
               >
                 Cancel
               </button>
-              <button 
-                type="button" 
-                className="btn btn-primary" 
+              <button
+                type="button"
+                className="btn btn-primary"
                 onClick={confirmDeleteStudent}
                 style={{ padding: '8px 16px', backgroundColor: '#e74c3c', borderColor: '#e74c3c' }}
               >
@@ -8336,7 +8333,7 @@ export default function SavedIdCardsList({
               </div>
             </div>
           )}
-          
+
           {exportProgress && (
             <div
               className="export-progress-overlay"
@@ -8498,7 +8495,7 @@ export default function SavedIdCardsList({
                       100,
                       (exportProgress.current /
                         Math.max(exportProgress.total, 1)) *
-                        100,
+                      100,
                     )}%`,
                     background: "#3b82f6",
                     transition: "width 0.2s ease-out",
@@ -8711,7 +8708,7 @@ export default function SavedIdCardsList({
                             style={inp}
                           >
                             {!editModalClassIdStr && (
-                              <option value="">Select class…</option>
+                              <option value="">Select Class…</option>
                             )}
                             {editModalClassIdStr && !classIdInSchoolList && (
                               <option value={editModalClassIdStr}>
@@ -9183,12 +9180,12 @@ export default function SavedIdCardsList({
                           disabled={
                             !!uploadingPhotoStudentId &&
                             uploadingPhotoStudentId ===
-                              (editStudentData._id || editStudentData.id)
+                            (editStudentData._id || editStudentData.id)
                           }
                           onClick={() => requestChangePhoto(editStudentData)}
                         >
                           {uploadingPhotoStudentId ===
-                          (editStudentData._id || editStudentData.id)
+                            (editStudentData._id || editStudentData.id)
                             ? "Uploading…"
                             : "Change photo"}
                         </button>
@@ -9320,7 +9317,7 @@ export default function SavedIdCardsList({
                         }
                         style={inp}
                       >
-                        <option value="">Select class</option>
+                        <option value="">Select Class</option>
                         {(classes ?? []).map((c) => {
                           const id = c._id || c.id;
                           if (!id) return null;
@@ -9699,30 +9696,30 @@ export default function SavedIdCardsList({
             </div>
           </div>
 
-      {globalErrorDialog && (
-        <div className="delete-confirm-overlay" style={{ zIndex: 99999 }} role="presentation" onClick={() => setGlobalErrorDialog(null)}>
-          <div
-            className="delete-confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: 0, marginBottom: 10 }}>Notice</h3>
-            <p style={{ margin: 0, marginBottom: 20 }}>
-              {globalErrorDialog}
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => setGlobalErrorDialog(null)}
+          {globalErrorDialog && (
+            <div className="delete-confirm-overlay" style={{ zIndex: 99999 }} role="presentation" onClick={() => setGlobalErrorDialog(null)}>
+              <div
+                className="delete-confirm-modal"
+                role="dialog"
+                aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
               >
-                OK
-              </button>
+                <h3 style={{ margin: 0, marginBottom: 10 }}>Notice</h3>
+                <p style={{ margin: 0, marginBottom: 20 }}>
+                  {globalErrorDialog}
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setGlobalErrorDialog(null)}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
         </div>
       )}
