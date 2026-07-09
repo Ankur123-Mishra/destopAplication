@@ -426,6 +426,7 @@ function mapApiStudent(s) {
  * When opened from Uploaded Photos with URL /class-id-cards/students/:schoolId/:classId and state, uses API data.
  */
 export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
+  const [globalErrorDialog, setGlobalErrorDialog] = useState(null);
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
@@ -947,15 +948,15 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     const resolvedClassId = cls?.id ?? classIdFromUrl ?? effectiveClassId ?? null;
 
     if (!templateId) {
-      alert('No template selected. Pick a template and try again.');
+      setGlobalErrorDialog('No template selected. Pick a template and try again.');
       return;
     }
     if (!resolvedSchoolId) {
-      alert('School could not be determined. Use the back button, open this class again from the school list, then save.');
+      setGlobalErrorDialog('School could not be determined. Use the back button, open this class again from the school list, then save.');
       return;
     }
     if (!resolvedClassId) {
-      alert('Class could not be determined. Use the back button, pick the class again, then save.');
+      setGlobalErrorDialog('Class could not be determined. Use the back button, pick the class again, then save.');
       return;
     }
 
@@ -967,11 +968,11 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
       ? effectiveUploadedTemplate && { name: effectiveUploadedTemplate.name }
       : getTemplateById(templateId) || getFabricTemplateById(templateId);
     if (!template && !isUploaded) {
-      alert('That template could not be found. Go back to template selection and try again.');
+      setGlobalErrorDialog('That template could not be found. Go back to template selection and try again.');
       return;
     }
     if (isUploaded && !effectiveUploadedTemplate?.elements) {
-      alert('Uploaded template has no layout elements. Re-open arrange elements or re-upload the template.');
+      setGlobalErrorDialog('Uploaded template has no layout elements. Re-open arrange elements or re-upload the template.');
       return;
     }
     const studentIds = selectedStudentsForSave.map((s) => s.id);
@@ -1028,7 +1029,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         state: { preferredOfflineMode: offlineMode },
       });
     } catch (err) {
-      alert(err?.message || 'Failed to save ID cards. Please try again.');
+      setGlobalErrorDialog(err?.message || 'Failed to save ID cards. Please try again.');
       throw err;
     } finally {
       if (manageSavingState) setSavingAll(false);
@@ -1219,7 +1220,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
     setSavingAll(true);
     try {
       if (!payload || !Array.isArray(payload.elements)) {
-        alert('Could not read the card layout from the editor. Please adjust an element and try saving again.');
+        setGlobalErrorDialog('Could not read the card layout from the editor. Please adjust an element and try saving again.');
         return;
       }
       const draftSub = uploadedTemplate ? layoutDraftSubKey(uploadedTemplate) : '';
@@ -1279,7 +1280,7 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         }
       } catch (err) {
         console.error('Template upload to API failed:', err);
-        alert(
+        setGlobalErrorDialog(
           err?.message ||
           'Template saved locally but upload to server failed. You can still use it for ID cards.',
         );
@@ -1299,14 +1300,14 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
         }
       } catch (bulkErr) {
         console.error(bulkErr);
-        alert(
+        setGlobalErrorDialog(
           bulkErr?.message ||
           'Failed to assign the template to all students. The layout may be saved locally — please try again.',
         );
       }
     } catch (err) {
       console.error(err);
-      alert(err?.message || 'Save failed unexpectedly. Please try again.');
+      setGlobalErrorDialog(err?.message || 'Save failed unexpectedly. Please try again.');
     } finally {
       setSavingAll(false);
     }
@@ -2150,6 +2151,32 @@ export default function ClassIdCardsWizard({ basePath = '/class-id-cards' }) {
           <p className="text-muted" style={{ marginTop: 20, fontSize: '0.9rem' }}>
             After saving, you can view each card&apos;s preview from &quot;Saved ID Cards&quot;.
           </p>
+
+      {globalErrorDialog && (
+        <div className="delete-confirm-overlay" style={{ zIndex: 99999 }} role="presentation" onClick={() => setGlobalErrorDialog(null)}>
+          <div
+            className="delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: 0, marginBottom: 10 }}>Notice</h3>
+            <p style={{ margin: 0, marginBottom: 20 }}>
+              {globalErrorDialog}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setGlobalErrorDialog(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
         </div>
       </>
     );

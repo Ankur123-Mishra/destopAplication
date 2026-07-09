@@ -716,10 +716,6 @@ export default function ParentCollection() {
             )}
             {lastCreatedTemplateInfo && (
               <button type="button" className="btn btn-secondary" onClick={() => {
-                if (!featureEnabled) {
-                  showAdminNotice();
-                  return;
-                }
                 handleDownloadTemplate(lastCreatedTemplateInfo.fields, lastCreatedTemplateInfo.projectName);
               }}>
                 Download Excel Format
@@ -807,13 +803,7 @@ export default function ParentCollection() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => {
-                              if (!featureEnabled) {
-                                showAdminNotice();
-                                return;
-                              }
-                              handleDownloadTemplate(link.fields, link.projectName);
-                            }}
+                            onClick={() => handleDownloadTemplate(link.fields, link.projectName)}
                           >
                             Download Excel Format
                           </button>

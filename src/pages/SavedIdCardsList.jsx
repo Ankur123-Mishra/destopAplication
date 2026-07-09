@@ -2903,7 +2903,7 @@ async function saveJpegExportToFolder(
   }
 
   await downloadJpegsAsZipFolder(safeSub, files, onProgress, shouldAbort);
-  window.alert(
+  setGlobalErrorDialog(
     `Downloaded "${safeSub}.zip". Extract it to get a folder with all ${files.length} JPEG file(s).`,
   );
   return { fallbackDownloads: true };
@@ -3081,7 +3081,7 @@ async function savePngExportToFolder(
   }
 
   await downloadPngsAsZipFolder(safeSub, files, onProgress, shouldAbort);
-  window.alert(
+  setGlobalErrorDialog(
     `Downloaded "${safeSub}.zip". Extract it to get a folder with all ${files.length} PNG file(s).`,
   );
   return { fallbackDownloads: true };
@@ -3522,6 +3522,7 @@ export default function SavedIdCardsList({
   previewBasePath = "/saved-id-cards/preview",
   backTo = "/dashboard",
 } = {}) {
+  const [globalErrorDialog, setGlobalErrorDialog] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const { schoolId, classId } = useParams();
@@ -4047,9 +4048,9 @@ export default function SavedIdCardsList({
         return { ...prev, data: { ...prev.data, students } };
       });
 
-      alert("Photo uploaded successfully.");
+      setGlobalErrorDialog("Photo uploaded successfully.");
     } catch (err) {
-      alert(err?.message || "Upload failed. Please try again.");
+      setGlobalErrorDialog(err?.message || "Upload failed. Please try again.");
     } finally {
       setUploadingPhotoStudentId(null);
       e.target.value = "";
@@ -4130,7 +4131,7 @@ export default function SavedIdCardsList({
       }
       setEditStudentData(null);
     } catch (err) {
-      alert("Failed to update student details: " + err.message);
+      setGlobalErrorDialog("Failed to update student details: " + err.message);
     } finally {
       setSavingEdit(false);
     }
@@ -4195,7 +4196,7 @@ export default function SavedIdCardsList({
           };
         });
       } catch (err) {
-        alert(err?.message || "Failed to delete student.");
+        setGlobalErrorDialog(err?.message || "Failed to delete student.");
       } finally {
         setDeletingStudentId((prev) => (prev === studentId ? null : prev));
       }
@@ -4238,11 +4239,11 @@ export default function SavedIdCardsList({
         ? newStudentDraft.classId._id || newStudentDraft.classId.id
         : newStudentDraft.classId;
     if (!cid || String(cid).trim() === "") {
-      alert("Please select a class.");
+      setGlobalErrorDialog("Please select a class.");
       return;
     }
     if (!String(newStudentDraft.studentName || "").trim()) {
-      alert("Student name is required.");
+      setGlobalErrorDialog("Student name is required.");
       return;
     }
     setSavingNewStudent(true);
@@ -4361,7 +4362,7 @@ export default function SavedIdCardsList({
             ...(nextPhotoNo ? { photoNo: nextPhotoNo } : {}),
           };
         } catch (uploadErr) {
-          alert(
+          setGlobalErrorDialog(
             (uploadErr?.message || "Photo upload failed.") +
               " Student was created; you can add a photo from Edit.",
           );
@@ -4402,7 +4403,7 @@ export default function SavedIdCardsList({
         setAddStudentOverlayOpen(false);
         setNewStudentDraft(null);
         setEditStudentData(null);
-        alert(
+        setGlobalErrorDialog(
           "Student was saved for the class you selected. Open that class from the school menu to view or edit them.",
         );
         return;
@@ -4432,7 +4433,7 @@ export default function SavedIdCardsList({
       setNewStudentDraft(null);
       setEditStudentData(null);
     } catch (err) {
-      alert(err?.message || "Failed to create student.");
+      setGlobalErrorDialog(err?.message || "Failed to create student.");
     } finally {
       setSavingNewStudent(false);
     }
@@ -6377,7 +6378,7 @@ export default function SavedIdCardsList({
           !exportCancelRequestedRef.current &&
           !bulkClassFolderPagesExportRef.current
         ) {
-          window.alert(
+          setGlobalErrorDialog(
             "Could not capture the preview. Open Preview, wait for cards to load, then try Download again.",
           );
         }
@@ -6385,7 +6386,7 @@ export default function SavedIdCardsList({
         if (!isExportCancelledError(err) && !cancelled) {
           console.error(err);
           if (!bulkClassFolderPagesExportRef.current) {
-            window.alert(
+            setGlobalErrorDialog(
               (typeof err?.message === "string" && err.message.trim()) ||
               "Download failed. Wait for the preview to finish loading, then try again.",
             );
@@ -6418,7 +6419,7 @@ export default function SavedIdCardsList({
                 if (openPath && window.electron?.openFolder) {
                   void window.electron.openFolder(openPath);
                 }
-                window.alert(
+                setGlobalErrorDialog(
                   `Created ${bulkFolderExport.items.length} class folder(s) and exported page JPEGs for ${nextExported} class(es).${
                     nextSkipped > 0
                       ? ` Skipped ${nextSkipped} class(es) with no exportable ID cards.`
@@ -6490,7 +6491,7 @@ export default function SavedIdCardsList({
       .filter((id) => typeof id === "string" && id.trim() !== "");
 
     if (studentIds.length === 0) {
-      window.alert("No students found for template download.");
+      setGlobalErrorDialog("No students found for template download.");
       return false;
     }
 
@@ -6509,7 +6510,7 @@ export default function SavedIdCardsList({
       }
     } catch (err) {
       console.error(err);
-      window.alert(
+      setGlobalErrorDialog(
         err?.message || "Unable to deduct points. Please try again.",
       );
       return false;
@@ -6534,7 +6535,7 @@ export default function SavedIdCardsList({
     try {
       if (isViewTemplateFlow) {
         if (!studentId) {
-          window.alert("No student found for download.");
+          setGlobalErrorDialog("No student found for download.");
           return;
         }
         try {
@@ -6552,7 +6553,7 @@ export default function SavedIdCardsList({
           }
         } catch (err) {
           console.error(err);
-          window.alert(
+          setGlobalErrorDialog(
             err?.message || "Unable to deduct points. Please try again.",
           );
           return;
@@ -6579,7 +6580,7 @@ export default function SavedIdCardsList({
       }
 
       if (!files?.length) {
-        window.alert(
+        setGlobalErrorDialog(
           "Could not capture the card. Wait for the preview to load, then try again.",
         );
         return;
@@ -6588,7 +6589,7 @@ export default function SavedIdCardsList({
       await triggerBrowserDownloadExportFiles(files);
     } catch (err) {
       console.error(err);
-      window.alert(
+      setGlobalErrorDialog(
         (typeof err?.message === "string" && err.message.trim()) ||
           "Download failed. Wait for the preview to finish loading, then try again.",
       );
@@ -6602,7 +6603,7 @@ export default function SavedIdCardsList({
 
     const folderNames = getClassFolderNames(classes);
     if (folderNames.length === 0) {
-      window.alert("No classes found to create folders.");
+      setGlobalErrorDialog("No classes found to create folders.");
       return;
     }
 
@@ -6623,7 +6624,7 @@ export default function SavedIdCardsList({
 
         if (!window.electron.createClassFolders) {
           setCreatingClassFolders(false);
-          window.alert(
+          setGlobalErrorDialog(
             "Create folders is not available. Fully quit the app and start it again so Electron loads the latest code.",
           );
           return;
@@ -6671,7 +6672,7 @@ export default function SavedIdCardsList({
       }
 
       setCreatingClassFolders(false);
-      window.alert(
+      setGlobalErrorDialog(
         "Folder picker is not available in this environment. Use the desktop app to create class folders.",
       );
     } catch (e) {
@@ -6683,7 +6684,7 @@ export default function SavedIdCardsList({
       setCreatingClassFolders(false);
       setBulkClassFolderPagesExport(null);
       bulkClassFolderPagesExportRef.current = null;
-      window.alert(e?.message || "Could not create class folders.");
+      setGlobalErrorDialog(e?.message || "Could not create class folders.");
     }
   };
 
@@ -6735,7 +6736,7 @@ export default function SavedIdCardsList({
             bulkClassFolderPagesExportRef.current = null;
             setCreatingClassFolders(false);
             setExportProgress(null);
-            window.alert(
+            setGlobalErrorDialog(
               `Created ${bulk.items.length} class folder(s). No exportable ID cards were found in any class.`,
             );
           } else {
@@ -6775,7 +6776,7 @@ export default function SavedIdCardsList({
           bulkClassFolderPagesExportRef.current = null;
           setCreatingClassFolders(false);
           setExportProgress(null);
-          window.alert(
+          setGlobalErrorDialog(
             e?.message ||
               "Could not export all class page JPEGs. Some classes may be missing files.",
           );
@@ -9626,6 +9627,32 @@ export default function SavedIdCardsList({
               {renderCardWithBackForPreview(singleCardPreview)}
             </div>
           </div>
+
+      {globalErrorDialog && (
+        <div className="delete-confirm-overlay" style={{ zIndex: 99999 }} role="presentation" onClick={() => setGlobalErrorDialog(null)}>
+          <div
+            className="delete-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: 0, marginBottom: 10 }}>Notice</h3>
+            <p style={{ margin: 0, marginBottom: 20 }}>
+              {globalErrorDialog}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setGlobalErrorDialog(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
         </div>
       )}
 
